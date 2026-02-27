@@ -86,9 +86,15 @@ async def extensions_install(package: str) -> dict:
 
     / Instala una extension desde pip.
     """
+    import re
     import subprocess
     import sys
     from datetime import datetime
+
+    # Validate package name (PEP 508 compliant names or simple git URLs)
+    _VALID_PKG = re.compile(r'^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?([>=<!\[\]]+.*)?$')
+    if not _VALID_PKG.match(package) and not package.startswith("git+"):
+        return {"error": f"Invalid package name: '{package}'. Use a valid pip package name."}
 
     # Run pip install
     try:

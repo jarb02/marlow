@@ -40,7 +40,7 @@ class BackgroundManager:
             ctypes.c_ulong,       # hMonitor
             ctypes.c_ulong,       # hdcMonitor
             ctypes.POINTER(ctypes.wintypes.RECT),  # lprcMonitor
-            ctypes.c_double,      # dwData (LPARAM)
+            ctypes.wintypes.LPARAM,  # dwData
         )
 
         def callback(hMonitor, hdcMonitor, lprcMonitor, dwData):
@@ -182,15 +182,12 @@ async def move_to_agent_screen(window_title: str) -> dict:
         return {"error": "No agent monitor configured."}
 
     try:
-        from pywinauto import Desktop
+        from marlow.core.uia_utils import find_window
 
-        desktop = Desktop(backend="uia")
-        windows = desktop.windows(title_re=f".*{window_title}.*")
+        target, err = find_window(window_title, list_available=False)
+        if err:
+            return err
 
-        if not windows:
-            return {"error": f"Window '{window_title}' not found"}
-
-        target = windows[0]
         title = target.window_text()
 
         # Save original position for move_to_user_screen
@@ -239,15 +236,12 @@ async def move_to_user_screen(window_title: str) -> dict:
         return {"error": "Background mode not set up. Call setup_background_mode() first."}
 
     try:
-        from pywinauto import Desktop
+        from marlow.core.uia_utils import find_window
 
-        desktop = Desktop(backend="uia")
-        windows = desktop.windows(title_re=f".*{window_title}.*")
+        target, err = find_window(window_title, list_available=False)
+        if err:
+            return err
 
-        if not windows:
-            return {"error": f"Window '{window_title}' not found"}
-
-        target = windows[0]
         title = target.window_text()
 
         # Restore to original position if we saved it, otherwise center on primary

@@ -20,7 +20,6 @@ Usage:
 import asyncio
 import logging
 import sys
-from typing import Optional
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -67,6 +66,10 @@ sanitizer = DataSanitizer(config)
 
 # Create MCP server
 app = Server("marlow")
+
+# Wire kill switch into scheduler so scheduled tasks respect it
+from marlow.tools.scheduler import set_kill_switch_check
+set_kill_switch_check(lambda: safety.is_killed)
 
 
 # ─────────────────────────────────────────────────────────────

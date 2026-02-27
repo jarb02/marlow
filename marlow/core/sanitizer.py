@@ -9,7 +9,6 @@ This is what OpenClaw should have had from day 1.
 
 import re
 import logging
-from typing import Optional
 
 from marlow.core.config import MarlowConfig
 

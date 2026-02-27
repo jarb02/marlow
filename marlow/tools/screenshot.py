@@ -82,21 +82,11 @@ async def _capture_fullscreen(quality: int) -> dict:
 async def _capture_window(window_title: str, quality: int) -> dict:
     """Capture a specific window by title."""
     try:
-        from pywinauto import Desktop
+        from marlow.core.uia_utils import find_window
 
-        desktop = Desktop(backend="uia")
-        windows = desktop.windows(title_re=f".*{window_title}.*")
-
-        if not windows:
-            return {
-                "error": f"No window found matching '{window_title}'",
-                "available_windows": [
-                    w.window_text() for w in desktop.windows()
-                    if w.window_text().strip()
-                ][:20],
-            }
-
-        target = windows[0]
+        target, err = find_window(window_title, max_suggestions=20)
+        if err:
+            return err
         # capture_as_image() works WITHOUT activating the window
         # This is key for background mode
         img = target.capture_as_image()
@@ -126,7 +116,7 @@ async def _capture_region(region: dict, quality: int) -> dict:
         return _encode_image(img, quality, "region")
 
 
-def _encode_image(img, quality: int, source: str) -> dict:
+def _encode_image(img: object, quality: int, source: str) -> dict:
     """Encode a PIL Image to base64 for MCP transport."""
     from PIL import Image
 

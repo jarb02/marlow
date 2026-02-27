@@ -76,21 +76,12 @@ async def focus_window(window_title: str) -> dict:
     / Trae una ventana al frente y le da el foco.
     """
     try:
-        from pywinauto import Desktop
+        from marlow.core.uia_utils import find_window
 
-        desktop = Desktop(backend="uia")
-        windows = desktop.windows(title_re=f".*{window_title}.*")
+        target, err = find_window(window_title)
+        if err:
+            return err
 
-        if not windows:
-            return {
-                "error": f"Window '{window_title}' not found",
-                "available_windows": [
-                    w.window_text() for w in desktop.windows()
-                    if w.window_text().strip()
-                ][:15],
-            }
-
-        target = windows[0]
         target.set_focus()
 
         return {
@@ -135,15 +126,12 @@ async def manage_window(
         }
 
     try:
-        from pywinauto import Desktop
+        from marlow.core.uia_utils import find_window
 
-        desktop = Desktop(backend="uia")
-        windows = desktop.windows(title_re=f".*{window_title}.*")
+        target, err = find_window(window_title, list_available=False)
+        if err:
+            return err
 
-        if not windows:
-            return {"error": f"Window '{window_title}' not found"}
-
-        target = windows[0]
         title = target.window_text()
 
         if action == "minimize":

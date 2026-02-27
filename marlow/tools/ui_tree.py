@@ -43,27 +43,15 @@ async def get_ui_tree(
     / ventana sin necesitar screenshots. Costo: 0 tokens. Velocidad: ~10-50ms.
     """
     try:
-        from pywinauto import Desktop, Application
-        from pywinauto.findwindows import ElementNotFoundError
+        from pywinauto import Desktop
+        from marlow.core.uia_utils import find_window
 
-        desktop = Desktop(backend="uia")
-
-        # Find target window
         if window_title:
-            try:
-                windows = desktop.windows(title_re=f".*{window_title}.*")
-                if not windows:
-                    return {
-                        "error": f"No window found matching '{window_title}'",
-                        "available_windows": [
-                            w.window_text() for w in desktop.windows()
-                            if w.window_text().strip()
-                        ][:20],
-                    }
-                target = windows[0]
-            except ElementNotFoundError:
-                return {"error": f"Window '{window_title}' not found"}
+            target, err = find_window(window_title, max_suggestions=20)
+            if err:
+                return err
         else:
+            desktop = Desktop(backend="uia")
             target = desktop.window(active_only=True)
 
         # Build the tree
@@ -97,7 +85,7 @@ async def get_ui_tree(
 
 
 def _build_element_tree(
-    element, max_depth: int, include_invisible: bool, current_depth: int = 0
+    element: object, max_depth: int, include_invisible: bool, current_depth: int = 0
 ) -> dict:
     """Recursively build element tree from a pywinauto wrapper."""
     if current_depth > max_depth:

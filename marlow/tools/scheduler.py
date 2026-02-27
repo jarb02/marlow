@@ -21,6 +21,15 @@ _tasks: dict[str, dict] = {}
 _task_history: list[dict] = []
 _max_history = 200
 
+# Kill switch callback — set by server.py at startup
+_kill_switch_check: Optional[callable] = None
+
+
+def set_kill_switch_check(fn: callable) -> None:
+    """Register a callback that returns True if the kill switch is active."""
+    global _kill_switch_check
+    _kill_switch_check = fn
+
 
 class TaskRunner(threading.Thread):
     """Daemon thread that executes a command at regular intervals."""
@@ -36,7 +45,7 @@ class TaskRunner(threading.Thread):
         self.run_count = 0
         self.active = True
 
-    def run(self):
+    def run(self) -> None:
         while self.active:
             if self.max_runs and self.run_count >= self.max_runs:
                 self.active = False
@@ -50,6 +59,15 @@ class TaskRunner(threading.Thread):
 
             if not self.active:
                 return
+
+            # Check kill switch before every execution
+            if _kill_switch_check and _kill_switch_check():
+                _task_history.append({
+                    "task": self.task_name,
+                    "error": "kill switch active — execution skipped",
+                    "timestamp": datetime.now().isoformat(),
+                })
+                continue
 
             # Execute the command
             try:

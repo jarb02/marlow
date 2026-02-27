@@ -7,6 +7,51 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.4.1] - 2026-02-27
+
+Comprehensive code audit: 21 issues fixed across 6 critical, 7 important, and 8 minor
+categories. Security hardening, code deduplication, and correctness improvements.
+125 tests passing, 47 tools verified.
+
+### Security Fixes (Critical)
+
+- **`app_script.py`** — Replaced regex-based script validation with AST analysis (`_ScriptValidator`). Blocks `import`, `eval()`, `exec()`, `type().__subclasses__`, dunder attribute access, and forbidden module references. Sandbox uses `safe_builtins` whitelist instead of empty `__builtins__`.
+- **`system.py` clipboard** — Fixed PowerShell injection: user text now piped via stdin (`$input | Set-Clipboard`) instead of f-string interpolation. Added early parameter validation.
+- **`scheduler.py`** — Scheduled tasks now check kill switch before every execution. Added `set_kill_switch_check()` callback, wired from `server.py`.
+- **`safety.py`** — Added `"block"` confirmation mode that rejects all actions unconditionally. Clarified `"all"` mode delegates confirmation to MCP client.
+- **`watcher.py`** — watchdog imports changed from module-level to lazy loading via `_ensure_watchdog()`. Server no longer fails to start if watchdog is missing.
+- **10+ files** — Added `re.escape(window_title)` before all `title_re=f".*{...}.*"` patterns to prevent regex injection.
+
+### Important Fixes
+
+- **`safety.py`** — Rate limiter is now thread-safe with `threading.Lock()` around timestamp reads/writes.
+- **`system.py`** — `clipboard()` can no longer return `None`; all code paths return a dict.
+- **`mouse.py`, `escalation.py`** — Changed element matching from substring to whole-word (prevents "File" matching "Profile").
+- **`background.py`** — Fixed `ctypes.c_double` to `ctypes.wintypes.LPARAM` in `MONITORENUMPROC` callback.
+- **`audio.py`, `app_script.py`** — Replaced deprecated `asyncio.get_event_loop()` with `get_running_loop()` (5 locations).
+- **`mouse.py`, `keyboard.py`** — Removed redundant `preserve_focus()` calls from 7 functions (server.py already handles focus save/restore).
+- **`registry.py`** — Added regex validation for pip package names before running `pip install`.
+
+### Minor Improvements
+
+- Removed unused imports from `voice.py`, `safety.py`, `sanitizer.py`, `server.py`, `ui_tree.py`.
+- Added `object` type hints to 8+ functions across `ui_tree.py`, `screenshot.py`, `mouse.py`, `keyboard.py`.
+- **`scraper.py`** — User-Agent now uses dynamic `__version__` instead of hardcoded `"0.3.0"`.
+- **`visual_diff.py`** — Replaced `hashlib.md5()` ID generation with `uuid.uuid4().hex[:8]`.
+- **`escalation.py`** — Removed stale `preserve_focus()` import from `_click_element`.
+
+### Added
+
+- **`marlow/core/uia_utils.py`** — New shared utility module with `find_window()` and `find_element_by_name()`. Replaces 10 duplicate window-finding patterns and 3 duplicate element search implementations across tool modules.
+
+### Changed
+
+- **`marlow/__init__.py`** — Version bumped from `0.4.0` to `0.4.1`.
+- **10 tool modules** — Refactored to use `find_window()` from `uia_utils.py` instead of inline Desktop/windows pattern.
+- **`mouse.py`** — `_find_element()` is now a thin alias for `uia_utils.find_element_by_name()` (backward compatible).
+
+---
+
 ## [0.4.0] - 2026-02-27
 
 Phase 4 complete. 47 total MCP tools. Folder monitoring with watchdog and

@@ -74,28 +74,19 @@ async def _click_by_name(
     """Find element by name in the Accessibility Tree and click it."""
     try:
         from pywinauto import Desktop
-        from pywinauto.findwindows import ElementNotFoundError
-
-        desktop = Desktop(backend="uia")
+        from marlow.core.uia_utils import find_window, find_element_by_name
 
         # Find the window
         if window_title:
-            windows = desktop.windows(title_re=f".*{window_title}.*")
-            if not windows:
-                return {
-                    "error": f"Window '{window_title}' not found",
-                    "available_windows": [
-                        w.window_text() for w in desktop.windows()
-                        if w.window_text().strip()
-                    ][:15],
-                }
-            target_window = windows[0]
+            target_window, err = find_window(window_title)
+            if err:
+                return err
         else:
+            desktop = Desktop(backend="uia")
             target_window = desktop.window(active_only=True)
 
         # Search for element by name
-        # Desktop.windows() returns UIAWrapper objects directly
-        element = _find_element(target_window, element_name)
+        element = find_element_by_name(target_window, element_name)
 
         if element is None:
             return {
@@ -116,15 +107,13 @@ async def _click_by_name(
             except Exception:
                 logger.debug(f"Silent invoke failed for '{element_name}', falling back to click_input")
 
-        # Fallback to real click (requires focus — restore after)
-        from marlow.core.focus import preserve_focus
-        with preserve_focus():
-            if double_click:
-                element.double_click_input()
-            elif button == "right":
-                element.right_click_input()
-            else:
-                element.click_input()
+        # Fallback to real click (focus is saved/restored by server.py call_tool)
+        if double_click:
+            element.double_click_input()
+        elif button == "right":
+            element.right_click_input()
+        else:
+            element.click_input()
 
         return {
             "success": True,
@@ -146,15 +135,14 @@ async def _click_by_coordinates(
     """Click at absolute screen coordinates using pyautogui."""
     try:
         import pyautogui
-        from marlow.core.focus import preserve_focus
 
         pyautogui.FAILSAFE = True  # Move mouse to corner to abort
 
-        with preserve_focus():
-            if double_click:
-                pyautogui.doubleClick(x, y, button=button)
-            else:
-                pyautogui.click(x, y, button=button)
+        # Focus is saved/restored by server.py call_tool
+        if double_click:
+            pyautogui.doubleClick(x, y, button=button)
+        else:
+            pyautogui.click(x, y, button=button)
 
         return {
             "success": True,
@@ -176,31 +164,7 @@ async def _click_by_coordinates(
         return {"error": str(e)}
 
 
-def _find_element(parent, name: str, max_depth: int = 5, depth: int = 0):
-    """
-    Recursively search for an element by name in the UI tree.
-    Returns the first match or None.
-    """
-    if depth > max_depth:
-        return None
-
-    try:
-        text = parent.window_text() or ""
-        if name.lower() in text.lower():
-            return parent
-
-        # Also check automation_id
-        auto_id = getattr(parent.element_info, "automation_id", "") or ""
-        if name.lower() in auto_id.lower():
-            return parent
-
-        # Search children
-        for child in parent.children():
-            found = _find_element(child, name, max_depth, depth + 1)
-            if found is not None:
-                return found
-
-    except Exception:
-        pass
-
-    return None
+def _find_element(parent: object, name: str, max_depth: int = 5, depth: int = 0) -> Optional[object]:
+    """Backward-compatible alias for find_element_by_name."""
+    from marlow.core.uia_utils import find_element_by_name
+    return find_element_by_name(parent, name, max_depth, depth)

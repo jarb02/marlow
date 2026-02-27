@@ -17,7 +17,7 @@ import logging
 import threading
 from datetime import datetime
 from typing import Optional, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from marlow.core.config import MarlowConfig
 
@@ -50,6 +50,7 @@ class SafetyEngine:
         self._kill_lock = threading.Lock()
         self._action_log: list[ActionRecord] = []
         self._action_timestamps: list[float] = []
+        self._rate_lock = threading.Lock()
         self._confirmation_callback: Optional[Callable] = None
         self._kill_switch_thread: Optional[threading.Thread] = None
 
@@ -144,10 +145,19 @@ class SafetyEngine:
                            "Rate limit exceeded")
             return False, f"⏱️ Rate limit: Maximum {self.config.security.max_actions_per_minute} actions/minute exceeded. Wait a moment."
 
-        # 5. Confirmation
+        # 5. Confirmation / Block mode
         mode = self.config.security.confirmation_mode
-        needs_confirmation = False
 
+        if mode == "block":
+            # Block mode: reject ALL actions except status queries
+            self._log_action(tool, action, params, False, "blocked",
+                           "Block mode active — all automation disabled")
+            return False, (
+                "🚫 Block mode active — all automation is disabled. "
+                "Change confirmation_mode to 'all', 'sensitive', or 'autonomous' to allow actions."
+            )
+
+        needs_confirmation = False
         if mode == "all":
             needs_confirmation = True
         elif mode == "sensitive":
@@ -155,12 +165,12 @@ class SafetyEngine:
         # mode == "autonomous" → no confirmation needed
 
         if needs_confirmation:
-            # In MCP context, we return a message asking the user to confirm
-            # The MCP client will relay this to the user
-            self._log_action(tool, action, params, True, "success",
-                           "Confirmation mode — action described to user")
-            # In MCP, confirmation is handled by the client showing the action
-            # and the user deciding whether to proceed
+            # In MCP, confirmation is handled by the client: the client
+            # shows the tool call to the user and the user decides whether
+            # to approve or deny. We log it and proceed — the MCP protocol
+            # provides the confirmation layer, not the server.
+            self._log_action(tool, action, params, True, "confirmed",
+                           f"Confirmation mode '{mode}' — action shown to user via MCP client")
 
         # 6. All clear
         self._record_action_timestamp()
@@ -221,20 +231,21 @@ class SafetyEngine:
     # =========================================================================
 
     def _check_rate_limit(self) -> bool:
-        """Check if we're within rate limits."""
+        """Check if we're within rate limits. Thread-safe."""
         now = time.time()
         window = 60.0  # 1 minute window
 
-        # Clean old timestamps
-        self._action_timestamps = [
-            t for t in self._action_timestamps if now - t < window
-        ]
-
-        return len(self._action_timestamps) < self.config.security.max_actions_per_minute
+        with self._rate_lock:
+            # Clean old timestamps
+            self._action_timestamps = [
+                t for t in self._action_timestamps if now - t < window
+            ]
+            return len(self._action_timestamps) < self.config.security.max_actions_per_minute
 
     def _record_action_timestamp(self):
-        """Record that an action was performed."""
-        self._action_timestamps.append(time.time())
+        """Record that an action was performed. Thread-safe."""
+        with self._rate_lock:
+            self._action_timestamps.append(time.time())
 
     # =========================================================================
     # ACTION LOG

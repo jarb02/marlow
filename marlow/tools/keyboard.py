@@ -54,7 +54,7 @@ async def type_text(
         return await _type_direct(text)
 
 
-def _find_editable_element(parent, max_depth: int = 6, depth: int = 0):
+def _find_editable_element(parent: object, max_depth: int = 6, depth: int = 0) -> Optional[object]:
     """
     Find the main editable element in a window by control type.
     Searches for Document or Edit controls that have a Value pattern.
@@ -80,7 +80,7 @@ def _find_editable_element(parent, max_depth: int = 6, depth: int = 0):
     return None
 
 
-def _set_text_silent(element, text: str, clear_first: bool) -> Optional[dict]:
+def _set_text_silent(element: object, text: str, clear_first: bool) -> Optional[dict]:
     """
     Try all silent text-setting methods in order.
     Returns result dict on success, None on failure.
@@ -120,7 +120,7 @@ def _set_text_silent(element, text: str, clear_first: bool) -> Optional[dict]:
     return None
 
 
-def _is_win11_notepad(window) -> bool:
+def _is_win11_notepad(window: object) -> bool:
     """Check if a window is the new Windows 11 tabbed Notepad."""
     try:
         if window.element_info.class_name != "Notepad":
@@ -132,7 +132,7 @@ def _is_win11_notepad(window) -> bool:
         return False
 
 
-def _get_editor_content(editor) -> str:
+def _get_editor_content(editor: object) -> str:
     """Read the current text from an editor element via ValuePattern."""
     try:
         val = editor.iface_value
@@ -146,7 +146,7 @@ def _get_editor_content(editor) -> str:
         return ""
 
 
-def _ensure_safe_notepad_tab(window) -> Optional[dict]:
+def _ensure_safe_notepad_tab(window: object) -> Optional[dict]:
     """
     If the window is the new Win11 Notepad and the current tab has content,
     open a new empty tab before writing. Prevents overwriting user data.
@@ -172,8 +172,8 @@ def _ensure_safe_notepad_tab(window) -> Optional[dict]:
     # Current tab has content — open a new tab
     logger.info("Notepad tab has existing content, opening new tab to protect user data")
 
-    from marlow.tools.mouse import _find_element
-    add_btn = _find_element(window, "Add New Tab", max_depth=6)
+    from marlow.core.uia_utils import find_element_by_name
+    add_btn = find_element_by_name(window, "Add New Tab", max_depth=6)
     if add_btn is None:
         # Fallback: search by automation_id
         try:
@@ -199,7 +199,7 @@ def _ensure_safe_notepad_tab(window) -> Optional[dict]:
         return None
 
 
-def _find_by_automation_id(parent, auto_id: str, max_depth: int = 6, depth: int = 0):
+def _find_by_automation_id(parent: object, auto_id: str, max_depth: int = 6, depth: int = 0) -> Optional[object]:
     """Find an element by automation_id (fallback search)."""
     if depth > max_depth:
         return None
@@ -230,20 +230,11 @@ async def _type_into_window(
     / Auto-encuentra el area editable en una ventana y escribe en ella.
     """
     try:
-        from pywinauto import Desktop
+        from marlow.core.uia_utils import find_window
 
-        desktop = Desktop(backend="uia")
-        windows = desktop.windows(title_re=f".*{window_title}.*")
-        if not windows:
-            return {
-                "error": f"Window '{window_title}' not found",
-                "available_windows": [
-                    w.window_text() for w in desktop.windows()
-                    if w.window_text().strip()
-                ][:15],
-            }
-
-        target_window = windows[0]
+        target_window, err = find_window(window_title)
+        if err:
+            return err
 
         # Protect user data: if Notepad tab has content, open a new tab first
         tab_info = _ensure_safe_notepad_tab(target_window)
@@ -272,17 +263,15 @@ async def _type_into_window(
                 return result
             logger.debug(f"Silent methods failed for {ct}/{cn}, falling back")
 
-        # Fallback to keyboard simulation (requires focus — restore after)
-        from marlow.core.focus import preserve_focus
-        with preserve_focus():
-            element.click_input()
-            if clear_first:
-                element.type_keys("^a{DELETE}", with_spaces=True)
-            element.type_keys(text, with_spaces=True, with_newlines=True)
+        # Fallback to keyboard simulation (focus saved/restored by server.py)
+        element.click_input()
+        if clear_first:
+            element.type_keys("^a{DELETE}", with_spaces=True)
+        element.type_keys(text, with_spaces=True, with_newlines=True)
 
         result = {
             "success": True,
-            "method": "type_keys (keyboard simulation — focus restored)",
+            "method": "type_keys (keyboard simulation)",
             "window": target_window.window_text(),
             "control": f"{ct} ({cn})",
             "text_length": len(text),
@@ -308,21 +297,19 @@ async def _type_by_name(
     """Find text field by name and type into it."""
     try:
         from pywinauto import Desktop
-
-        desktop = Desktop(backend="uia")
+        from marlow.core.uia_utils import find_window, find_element_by_name
 
         # Find window
         if window_title:
-            windows = desktop.windows(title_re=f".*{window_title}.*")
-            if not windows:
-                return {"error": f"Window '{window_title}' not found"}
-            target_window = windows[0]
+            target_window, err = find_window(window_title, list_available=False)
+            if err:
+                return err
         else:
+            desktop = Desktop(backend="uia")
             target_window = desktop.window(active_only=True)
 
         # Find element by name first
-        from marlow.tools.mouse import _find_element
-        element = _find_element(target_window, element_name)
+        element = find_element_by_name(target_window, element_name)
         used_auto_detect = False
 
         # If not found by name, fall back to auto-detecting the editable area
@@ -357,17 +344,15 @@ async def _type_by_name(
                 return result
             logger.debug(f"Silent methods failed for '{element_name}'")
 
-        # Fallback to keyboard simulation (requires focus — restore after)
-        from marlow.core.focus import preserve_focus
-        with preserve_focus():
-            element.click_input()
-            if clear_first:
-                element.type_keys("^a{DELETE}", with_spaces=True)
-            element.type_keys(text, with_spaces=True, with_newlines=True)
+        # Fallback to keyboard simulation (focus saved/restored by server.py)
+        element.click_input()
+        if clear_first:
+            element.type_keys("^a{DELETE}", with_spaces=True)
+        element.type_keys(text, with_spaces=True, with_newlines=True)
 
         result = {
             "success": True,
-            "method": "type_keys (keyboard simulation — focus restored)",
+            "method": "type_keys (keyboard simulation)",
             "element": element_name,
             "text_length": len(text),
         }
@@ -386,15 +371,14 @@ async def _type_direct(text: str) -> dict:
     """Type at current cursor position using pyautogui."""
     try:
         import pyautogui
-        from marlow.core.focus import preserve_focus
 
         pyautogui.FAILSAFE = True
-        with preserve_focus():
-            pyautogui.write(text, interval=0.02)
+        # Focus is saved/restored by server.py call_tool
+        pyautogui.write(text, interval=0.02)
 
         return {
             "success": True,
-            "method": "pyautogui.write (direct keyboard — focus restored)",
+            "method": "pyautogui.write (direct keyboard)",
             "text_length": len(text),
         }
 
@@ -420,13 +404,11 @@ async def press_key(key: str, times: int = 1) -> dict:
     """
     try:
         import pyautogui
-        from marlow.core.focus import preserve_focus
 
         pyautogui.FAILSAFE = True
-
-        with preserve_focus():
-            for _ in range(times):
-                pyautogui.press(key)
+        # Focus is saved/restored by server.py call_tool
+        for _ in range(times):
+            pyautogui.press(key)
 
         return {
             "success": True,
@@ -456,11 +438,10 @@ async def hotkey(*keys: str) -> dict:
     """
     try:
         import pyautogui
-        from marlow.core.focus import preserve_focus
 
         pyautogui.FAILSAFE = True
-        with preserve_focus():
-            pyautogui.hotkey(*keys)
+        # Focus is saved/restored by server.py call_tool
+        pyautogui.hotkey(*keys)
 
         return {
             "success": True,

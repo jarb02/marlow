@@ -14,6 +14,8 @@ import logging
 from typing import Optional
 from urllib.parse import urlparse
 
+from marlow import __version__
+
 logger = logging.getLogger("marlow.tools.scraper")
 
 # Block internal/private network access
@@ -85,7 +87,7 @@ async def scrape_url(
             follow_redirects=True,
             max_redirects=_MAX_REDIRECTS,
         ) as client:
-            headers = {"User-Agent": "Marlow/0.3.0 (Desktop Automation Tool)"}
+            headers = {"User-Agent": f"Marlow/{__version__} (Desktop Automation Tool)"}
             response = await client.get(url, headers=headers)
             response.raise_for_status()
 

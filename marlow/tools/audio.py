@@ -146,7 +146,7 @@ async def capture_system_audio(duration_seconds: int = 10) -> dict:
             p.terminate()
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _record)
         return result
     except Exception as e:
@@ -204,7 +204,7 @@ async def capture_mic_audio(duration_seconds: int = 10) -> dict:
         }
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _record)
         return result
     except Exception as e:
@@ -282,7 +282,7 @@ async def download_whisper_model(model_size: str = "base") -> dict:
         }
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         # 10-minute timeout for large model downloads
         result = await asyncio.wait_for(
             loop.run_in_executor(None, _download),
@@ -381,7 +381,7 @@ async def transcribe_audio(
         }
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         # 5 minutes timeout: covers first-time model download + transcription
         # Subsequent calls use the cached model and are much faster
         result = await asyncio.wait_for(

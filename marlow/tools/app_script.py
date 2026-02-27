@@ -3,15 +3,16 @@ Marlow COM Automation Tool
 
 Run Python scripts that control Office and Adobe apps via COM.
 Scripts execute in a sandbox with restricted builtins — no imports,
-no file access, no eval/exec.
+no file access, no eval/exec. Validated via AST analysis.
 
 Supported apps: Word, Excel, PowerPoint, Outlook, Photoshop, Access.
 
 / Ejecuta scripts Python que controlan apps de Office y Adobe via COM.
 / Los scripts se ejecutan en un sandbox con builtins restringidos.
+/ Validacion via analisis AST (no regex).
 """
 
-import re
+import ast
 import asyncio
 import logging
 from typing import Optional
@@ -28,41 +29,108 @@ SUPPORTED_APPS = {
     "access": "Access.Application",
 }
 
-# Forbidden patterns in scripts — blocks dangerous code
-FORBIDDEN_PATTERNS = [
-    r"\bimport\s",
-    r"__import__",
-    r"\beval\s*\(",
-    r"\bexec\s*\(",
-    r"\bopen\s*\(",
-    r"\bos\.",
-    r"\bsys\.",
-    r"\bsubprocess",
-    r"__builtins__",
-    r"__class__",
-    r"__subclasses__",
-    r"\bglobals\s*\(",
-    r"\blocals\s*\(",
-    r"\bgetattr\s*\(",
-    r"\bsetattr\s*\(",
-    r"\bdelattr\s*\(",
-    r"\bcompile\s*\(",
-]
+# Forbidden AST node types — blocks imports, exec, eval at the syntax level
+_FORBIDDEN_NODE_TYPES = (
+    ast.Import,
+    ast.ImportFrom,
+)
+
+# Forbidden function/attribute names accessed in the script
+_FORBIDDEN_NAMES = frozenset({
+    "eval", "exec", "compile", "execfile",
+    "__import__", "open", "input",
+    "globals", "locals", "vars", "dir",
+    "getattr", "setattr", "delattr", "hasattr",
+    "type", "super", "classmethod", "staticmethod",
+    "property", "memoryview", "bytearray",
+    "breakpoint", "exit", "quit", "help",
+})
+
+# Forbidden dunder attribute access — blocks sandbox escape
+_FORBIDDEN_ATTRS = frozenset({
+    "__class__", "__bases__", "__subclasses__", "__mro__",
+    "__builtins__", "__globals__", "__code__", "__func__",
+    "__self__", "__dict__", "__init_subclass__",
+    "__import__", "__loader__", "__spec__",
+    "__reduce__", "__reduce_ex__",
+})
+
+# Forbidden module-level attribute access (e.g., os.system)
+_FORBIDDEN_MODULE_PREFIXES = frozenset({
+    "os", "sys", "subprocess", "shutil", "pathlib",
+    "importlib", "ctypes", "socket", "http", "urllib",
+    "pickle", "shelve", "tempfile", "glob", "signal",
+})
+
+
+class _ScriptValidator(ast.NodeVisitor):
+    """AST visitor that rejects dangerous code patterns."""
+
+    def __init__(self):
+        self.errors: list[str] = []
+
+    def visit_Import(self, node: ast.Import) -> None:
+        self.errors.append(f"Line {node.lineno}: import statements are forbidden")
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self.errors.append(f"Line {node.lineno}: from...import statements are forbidden")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        # Check direct calls: eval(...), exec(...), etc.
+        if isinstance(node.func, ast.Name):
+            if node.func.id in _FORBIDDEN_NAMES:
+                self.errors.append(
+                    f"Line {node.lineno}: calling '{node.func.id}()' is forbidden"
+                )
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        # Block dunder attribute access: obj.__class__, obj.__subclasses__
+        if node.attr in _FORBIDDEN_ATTRS:
+            self.errors.append(
+                f"Line {node.lineno}: accessing '{node.attr}' is forbidden"
+            )
+        # Block dangerous module access: os.system, sys.exit
+        if isinstance(node.value, ast.Name) and node.value.id in _FORBIDDEN_MODULE_PREFIXES:
+            self.errors.append(
+                f"Line {node.lineno}: accessing '{node.value.id}.{node.attr}' is forbidden"
+            )
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        # Block direct reference to forbidden names (not just calls)
+        if node.id in _FORBIDDEN_MODULE_PREFIXES:
+            self.errors.append(
+                f"Line {node.lineno}: referencing '{node.id}' is forbidden"
+            )
+        self.generic_visit(node)
 
 
 def _validate_script(script: str) -> Optional[str]:
     """
-    Validate script for forbidden patterns.
+    Validate script using AST analysis.
     Returns error message if invalid, None if OK.
+
+    / Valida el script usando analisis AST — mas seguro que regex.
     """
-    for pattern in FORBIDDEN_PATTERNS:
-        match = re.search(pattern, script)
-        if match:
-            return (
-                f"Forbidden pattern detected: '{match.group()}'. "
-                "Scripts cannot use imports, eval, exec, open, os, sys, "
-                "subprocess, or access dunder attributes."
-            )
+    # Step 1: Parse into AST
+    try:
+        tree = ast.parse(script)
+    except SyntaxError as e:
+        return f"Script has a syntax error: {e}"
+
+    # Step 2: Walk the AST checking for forbidden patterns
+    validator = _ScriptValidator()
+    validator.visit(tree)
+
+    if validator.errors:
+        return (
+            f"Script validation failed ({len(validator.errors)} issue(s)):\n"
+            + "\n".join(f"  - {e}" for e in validator.errors[:5])
+        )
+
     return None
 
 
@@ -94,7 +162,7 @@ async def run_app_script(
     Returns:
         Dictionary with script result or error.
 
-    / Ejecuta un script Python que controla una aplicación Windows via COM.
+    / Ejecuta un script Python que controla una aplicacion Windows via COM.
     """
     # Validate app name
     app_lower = app_name.lower().strip()
@@ -104,7 +172,7 @@ async def run_app_script(
             "supported_apps": list(SUPPORTED_APPS.keys()),
         }
 
-    # Validate script
+    # Validate script via AST analysis
     validation_error = _validate_script(script)
     if validation_error:
         return {"error": validation_error}
@@ -137,8 +205,26 @@ async def run_app_script(
                         "hint": f"Make sure {app_name.title()} is installed.",
                     }
 
-            # Execute script in sandbox
-            sandbox = {"app": app, "result": None, "__builtins__": {}}
+            # Execute script in restricted sandbox
+            # Only 'app' and 'result' are exposed; builtins limited to
+            # safe types needed for basic data manipulation
+            safe_builtins = {
+                "True": True, "False": False, "None": None,
+                "int": int, "float": float, "str": str,
+                "bool": bool, "list": list, "dict": dict,
+                "tuple": tuple, "set": set,
+                "len": len, "range": range, "enumerate": enumerate,
+                "zip": zip, "map": map, "filter": filter,
+                "sorted": sorted, "reversed": reversed,
+                "min": min, "max": max, "sum": sum, "abs": abs,
+                "round": round, "isinstance": isinstance,
+                "print": lambda *a, **kw: None,  # Silenced print
+            }
+            sandbox = {
+                "app": app,
+                "result": None,
+                "__builtins__": safe_builtins,
+            }
 
             try:
                 exec(script, sandbox)
@@ -154,7 +240,6 @@ async def run_app_script(
             # Convert COM objects to strings for serialization
             if result is not None:
                 try:
-                    # Try to serialize — if it fails, convert to string
                     import json
                     json.dumps(result, default=str)
                 except (TypeError, ValueError):
@@ -177,7 +262,7 @@ async def run_app_script(
             pythoncom.CoUninitialize()
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await asyncio.wait_for(
             loop.run_in_executor(None, _execute),
             timeout=timeout,

@@ -15,9 +15,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-
 logger = logging.getLogger("marlow.tools.watcher")
 
 # Module-level state
@@ -26,48 +23,67 @@ _events: list[dict] = []
 _max_events = 500
 _event_lock = threading.Lock()
 
+# Lazy-loaded watchdog classes (avoid hard failure if not installed)
+_Observer = None
+_FileSystemEventHandler = None
 
-class MarlowEventHandler(FileSystemEventHandler):
-    """Captures filesystem events and stores them in the event log."""
 
-    def __init__(self, watch_id: str, event_types: list[str]):
-        self.watch_id = watch_id
-        self.event_types = event_types
+def _ensure_watchdog():
+    """Import watchdog on first use. Returns error string or None."""
+    global _Observer, _FileSystemEventHandler
+    if _Observer is not None:
+        return None
+    try:
+        from watchdog.observers import Observer
+        from watchdog.events import FileSystemEventHandler
+        _Observer = Observer
+        _FileSystemEventHandler = FileSystemEventHandler
+        return None
+    except ImportError:
+        return "watchdog not installed. Run: pip install watchdog"
 
-    def on_created(self, event):
-        if "created" in self.event_types and not event.is_directory:
-            self._record("created", event.src_path)
 
-    def on_modified(self, event):
-        if "modified" in self.event_types and not event.is_directory:
-            self._record("modified", event.src_path)
+def _make_handler(watch_id: str, event_types: list[str]):
+    """Create a MarlowEventHandler (requires watchdog to be loaded)."""
+    class MarlowEventHandler(_FileSystemEventHandler):
+        """Captures filesystem events and stores them in the event log."""
 
-    def on_deleted(self, event):
-        if "deleted" in self.event_types and not event.is_directory:
-            self._record("deleted", event.src_path)
+        def on_created(self, event):
+            if "created" in event_types and not event.is_directory:
+                self._record("created", event.src_path)
 
-    def on_moved(self, event):
-        if "moved" in self.event_types and not event.is_directory:
-            self._record("moved", event.src_path, event.dest_path)
+        def on_modified(self, event):
+            if "modified" in event_types and not event.is_directory:
+                self._record("modified", event.src_path)
 
-    def _record(self, event_type: str, src_path: str, dest_path: str = None):
-        with _event_lock:
-            entry = {
-                "watch_id": self.watch_id,
-                "event": event_type,
-                "path": src_path,
-                "filename": Path(src_path).name,
-                "timestamp": datetime.now().isoformat(),
-            }
-            if dest_path:
-                entry["dest_path"] = dest_path
-                entry["dest_filename"] = Path(dest_path).name
+        def on_deleted(self, event):
+            if "deleted" in event_types and not event.is_directory:
+                self._record("deleted", event.src_path)
 
-            _events.append(entry)
+        def on_moved(self, event):
+            if "moved" in event_types and not event.is_directory:
+                self._record("moved", event.src_path, event.dest_path)
 
-            # Enforce max events limit
-            while len(_events) > _max_events:
-                _events.pop(0)
+        def _record(self, event_type: str, src_path: str, dest_path: str = None):
+            with _event_lock:
+                entry = {
+                    "watch_id": watch_id,
+                    "event": event_type,
+                    "path": src_path,
+                    "filename": Path(src_path).name,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                if dest_path:
+                    entry["dest_path"] = dest_path
+                    entry["dest_filename"] = Path(dest_path).name
+
+                _events.append(entry)
+
+                # Enforce max events limit
+                while len(_events) > _max_events:
+                    _events.pop(0)
+
+    return MarlowEventHandler()
 
 
 async def watch_folder(
@@ -86,6 +102,10 @@ async def watch_folder(
     Returns:
         Dict with watch_id on success, or error.
     """
+    err = _ensure_watchdog()
+    if err:
+        return {"error": err}
+
     if events is None:
         events = ["created", "modified", "deleted", "moved"]
 
@@ -96,11 +116,12 @@ async def watch_folder(
         return {"error": f"Not a folder: {path}"}
 
     # Generate unique watch_id
-    watch_id = hashlib.md5(f"{path}{time.time()}".encode()).hexdigest()[:8]
+    import uuid
+    watch_id = uuid.uuid4().hex[:8]
 
     # Create and start observer
-    handler = MarlowEventHandler(watch_id, events)
-    observer = Observer()
+    handler = _make_handler(watch_id, events)
+    observer = _Observer()
     observer.schedule(handler, str(folder), recursive=recursive)
     observer.start()
 

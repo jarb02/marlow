@@ -134,45 +134,47 @@ async def clipboard(
     
     / Lee o escribe en el portapapeles del sistema.
     """
+    if action not in ("read", "write"):
+        return {"error": "Invalid action. Use 'read' or 'write'."}
+    if action == "write" and not text:
+        return {"error": "Provide 'text' parameter for write action."}
+
     try:
         import pyperclip
-    except ImportError:
-        # Fallback to pyautogui
-        try:
-            import pyautogui
 
-            if action == "read":
-                # Ctrl+C might not work without selection, use win32
-                import subprocess
-                result = subprocess.run(
-                    ["powershell", "-NoProfile", "-Command",
-                     "Get-Clipboard"],
-                    capture_output=True, text=True,
-                )
-                return {
-                    "content": result.stdout.strip(),
-                    "action": "read",
-                }
-            elif action == "write" and text:
-                import subprocess
-                subprocess.run(
-                    ["powershell", "-NoProfile", "-Command",
-                     f"Set-Clipboard -Value '{text}'"],
-                    capture_output=True,
-                )
-                return {"success": True, "action": "write", "length": len(text)}
-        except Exception as e:
-            return {"error": str(e)}
-
-    try:
         if action == "read":
             content = pyperclip.paste()
             return {"content": content, "action": "read", "length": len(content)}
-        elif action == "write" and text:
+        else:
             pyperclip.copy(text)
             return {"success": True, "action": "write", "length": len(text)}
+    except ImportError:
+        pass
+
+    # Fallback: Win32 clipboard API via PowerShell (pyperclip not installed)
+    try:
+        import subprocess
+
+        if action == "read":
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+                capture_output=True, text=True, timeout=10,
+            )
+            return {
+                "content": result.stdout.strip(),
+                "action": "read",
+            }
         else:
-            return {"error": "Invalid action. Use 'read' or 'write' (with text)."}
+            # Pass text via stdin to avoid shell injection
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "$input | Set-Clipboard"],
+                input=text,
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return {"error": f"Clipboard write failed: {result.stderr.strip()[:200]}"}
+            return {"success": True, "action": "write", "length": len(text)}
     except Exception as e:
         return {"error": str(e)}
 

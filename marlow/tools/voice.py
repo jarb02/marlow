@@ -14,7 +14,6 @@ Includes basic silence detection (RMS below threshold).
 import os
 import struct
 import logging
-from typing import Optional
 
 logger = logging.getLogger("marlow.tools.voice")
 

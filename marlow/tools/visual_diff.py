@@ -10,7 +10,7 @@ window state changes, etc.
 
 import io
 import time
-import hashlib
+import uuid
 import base64
 import logging
 from datetime import datetime
@@ -67,7 +67,7 @@ async def visual_diff(
     if "error" in shot:
         return shot
 
-    diff_id = hashlib.md5(f"{window_title}{time.time()}".encode()).hexdigest()[:8]
+    diff_id = uuid.uuid4().hex[:8]
     _diff_states[diff_id] = {
         "before_base64": shot["image_base64"],
         "before_width": shot.get("width"),

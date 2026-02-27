@@ -170,7 +170,8 @@ def _search_tree(node: dict, target: str) -> Optional[dict]:
     name = (node.get("name") or "").lower()
     auto_id = (node.get("automation_id") or "").lower()
 
-    if target in name or target in auto_id:
+    # Whole-word match to avoid false positives (e.g., "File" matching "Profile")
+    if target == name or target == auto_id or (" " + target + " ") in (" " + name + " "):
         return {
             "name": node.get("name"),
             "control_type": node.get("control_type"),
@@ -190,18 +191,17 @@ async def _get_uia_element_ref(target: str, window_title: Optional[str]):
     """Get a live pywinauto element reference for clicking."""
     try:
         from pywinauto import Desktop
+        from marlow.core.uia_utils import find_window, find_element_by_name
 
-        desktop = Desktop(backend="uia")
         if window_title:
-            windows = desktop.windows(title_re=f".*{window_title}.*")
-            if not windows:
+            win, err = find_window(window_title, list_available=False)
+            if err:
                 return None
-            win = windows[0]
         else:
+            desktop = Desktop(backend="uia")
             win = desktop.window(active_only=True)
 
-        from marlow.tools.mouse import _find_element
-        return _find_element(win, target, max_depth=5)
+        return find_element_by_name(win, target, max_depth=5)
 
     except Exception:
         return None
@@ -216,10 +216,8 @@ async def _click_element(element) -> dict:
         pass
 
     try:
-        from marlow.core.focus import preserve_focus
-        with preserve_focus():
-            element.click_input()
-        return {"success": True, "method": "click_input (focus restored)"}
+        element.click_input()
+        return {"success": True, "method": "click_input"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
