@@ -56,10 +56,10 @@ dependencies = [
 ocr = ["pytesseract>=0.3.10"]
 
 [project.urls]
-Homepage = "https://github.com/OWNER/marlow"
-Documentation = "https://github.com/OWNER/marlow#readme"
-Repository = "https://github.com/OWNER/marlow"
-Issues = "https://github.com/OWNER/marlow/issues"
+Homepage = "https://github.com/jarb02/marlow"
+Documentation = "https://github.com/jarb02/marlow#readme"
+Repository = "https://github.com/jarb02/marlow"
+Issues = "https://github.com/jarb02/marlow/issues"
 
 [project.scripts]
 marlow = "marlow.server:main"

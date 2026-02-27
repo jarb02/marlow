@@ -149,7 +149,7 @@ Marlow creates `~/.marlow/config.json` on first run:
 ## 🛠️ Development
 
 ```bash
-git clone https://github.com/OWNER/marlow.git
+git clone https://github.com/jarb02/marlow.git
 cd marlow
 pip install -e ".[dev]"
 ```
