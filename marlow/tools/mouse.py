@@ -1,0 +1,206 @@
+"""
+Marlow Mouse Tool
+
+Click elements by NAME (preferred) or by coordinates (fallback).
+Uses silent methods first for background-mode compatibility.
+
+Escalation order:
+1. invoke() — silent, works in background (preferred)
+2. click_input() — real mouse click, takes focus
+3. pyautogui.click() — absolute coordinates fallback
+"""
+
+import logging
+from typing import Optional
+
+logger = logging.getLogger("marlow.tools.mouse")
+
+
+async def click(
+    element_name: Optional[str] = None,
+    window_title: Optional[str] = None,
+    x: Optional[int] = None,
+    y: Optional[int] = None,
+    button: str = "left",
+    double_click: bool = False,
+    use_silent: bool = True,
+) -> dict:
+    """
+    Click an element by name or at specific coordinates.
+
+    Preferred: Click by element_name (uses Accessibility Tree — works in background).
+    Fallback: Click by x, y coordinates (uses real mouse — takes focus).
+
+    Args:
+        element_name: Name/text of the UI element to click (e.g., "Save", "File", "OK").
+                      Marlow finds it in the Accessibility Tree and clicks it silently.
+        window_title: Which window to search in. If None, searches all windows.
+        x: X coordinate for absolute click (only if element_name not provided).
+        y: Y coordinate for absolute click (only if element_name not provided).
+        button: "left", "right", or "middle". Default: "left".
+        double_click: Whether to double-click. Default: False.
+        use_silent: Try silent invoke() first for background compatibility.
+                    Default: True.
+
+    Returns:
+        Dictionary with click result and method used.
+    
+    / Hace click en un elemento por nombre o en coordenadas específicas.
+    / Preferido: Click por element_name (usa Accessibility Tree — funciona en background).
+    / Fallback: Click por coordenadas x, y (usa mouse real — toma el foco).
+    """
+    if element_name:
+        return await _click_by_name(element_name, window_title, button, 
+                                      double_click, use_silent)
+    elif x is not None and y is not None:
+        return await _click_by_coordinates(x, y, button, double_click)
+    else:
+        return {
+            "error": "Provide either 'element_name' or both 'x' and 'y' coordinates.",
+            "usage": {
+                "by_name": "click(element_name='Save', window_title='Notepad')",
+                "by_coords": "click(x=500, y=300)",
+            }
+        }
+
+
+async def _click_by_name(
+    element_name: str,
+    window_title: Optional[str],
+    button: str,
+    double_click: bool,
+    use_silent: bool,
+) -> dict:
+    """Find element by name in the Accessibility Tree and click it."""
+    try:
+        from pywinauto import Desktop
+        from pywinauto.findwindows import ElementNotFoundError
+
+        desktop = Desktop(backend="uia")
+
+        # Find the window
+        if window_title:
+            windows = desktop.windows(title_re=f".*{window_title}.*")
+            if not windows:
+                return {
+                    "error": f"Window '{window_title}' not found",
+                    "available_windows": [
+                        w.window_text() for w in desktop.windows()
+                        if w.window_text().strip()
+                    ][:15],
+                }
+            target_window = windows[0]
+        else:
+            target_window = desktop.window(active_only=True)
+
+        # Search for element by name
+        # Desktop.windows() returns UIAWrapper objects directly
+        element = _find_element(target_window, element_name)
+
+        if element is None:
+            return {
+                "error": f"Element '{element_name}' not found in window",
+                "hint": "Try get_ui_tree() first to see available elements.",
+            }
+
+        # Try silent method first (background-friendly)
+        if use_silent:
+            try:
+                element.invoke()
+                return {
+                    "success": True,
+                    "method": "invoke (silent — background compatible)",
+                    "element": element_name,
+                    "window": target_window.window_text(),
+                }
+            except Exception:
+                logger.debug(f"Silent invoke failed for '{element_name}', falling back to click_input")
+
+        # Fallback to real click (requires focus — restore after)
+        from marlow.core.focus import preserve_focus
+        with preserve_focus():
+            if double_click:
+                element.double_click_input()
+            elif button == "right":
+                element.right_click_input()
+            else:
+                element.click_input()
+
+        return {
+            "success": True,
+            "method": "click_input (real mouse — focus restored)",
+            "element": element_name,
+            "window": target_window.window_text(),
+        }
+
+    except ImportError:
+        return {"error": "pywinauto not installed. Run: pip install pywinauto"}
+    except Exception as e:
+        logger.error(f"Click by name error: {e}")
+        return {"error": str(e)}
+
+
+async def _click_by_coordinates(
+    x: int, y: int, button: str, double_click: bool
+) -> dict:
+    """Click at absolute screen coordinates using pyautogui."""
+    try:
+        import pyautogui
+        from marlow.core.focus import preserve_focus
+
+        pyautogui.FAILSAFE = True  # Move mouse to corner to abort
+
+        with preserve_focus():
+            if double_click:
+                pyautogui.doubleClick(x, y, button=button)
+            else:
+                pyautogui.click(x, y, button=button)
+
+        return {
+            "success": True,
+            "method": "pyautogui (coordinates — focus restored)",
+            "coordinates": {"x": x, "y": y},
+            "button": button,
+            "double_click": double_click,
+        }
+
+    except ImportError:
+        return {"error": "pyautogui not installed. Run: pip install pyautogui"}
+    except pyautogui.FailSafeException:
+        return {
+            "error": "PyAutoGUI failsafe triggered (mouse moved to screen corner)",
+            "hint": "This is a safety feature. The action was aborted.",
+        }
+    except Exception as e:
+        logger.error(f"Click by coordinates error: {e}")
+        return {"error": str(e)}
+
+
+def _find_element(parent, name: str, max_depth: int = 5, depth: int = 0):
+    """
+    Recursively search for an element by name in the UI tree.
+    Returns the first match or None.
+    """
+    if depth > max_depth:
+        return None
+
+    try:
+        text = parent.window_text() or ""
+        if name.lower() in text.lower():
+            return parent
+
+        # Also check automation_id
+        auto_id = getattr(parent.element_info, "automation_id", "") or ""
+        if name.lower() in auto_id.lower():
+            return parent
+
+        # Search children
+        for child in parent.children():
+            found = _find_element(child, name, max_depth, depth + 1)
+            if found is not None:
+                return found
+
+    except Exception:
+        pass
+
+    return None
