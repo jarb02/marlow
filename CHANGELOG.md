@@ -7,6 +7,38 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.4.0] - 2026-02-27
+
+Phase 4 complete. 47 total MCP tools. Folder monitoring with watchdog and
+recurring task scheduler with safety-checked command execution.
+
+### Added
+
+#### New Tool Modules (2)
+- **`marlow/tools/watcher.py`** — 4 tools: `watch_folder` starts monitoring a directory using watchdog Observer + `MarlowEventHandler`; `unwatch_folder` stops monitoring; `get_watch_events` retrieves detected events (filterable by watch_id, timestamp, limit); `list_watchers` shows all active watchers. Events: created, modified, deleted, moved. Max 500 events buffered.
+- **`marlow/tools/scheduler.py`** — 4 tools: `schedule_task` creates a recurring command via `TaskRunner` daemon thread; `list_scheduled_tasks` shows all tasks with status/run counts; `remove_task` stops and removes a task; `get_task_history` shows execution history with stdout/stderr/exit_code. Min interval: 10s, execution timeout: 60s, max 200 history entries.
+
+#### New Tools (8 total)
+| Tool | Description |
+|------|-------------|
+| `watch_folder` | Start monitoring a folder for file changes |
+| `unwatch_folder` | Stop monitoring a folder |
+| `get_watch_events` | Get detected filesystem events |
+| `list_watchers` | List all active folder watchers |
+| `schedule_task` | Schedule a recurring command |
+| `list_scheduled_tasks` | List scheduled tasks with status |
+| `remove_task` | Remove a scheduled task |
+| `get_task_history` | Get task execution history |
+
+### Changed
+
+- **`pyproject.toml`** — Added `watchdog>=4.0.0` to main dependencies.
+- **`marlow/__init__.py`** — Version bumped from `0.3.0` to `0.4.0`.
+- **`marlow/server.py`** — Added 8 new Tool definitions and dispatch entries. Total: 47 tools registered.
+- **`marlow/core/safety.py`** — Added `schedule_task` and `watch_folder` to `sensitive_tools` set (require confirmation).
+
+---
+
 ## [0.3.0] - 2026-02-27
 
 Phase 3 complete. 39 total MCP tools. Visual diff, persistent memory,
@@ -185,17 +217,6 @@ All tools tested on Windows 11 with MCP client integration verified.
 ---
 
 ## Roadmap
-
-### Phase 3 (Planned)
-- `visual_diff` — Compare screenshots to detect changes
-- `memory` — Persistent memory across sessions
-- `clipboard_history` — Track clipboard changes over time
-- `scraper` — Web scraping with browser automation
-- Extension system for community plugins
-
-### Phase 4 (Planned)
-- `watch_folder` — Monitor folder for file changes
-- `schedule_task` — Schedule automation tasks
 
 ### Phase 5 (Planned)
 - End-to-end testing with real workflows

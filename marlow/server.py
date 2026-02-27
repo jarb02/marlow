@@ -47,6 +47,9 @@ from marlow.core import focus
 from marlow.tools import visual_diff, memory, clipboard_ext, scraper
 from marlow.extensions import registry as ext_registry
 
+# Phase 4 Tools
+from marlow.tools import watcher, scheduler
+
 # ─────────────────────────────────────────────────────────────
 # Setup
 # ─────────────────────────────────────────────────────────────
@@ -818,6 +821,155 @@ async def list_tools() -> list[Tool]:
             },
         ),
 
+        # ── Phase 4: Folder Watcher ──
+        Tool(
+            name="watch_folder",
+            description=(
+                "Start monitoring a folder for file changes. "
+                "Returns a watch_id to track events. "
+                "Events: created, modified, deleted, moved."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Folder path to monitor.",
+                    },
+                    "events": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["created", "modified", "deleted", "moved"]},
+                        "description": "Event types to watch (default: all).",
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "Watch subdirectories too (default: false).",
+                        "default": False,
+                    },
+                },
+                "required": ["path"],
+            },
+        ),
+        Tool(
+            name="unwatch_folder",
+            description="Stop monitoring a folder by watch_id.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "watch_id": {
+                        "type": "string",
+                        "description": "The watch_id returned by watch_folder.",
+                    },
+                },
+                "required": ["watch_id"],
+            },
+        ),
+        Tool(
+            name="get_watch_events",
+            description=(
+                "Get detected filesystem events. "
+                "Optionally filter by watch_id or timestamp."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "watch_id": {
+                        "type": "string",
+                        "description": "Filter to a specific watcher.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max events to return (default: 50).",
+                        "default": 50,
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": "ISO timestamp — only events after this time.",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="list_watchers",
+            description="List all active folder watchers.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+
+        # ── Phase 4: Task Scheduler ──
+        Tool(
+            name="schedule_task",
+            description=(
+                "Schedule a recurring command. Runs in a background thread "
+                "at the specified interval. Use max_runs to limit executions. "
+                "Commands go through the same safety checks as run_command."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Unique name for this task.",
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to execute.",
+                    },
+                    "interval_seconds": {
+                        "type": "integer",
+                        "description": "Run every N seconds (default: 300, min: 10).",
+                        "default": 300,
+                    },
+                    "shell": {
+                        "type": "string",
+                        "enum": ["powershell", "cmd"],
+                        "default": "powershell",
+                    },
+                    "max_runs": {
+                        "type": "integer",
+                        "description": "Stop after N runs (omit for unlimited).",
+                    },
+                },
+                "required": ["name", "command"],
+            },
+        ),
+        Tool(
+            name="list_scheduled_tasks",
+            description="List all scheduled tasks with their status and run counts.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="remove_task",
+            description="Remove a scheduled task by name.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_name": {
+                        "type": "string",
+                        "description": "Name of the task to remove.",
+                    },
+                },
+                "required": ["task_name"],
+            },
+        ),
+        Tool(
+            name="get_task_history",
+            description="Get execution history for scheduled tasks.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_name": {
+                        "type": "string",
+                        "description": "Filter to a specific task.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max entries to return (default: 20).",
+                        "default": 20,
+                    },
+                },
+            },
+        ),
+
         # ── Safety ──
         Tool(
             name="restore_user_focus",
@@ -1111,6 +1263,37 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         ),
         "extensions_audit": lambda args: ext_registry.extensions_audit(
             name=args["name"],
+        ),
+        # Phase 4: Folder Watcher
+        "watch_folder": lambda args: watcher.watch_folder(
+            path=args["path"],
+            events=args.get("events"),
+            recursive=args.get("recursive", False),
+        ),
+        "unwatch_folder": lambda args: watcher.unwatch_folder(
+            watch_id=args["watch_id"],
+        ),
+        "get_watch_events": lambda args: watcher.get_watch_events(
+            watch_id=args.get("watch_id"),
+            limit=args.get("limit", 50),
+            since=args.get("since"),
+        ),
+        "list_watchers": lambda args: watcher.list_watchers(),
+        # Phase 4: Task Scheduler
+        "schedule_task": lambda args: scheduler.schedule_task(
+            name=args["name"],
+            command=args["command"],
+            interval_seconds=args.get("interval_seconds", 300),
+            shell=args.get("shell", "powershell"),
+            max_runs=args.get("max_runs"),
+        ),
+        "list_scheduled_tasks": lambda args: scheduler.list_scheduled_tasks(),
+        "remove_task": lambda args: scheduler.remove_task(
+            task_name=args["task_name"],
+        ),
+        "get_task_history": lambda args: scheduler.get_task_history(
+            task_name=args.get("task_name"),
+            limit=args.get("limit", 20),
         ),
         # Safety
         "restore_user_focus": lambda args: focus.restore_user_focus_tool(),

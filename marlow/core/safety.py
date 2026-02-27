@@ -203,6 +203,7 @@ class SafetyEngine:
         sensitive_tools = {
             "run_command", "open_application", "manage_window",
             "type_text", "clipboard", "run_app_script",
+            "schedule_task", "watch_folder",
         }
         sensitive_actions = {
             "close", "delete", "remove", "kill", "terminate",
