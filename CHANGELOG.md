@@ -7,6 +7,49 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.3.0] - 2026-02-27
+
+Phase 3 complete. 39 total MCP tools. Visual diff, persistent memory,
+clipboard history, web scraping, and a community extension system with
+sandboxed permissions.
+
+### Added
+
+#### New Tool Modules (4)
+- **`marlow/tools/visual_diff.py`** — 2 tools: `visual_diff` captures a "before" screenshot and returns a `diff_id`; `visual_diff_compare` captures "after" and computes pixel-level difference using PIL `ImageChops.difference()`. Returns change percentage, changed pixel count, and bounding box of changed region. States auto-expire after 5 minutes.
+- **`marlow/tools/memory.py`** — 4 tools: `memory_save`, `memory_recall`, `memory_delete`, `memory_list`. Persistent key-value storage in `~/.marlow/memory/` as JSON files organized by category (general, preferences, projects, tasks). Survives across sessions.
+- **`marlow/tools/clipboard_ext.py`** — 1 tool: `clipboard_history` with actions start/stop/list/search/clear. Background daemon thread monitors clipboard via Win32 API every 1 second. Stores up to 100 entries (500 chars each).
+- **`marlow/tools/scraper.py`** — 1 tool: `scrape_url` with httpx async client + BeautifulSoup. Formats: text (5KB limit), links (100 max), tables, html (10KB limit). CSS selector support. Security: localhost/private IPs blocked, 30s timeout, max 5 redirects, honest User-Agent.
+
+#### Extension System (3 modules)
+- **`marlow/extensions/__init__.py`** — Manifest loader and validator for `marlow_extension.json` files.
+- **`marlow/extensions/registry.py`** — 4 tools: `extensions_list`, `extensions_install` (via pip), `extensions_uninstall`, `extensions_audit` (security audit of declared permissions). Registry stored in `~/.marlow/extensions/installed.json`.
+- **`marlow/extensions/sandbox.py`** — `ExtensionSandbox` class enforces declared permissions (com_automation, file_system, network, shell_commands) at runtime.
+
+#### New Tools (12 total)
+| Tool | Description |
+|------|-------------|
+| `visual_diff` | Capture "before" state for comparison |
+| `visual_diff_compare` | Compare before/after, return change % |
+| `memory_save` | Save persistent key-value data |
+| `memory_recall` | Recall memories by key/category |
+| `memory_delete` | Delete a specific memory |
+| `memory_list` | List all memories by category |
+| `clipboard_history` | Monitor and search clipboard history |
+| `scrape_url` | Extract content from URLs |
+| `extensions_list` | List installed extensions |
+| `extensions_install` | Install extension from pip |
+| `extensions_uninstall` | Uninstall extension |
+| `extensions_audit` | Audit extension security |
+
+### Changed
+
+- **`pyproject.toml`** — Added `httpx>=0.27.0` and `beautifulsoup4>=4.12.0` to main dependencies.
+- **`marlow/__init__.py`** — Version bumped from `0.2.0` to `0.3.0`.
+- **`marlow/server.py`** — Added 12 new Tool definitions and dispatch entries. Total: 39 tools registered.
+
+---
+
 ## [0.2.0] - 2026-02-27
 
 Phase 2 complete. 27 total MCP tools. OCR, smart escalation, background mode,
@@ -97,7 +140,7 @@ All tools tested on Windows 11 with MCP client integration verified.
 - **`marlow/server.py`** — MCP server using `mcp` SDK v1.26.0 with stdio transport. Registers tools, enforces safety pipeline on every call, sanitizes output.
 - **`marlow/core/config.py`** — `MarlowConfig` with secure defaults. Config stored in `~/.marlow/config.json`.
 - **`marlow/core/safety.py`** — `SafetyEngine`: kill switch (Ctrl+Shift+Escape), confirmation mode, blocked apps (banking, PayPal, password managers, authenticators), blocked destructive commands (format, del /f, rm -rf, shutdown, reg delete), rate limiter (30 actions/minute).
-- **`marlow/core/sanitizer.py`** — `DataSanitizer`: redacts credit card numbers, SSN, emails, phone numbers, passwords before sending to AI model. AES-256 encrypted audit logs.
+- **`marlow/core/sanitizer.py`** — `DataSanitizer`: redacts credit card numbers, SSN, emails, phone numbers, passwords before returning to caller. AES-256 encrypted audit logs.
 
 #### Tools (14)
 | Tool | Module | Description |

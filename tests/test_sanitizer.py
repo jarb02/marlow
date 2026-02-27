@@ -2,7 +2,7 @@
 Tests for Marlow DataSanitizer — redacts sensitive data before it leaves the machine.
 
 Credit cards, SSNs, emails, phone numbers, and password fields are all
-detected and replaced with [REDACTED] markers BEFORE being sent to the AI model.
+detected and replaced with [REDACTED] markers BEFORE being returned to the caller.
 """
 
 import pytest
@@ -23,7 +23,7 @@ def sanitizer():
 # ─────────────────────────────────────────────────────────────
 
 class TestCreditCardRedaction:
-    """Credit card numbers must never reach the AI model."""
+    """Credit card numbers must never reach the caller."""
 
     @pytest.mark.parametrize("cc", [
         "4532123456789012",        # No separators

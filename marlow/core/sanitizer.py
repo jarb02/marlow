@@ -25,7 +25,7 @@ class DataSanitizer:
     - OCR results
     - Clipboard content
     - Command output
-    - Any text before it's sent to the AI model
+    - Any text before it's returned to the caller
     """
 
     # Replacement markers

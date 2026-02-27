@@ -43,6 +43,10 @@ from marlow.tools import ocr, background, audio, voice, app_script
 from marlow.core import escalation
 from marlow.core import focus
 
+# Phase 3 Tools
+from marlow.tools import visual_diff, memory, clipboard_ext, scraper
+from marlow.extensions import registry as ext_registry
+
 # ─────────────────────────────────────────────────────────────
 # Setup
 # ─────────────────────────────────────────────────────────────
@@ -608,6 +612,212 @@ async def list_tools() -> list[Tool]:
             },
         ),
 
+        # ── Phase 3: Visual Diff ──
+        Tool(
+            name="visual_diff",
+            description=(
+                "Capture a 'before' screenshot for later comparison. "
+                "Call this BEFORE performing an action, then call "
+                "visual_diff_compare with the returned diff_id."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "window_title": {
+                        "type": "string",
+                        "description": "Window to capture. If omitted, full screen.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "What you're about to do (for reference).",
+                        "default": "",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="visual_diff_compare",
+            description=(
+                "Compare current state with a previous 'before' capture. "
+                "Returns change percentage and changed region."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "diff_id": {
+                        "type": "string",
+                        "description": "The diff_id returned by visual_diff.",
+                    },
+                },
+                "required": ["diff_id"],
+            },
+        ),
+
+        # ── Phase 3: Memory ──
+        Tool(
+            name="memory_save",
+            description=(
+                "Save a value persistently across sessions. "
+                "Categories: general, preferences, projects, tasks."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Unique key for this memory."},
+                    "value": {"type": "string", "description": "The text/data to store."},
+                    "category": {
+                        "type": "string",
+                        "enum": ["general", "preferences", "projects", "tasks"],
+                        "default": "general",
+                    },
+                },
+                "required": ["key", "value"],
+            },
+        ),
+        Tool(
+            name="memory_recall",
+            description=(
+                "Recall stored memories. Pass key+category for specific lookup, "
+                "category only for listing, key only to search all, "
+                "or nothing to list all categories."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Key to look up."},
+                    "category": {
+                        "type": "string",
+                        "enum": ["general", "preferences", "projects", "tasks"],
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="memory_delete",
+            description="Delete a specific memory by key and category.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Key to delete."},
+                    "category": {
+                        "type": "string",
+                        "enum": ["general", "preferences", "projects", "tasks"],
+                        "default": "general",
+                    },
+                },
+                "required": ["key"],
+            },
+        ),
+        Tool(
+            name="memory_list",
+            description="List all stored memories organized by category.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+
+        # ── Phase 3: Clipboard History ──
+        Tool(
+            name="clipboard_history",
+            description=(
+                "Manage clipboard history. Actions: "
+                "'start' to begin monitoring, 'stop' to end, "
+                "'list' to see entries, 'search' to find text, 'clear' to wipe."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["start", "stop", "list", "search", "clear"],
+                        "default": "list",
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Text to search for (with action='search').",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max entries to return (default: 20).",
+                        "default": 20,
+                    },
+                },
+            },
+        ),
+
+        # ── Phase 3: Web Scraper ──
+        Tool(
+            name="scrape_url",
+            description=(
+                "Extract content from a URL. "
+                "Formats: 'text' (clean text), 'links' (all links), "
+                "'tables' (HTML tables), 'html' (raw HTML)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL to scrape."},
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector to filter content.",
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["text", "links", "tables", "html"],
+                        "default": "text",
+                    },
+                },
+                "required": ["url"],
+            },
+        ),
+
+        # ── Phase 3: Extensions ──
+        Tool(
+            name="extensions_list",
+            description="List all installed Marlow extensions with their permissions.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="extensions_install",
+            description="Install a Marlow extension from pip.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "package": {
+                        "type": "string",
+                        "description": "pip package name or GitHub URL.",
+                    },
+                },
+                "required": ["package"],
+            },
+        ),
+        Tool(
+            name="extensions_uninstall",
+            description="Uninstall a Marlow extension.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Extension name to uninstall.",
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
+        Tool(
+            name="extensions_audit",
+            description="Audit an installed extension's security and permissions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Extension name to audit.",
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
+
         # ── Safety ──
         Tool(
             name="restore_user_focus",
@@ -854,6 +1064,53 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
             app_name=args["app_name"],
             script=args["script"],
             timeout=args.get("timeout", 30),
+        ),
+        # Safety
+        # Phase 3: Visual Diff
+        "visual_diff": lambda args: visual_diff.visual_diff(
+            window_title=args.get("window_title"),
+            description=args.get("description", ""),
+        ),
+        "visual_diff_compare": lambda args: visual_diff.visual_diff_compare(
+            diff_id=args["diff_id"],
+        ),
+        # Phase 3: Memory
+        "memory_save": lambda args: memory.memory_save(
+            key=args["key"],
+            value=args["value"],
+            category=args.get("category", "general"),
+        ),
+        "memory_recall": lambda args: memory.memory_recall(
+            key=args.get("key"),
+            category=args.get("category"),
+        ),
+        "memory_delete": lambda args: memory.memory_delete(
+            key=args["key"],
+            category=args.get("category", "general"),
+        ),
+        "memory_list": lambda args: memory.memory_list(),
+        # Phase 3: Clipboard History
+        "clipboard_history": lambda args: clipboard_ext.clipboard_history(
+            action=args.get("action", "list"),
+            search=args.get("search"),
+            limit=args.get("limit", 20),
+        ),
+        # Phase 3: Web Scraper
+        "scrape_url": lambda args: scraper.scrape_url(
+            url=args["url"],
+            selector=args.get("selector"),
+            format=args.get("format", "text"),
+        ),
+        # Phase 3: Extensions
+        "extensions_list": lambda args: ext_registry.extensions_list(),
+        "extensions_install": lambda args: ext_registry.extensions_install(
+            package=args["package"],
+        ),
+        "extensions_uninstall": lambda args: ext_registry.extensions_uninstall(
+            name=args["name"],
+        ),
+        "extensions_audit": lambda args: ext_registry.extensions_audit(
+            name=args["name"],
         ),
         # Safety
         "restore_user_focus": lambda args: focus.restore_user_focus_tool(),

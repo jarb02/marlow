@@ -156,10 +156,10 @@ class SafetyEngine:
 
         if needs_confirmation:
             # In MCP context, we return a message asking the user to confirm
-            # The AI model will relay this to the user
+            # The MCP client will relay this to the user
             self._log_action(tool, action, params, True, "success",
                            "Confirmation mode — action described to user")
-            # In MCP, confirmation is handled by the AI model showing the action
+            # In MCP, confirmation is handled by the client showing the action
             # and the user deciding whether to proceed
 
         # 6. All clear
