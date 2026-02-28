@@ -1,0 +1,451 @@
+"""
+Help and capabilities discovery for Marlow MCP Server.
+
+Provides tools for MCP clients to discover all available tools
+and query the current system state.
+"""
+
+from marlow import __version__
+
+# ─────────────────────────────────────────────────────────────
+# Tools Catalog — pure data, no external imports
+# ─────────────────────────────────────────────────────────────
+
+_TOOLS_CATALOG = [
+    {
+        "name": "Core",
+        "tools": [
+            {
+                "name": "get_ui_tree",
+                "description_en": "Read Windows UI Automation Accessibility Tree (0 tokens)",
+                "description_es": "Lee el arbol de accesibilidad de UI Automation (0 tokens)",
+                "params": ["window_title", "max_depth", "include_invisible"],
+            },
+            {
+                "name": "take_screenshot",
+                "description_en": "Screenshot of screen, window, or region (~1,500 tokens)",
+                "description_es": "Captura de pantalla, ventana o region (~1,500 tokens)",
+                "params": ["window_title", "region", "quality"],
+            },
+            {
+                "name": "click",
+                "description_en": "Click element by name (silent) or coordinates",
+                "description_es": "Click por nombre (silencioso) o coordenadas",
+                "params": ["element_name", "window_title", "x", "y", "button", "double_click"],
+            },
+            {
+                "name": "type_text",
+                "description_en": "Type text into element by name or at cursor",
+                "description_es": "Escribir texto en elemento por nombre o en cursor",
+                "params": ["text", "element_name", "window_title", "clear_first"],
+            },
+            {
+                "name": "press_key",
+                "description_en": "Press a keyboard key",
+                "description_es": "Presionar una tecla del teclado",
+                "params": ["key", "times"],
+            },
+            {
+                "name": "hotkey",
+                "description_en": "Execute keyboard shortcut (e.g., Ctrl+C)",
+                "description_es": "Ejecutar atajo de teclado (ej. Ctrl+C)",
+                "params": ["keys"],
+            },
+            {
+                "name": "list_windows",
+                "description_en": "List all open windows with titles and positions",
+                "description_es": "Listar ventanas abiertas con titulos y posiciones",
+                "params": ["include_minimized"],
+            },
+            {
+                "name": "focus_window",
+                "description_en": "Bring a window to the foreground",
+                "description_es": "Traer una ventana al frente",
+                "params": ["window_title"],
+            },
+            {
+                "name": "manage_window",
+                "description_en": "Move, resize, minimize, maximize, or close a window",
+                "description_es": "Mover, redimensionar, minimizar, maximizar o cerrar ventana",
+                "params": ["window_title", "action", "x", "y", "width", "height"],
+            },
+        ],
+    },
+    {
+        "name": "System",
+        "tools": [
+            {
+                "name": "run_command",
+                "description_en": "Execute PowerShell/CMD command (destructive blocked)",
+                "description_es": "Ejecutar comando PowerShell/CMD (destructivos bloqueados)",
+                "params": ["command", "shell", "timeout"],
+            },
+            {
+                "name": "open_application",
+                "description_en": "Open application by name or path",
+                "description_es": "Abrir aplicacion por nombre o ruta",
+                "params": ["app_name", "app_path"],
+            },
+            {
+                "name": "clipboard",
+                "description_en": "Read or write system clipboard",
+                "description_es": "Leer o escribir portapapeles del sistema",
+                "params": ["action", "text"],
+            },
+            {
+                "name": "system_info",
+                "description_en": "Get OS, CPU, RAM, disk usage, top processes",
+                "description_es": "Obtener info de OS, CPU, RAM, disco, procesos",
+                "params": [],
+            },
+            {
+                "name": "run_app_script",
+                "description_en": "COM automation for Office/Adobe apps (sandboxed)",
+                "description_es": "Automatizacion COM para apps Office/Adobe (sandboxed)",
+                "params": ["app_name", "script", "timeout"],
+            },
+        ],
+    },
+    {
+        "name": "Background",
+        "tools": [
+            {
+                "name": "setup_background_mode",
+                "description_en": "Configure dual monitor or offscreen background mode",
+                "description_es": "Configurar modo background dual monitor u offscreen",
+                "params": ["preferred_mode"],
+            },
+            {
+                "name": "move_to_agent_screen",
+                "description_en": "Move window to agent workspace (second monitor)",
+                "description_es": "Mover ventana al workspace del agente (segundo monitor)",
+                "params": ["window_title"],
+            },
+            {
+                "name": "move_to_user_screen",
+                "description_en": "Move window back to user's primary monitor",
+                "description_es": "Devolver ventana al monitor principal del usuario",
+                "params": ["window_title"],
+            },
+            {
+                "name": "get_agent_screen_state",
+                "description_en": "List windows on agent screen",
+                "description_es": "Listar ventanas en pantalla del agente",
+                "params": [],
+            },
+        ],
+    },
+    {
+        "name": "Audio",
+        "tools": [
+            {
+                "name": "capture_system_audio",
+                "description_en": "Record system audio via WASAPI loopback",
+                "description_es": "Grabar audio del sistema via WASAPI loopback",
+                "params": ["duration_seconds"],
+            },
+            {
+                "name": "capture_mic_audio",
+                "description_en": "Record microphone audio",
+                "description_es": "Grabar audio del microfono",
+                "params": ["duration_seconds"],
+            },
+            {
+                "name": "transcribe_audio",
+                "description_en": "Transcribe audio file (faster-whisper CPU)",
+                "description_es": "Transcribir archivo de audio (faster-whisper CPU)",
+                "params": ["audio_path", "language", "model_size"],
+            },
+            {
+                "name": "download_whisper_model",
+                "description_en": "Pre-download Whisper model to avoid timeout",
+                "description_es": "Pre-descargar modelo Whisper para evitar timeout",
+                "params": ["model_size"],
+            },
+            {
+                "name": "listen_for_command",
+                "description_en": "Listen for voice command via mic + transcription",
+                "description_es": "Escuchar comando de voz via mic + transcripcion",
+                "params": ["duration_seconds", "language", "model_size"],
+            },
+            {
+                "name": "speak",
+                "description_en": "Text-to-speech with edge-tts neural voices",
+                "description_es": "Texto a voz con voces neurales edge-tts",
+                "params": ["text", "language", "voice", "rate"],
+            },
+            {
+                "name": "speak_and_listen",
+                "description_en": "Speak text, then listen for voice response",
+                "description_es": "Hablar texto, luego escuchar respuesta de voz",
+                "params": ["text", "timeout", "language", "voice"],
+            },
+        ],
+    },
+    {
+        "name": "Intelligence",
+        "tools": [
+            {
+                "name": "smart_find",
+                "description_en": "Find UI element: UIA -> OCR -> screenshot escalation",
+                "description_es": "Buscar elemento UI: UIA -> OCR -> screenshot (escalamiento)",
+                "params": ["target", "window_title", "click_if_found"],
+            },
+            {
+                "name": "visual_diff",
+                "description_en": "Capture 'before' state for visual comparison",
+                "description_es": "Capturar estado 'antes' para comparacion visual",
+                "params": ["window_title", "description"],
+            },
+            {
+                "name": "visual_diff_compare",
+                "description_en": "Compare before/after, return change percentage",
+                "description_es": "Comparar antes/despues, retornar porcentaje de cambio",
+                "params": ["diff_id"],
+            },
+            {
+                "name": "ocr_region",
+                "description_en": "Extract text via Tesseract OCR",
+                "description_es": "Extraer texto via Tesseract OCR",
+                "params": ["window_title", "region", "language", "preprocess"],
+            },
+        ],
+    },
+    {
+        "name": "Memory",
+        "tools": [
+            {
+                "name": "memory_save",
+                "description_en": "Save persistent key-value data across sessions",
+                "description_es": "Guardar datos clave-valor persistentes entre sesiones",
+                "params": ["key", "value", "category"],
+            },
+            {
+                "name": "memory_recall",
+                "description_en": "Recall stored memories by key or category",
+                "description_es": "Recuperar memorias almacenadas por clave o categoria",
+                "params": ["key", "category"],
+            },
+            {
+                "name": "memory_delete",
+                "description_en": "Delete a specific memory",
+                "description_es": "Eliminar una memoria especifica",
+                "params": ["key", "category"],
+            },
+            {
+                "name": "memory_list",
+                "description_en": "List all memories organized by category",
+                "description_es": "Listar todas las memorias por categoria",
+                "params": [],
+            },
+        ],
+    },
+    {
+        "name": "Clipboard",
+        "tools": [
+            {
+                "name": "clipboard_history",
+                "description_en": "Monitor and search clipboard history",
+                "description_es": "Monitorear y buscar historial del portapapeles",
+                "params": ["action", "search", "limit"],
+            },
+        ],
+    },
+    {
+        "name": "Web",
+        "tools": [
+            {
+                "name": "scrape_url",
+                "description_en": "Extract content from URL (text/links/tables/html)",
+                "description_es": "Extraer contenido de URL (texto/links/tablas/html)",
+                "params": ["url", "selector", "format"],
+            },
+        ],
+    },
+    {
+        "name": "Extensions",
+        "tools": [
+            {
+                "name": "extensions_list",
+                "description_en": "List installed extensions with permissions",
+                "description_es": "Listar extensiones instaladas con permisos",
+                "params": [],
+            },
+            {
+                "name": "extensions_install",
+                "description_en": "Install extension from pip",
+                "description_es": "Instalar extension desde pip",
+                "params": ["package"],
+            },
+            {
+                "name": "extensions_uninstall",
+                "description_en": "Uninstall an extension",
+                "description_es": "Desinstalar una extension",
+                "params": ["name"],
+            },
+            {
+                "name": "extensions_audit",
+                "description_en": "Audit extension security and permissions",
+                "description_es": "Auditar seguridad y permisos de extension",
+                "params": ["name"],
+            },
+        ],
+    },
+    {
+        "name": "Automation",
+        "tools": [
+            {
+                "name": "watch_folder",
+                "description_en": "Monitor folder for file changes (watchdog)",
+                "description_es": "Monitorear carpeta por cambios (watchdog)",
+                "params": ["path", "events", "recursive"],
+            },
+            {
+                "name": "unwatch_folder",
+                "description_en": "Stop monitoring a folder",
+                "description_es": "Detener monitoreo de carpeta",
+                "params": ["watch_id"],
+            },
+            {
+                "name": "get_watch_events",
+                "description_en": "Get detected filesystem events",
+                "description_es": "Obtener eventos del filesystem detectados",
+                "params": ["watch_id", "limit", "since"],
+            },
+            {
+                "name": "list_watchers",
+                "description_en": "List all active folder watchers",
+                "description_es": "Listar todos los watchers activos",
+                "params": [],
+            },
+            {
+                "name": "schedule_task",
+                "description_en": "Schedule a recurring command",
+                "description_es": "Programar un comando recurrente",
+                "params": ["name", "command", "interval_seconds", "shell", "max_runs"],
+            },
+            {
+                "name": "list_scheduled_tasks",
+                "description_en": "List scheduled tasks with status",
+                "description_es": "Listar tareas programadas con estado",
+                "params": [],
+            },
+            {
+                "name": "remove_task",
+                "description_en": "Remove a scheduled task",
+                "description_es": "Eliminar una tarea programada",
+                "params": ["task_name"],
+            },
+            {
+                "name": "get_task_history",
+                "description_en": "Get task execution history",
+                "description_es": "Obtener historial de ejecucion de tareas",
+                "params": ["task_name", "limit"],
+            },
+        ],
+    },
+    {
+        "name": "Security",
+        "tools": [
+            {
+                "name": "kill_switch",
+                "description_en": "Emergency stop: halt all automation",
+                "description_es": "Parada de emergencia: detener toda automatizacion",
+                "params": ["action"],
+            },
+            {
+                "name": "restore_user_focus",
+                "description_en": "Restore focus to user's previously active window",
+                "description_es": "Restaurar foco a la ventana activa previa del usuario",
+                "params": [],
+            },
+            {
+                "name": "get_voice_hotkey_status",
+                "description_en": "Check voice hotkey status (Ctrl+Shift+M)",
+                "description_es": "Verificar estado del hotkey de voz (Ctrl+Shift+M)",
+                "params": [],
+            },
+        ],
+    },
+    {
+        "name": "Help",
+        "tools": [
+            {
+                "name": "get_capabilities",
+                "description_en": "List all Marlow tools organized by category",
+                "description_es": "Listar todas las herramientas de Marlow por categoria",
+                "params": ["category"],
+            },
+            {
+                "name": "get_version",
+                "description_en": "Get Marlow version and system state",
+                "description_es": "Obtener version de Marlow y estado del sistema",
+                "params": [],
+            },
+        ],
+    },
+]
+
+_TOTAL_TOOLS = sum(len(cat["tools"]) for cat in _TOOLS_CATALOG)
+
+
+# ─────────────────────────────────────────────────────────────
+# MCP Tools
+# ─────────────────────────────────────────────────────────────
+
+async def get_capabilities(category: str | None = None) -> dict:
+    """
+    List all Marlow MCP tools organized by category.
+
+    / Retorna catalogo completo o filtrado por categoria.
+    """
+    if category:
+        # Filter to a single category (case-insensitive)
+        match = None
+        for cat in _TOOLS_CATALOG:
+            if cat["name"].lower() == category.lower():
+                match = cat
+                break
+        if not match:
+            available = [c["name"] for c in _TOOLS_CATALOG]
+            return {
+                "error": f"Unknown category: '{category}'. Available: {available}",
+            }
+        return {
+            "success": True,
+            "total_tools": len(match["tools"]),
+            "categories": [match],
+        }
+
+    return {
+        "success": True,
+        "total_tools": _TOTAL_TOOLS,
+        "categories": _TOOLS_CATALOG,
+    }
+
+
+async def get_version(
+    safety_status: dict,
+    background_mode: str | None,
+    voice_hotkey_active: bool,
+) -> dict:
+    """
+    Get Marlow version, tool count, and current system state.
+
+    / Retorna version, conteo de tools, y estado del sistema.
+
+    Parameters are passed by server.py dispatch (decoupled from internals).
+    """
+    return {
+        "success": True,
+        "version": __version__,
+        "total_tools": _TOTAL_TOOLS,
+        "system": {
+            "kill_switch_active": safety_status.get("kill_switch_active", False),
+            "confirmation_mode": safety_status.get("confirmation_mode", "unknown"),
+            "actions_this_minute": safety_status.get("actions_this_minute", 0),
+            "max_actions_per_minute": safety_status.get("max_actions_per_minute", 30),
+            "background_mode": background_mode,
+            "voice_hotkey_active": voice_hotkey_active,
+        },
+    }

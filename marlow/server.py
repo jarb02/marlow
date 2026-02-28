@@ -53,6 +53,9 @@ from marlow.tools import watcher, scheduler
 from marlow.core import voice_hotkey
 from marlow.tools import tts
 
+# Help / Capabilities
+from marlow.tools import help as help_mod
+
 # ─────────────────────────────────────────────────────────────
 # Setup
 # ─────────────────────────────────────────────────────────────
@@ -1081,6 +1084,37 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
+
+        # ── Help / Capabilities ──
+        Tool(
+            name="get_capabilities",
+            description=(
+                "List all Marlow MCP tools organized by category. "
+                "Returns tool names, descriptions (EN/ES), and parameters. "
+                "Optionally filter by category name."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": (
+                            "Filter to a specific category. Options: Core, System, "
+                            "Background, Audio, Intelligence, Memory, Clipboard, "
+                            "Web, Extensions, Automation, Security, Help."
+                        ),
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_version",
+            description=(
+                "Get Marlow version, total tool count, and current system state "
+                "(kill switch, confirmation mode, background mode, voice hotkey)."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
     ]
 
 
@@ -1393,6 +1427,15 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
             voice=args.get("voice"),
         ),
         "get_voice_hotkey_status": lambda args: voice_hotkey.get_voice_hotkey_status(),
+        # Help / Capabilities
+        "get_capabilities": lambda args: help_mod.get_capabilities(
+            category=args.get("category"),
+        ),
+        "get_version": lambda args: help_mod.get_version(
+            safety_status=safety.get_status(),
+            background_mode=background._manager.mode,
+            voice_hotkey_active=voice_hotkey._hotkey_active,
+        ),
     }
 
     handler = tool_map.get(name)
