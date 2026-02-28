@@ -63,6 +63,9 @@ from marlow.core import error_journal
 # Smart Wait
 from marlow.tools import wait
 
+# Voice Overlay
+from marlow.core import voice_overlay
+
 # Help / Capabilities
 from marlow.tools import help as help_mod
 
@@ -1352,6 +1355,47 @@ async def list_tools() -> list[Tool]:
             },
         ),
 
+        # ── Agent Screen Only ──
+        Tool(
+            name="set_agent_screen_only",
+            description=(
+                "Enable or disable agent_screen_only mode. When enabled, "
+                "open_application and manage_window auto-redirect windows "
+                "to the agent monitor (second screen). Disabled = windows "
+                "stay where opened/moved."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "True to auto-redirect to agent screen, False to disable.",
+                    },
+                },
+                "required": ["enabled"],
+            },
+        ),
+
+        # ── Voice Overlay ──
+        Tool(
+            name="toggle_voice_overlay",
+            description=(
+                "Show or hide the floating voice overlay window. "
+                "The overlay displays voice control status (idle/listening/processing), "
+                "transcribed text, and a mini-log of recent interactions."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "visible": {
+                        "type": "boolean",
+                        "description": "True to show, False to hide.",
+                    },
+                },
+                "required": ["visible"],
+            },
+        ),
+
         # ── Help / Capabilities ──
         Tool(
             name="get_capabilities",
@@ -1369,7 +1413,7 @@ async def list_tools() -> list[Tool]:
                             "Filter to a specific category. Options: Core, System, "
                             "Background, Audio, Intelligence, Memory, Clipboard, "
                             "Web, Extensions, Automation, Adaptive, Workflow, "
-                            "Self-Improve, Wait, Security, Help."
+                            "Self-Improve, Wait, UX, Security, Help."
                         ),
                     },
                 },
@@ -1438,6 +1482,20 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent | Ima
     except Exception as e:
         logger.error(f"Tool execution error: {name}: {e}")
         result = {"error": str(e)}
+
+    # ── Agent screen only: auto-move after open_application ──
+    if (
+        name == "open_application"
+        and isinstance(result, dict)
+        and result.get("success")
+        and config.automation.agent_screen_only
+        and background.is_background_mode_active()
+    ):
+        try:
+            app_name = arguments.get("app_name") or arguments.get("app_path", "")
+            await _auto_move_to_agent(app_name)
+        except Exception:
+            pass  # Best effort — don't break open_application
 
     # ── Adaptive behavior: record action ──
     try:
@@ -1536,14 +1594,7 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         "focus_window": lambda args: windows.focus_window(
             window_title=args["window_title"],
         ),
-        "manage_window": lambda args: windows.manage_window(
-            window_title=args["window_title"],
-            action=args["action"],
-            x=args.get("x"),
-            y=args.get("y"),
-            width=args.get("width"),
-            height=args.get("height"),
-        ),
+        "manage_window": lambda args: _manage_window_with_redirect(args),
         # System
         "run_command": lambda args: system.run_command(
             command=args["command"],
@@ -1756,6 +1807,14 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
             voice=args.get("voice"),
         ),
         "get_voice_hotkey_status": lambda args: voice_hotkey.get_voice_hotkey_status(),
+        # Agent Screen Only
+        "set_agent_screen_only": lambda args: background.set_agent_screen_only(
+            enabled=args["enabled"],
+        ),
+        # Voice Overlay
+        "toggle_voice_overlay": lambda args: voice_overlay.toggle_voice_overlay(
+            visible=args["visible"],
+        ),
         # Help / Capabilities
         "get_capabilities": lambda args: help_mod.get_capabilities(
             category=args.get("category"),
@@ -1772,6 +1831,72 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         return await handler(arguments)
     else:
         return {"error": f"Unknown tool: {name}"}
+
+
+async def _auto_move_to_agent(app_name: str) -> None:
+    """
+    After open_application, wait for window to appear and move to agent screen.
+    Best effort — failures are silently ignored.
+
+    / Después de abrir app, esperar ventana y mover al monitor del agente.
+    """
+    import asyncio as _aio
+    import re
+
+    # Wait for the window to appear (up to 3 seconds)
+    search = app_name.split("\\")[-1].split(".")[0]  # "notepad.exe" → "notepad"
+    if not search:
+        return
+
+    for _ in range(6):
+        await _aio.sleep(0.5)
+        try:
+            from pywinauto import Desktop
+            desktop = Desktop(backend="uia")
+            wins = desktop.windows(title_re=f".*{re.escape(search)}.*")
+            if wins:
+                title = wins[0].window_text()
+                await background.move_to_agent_screen(title)
+                logger.debug(f"Auto-moved '{title}' to agent screen")
+                return
+        except Exception:
+            continue
+
+
+async def _manage_window_with_redirect(args: dict) -> dict:
+    """
+    Wrapper for manage_window that redirects moves to agent screen
+    when agent_screen_only is active.
+
+    / Wrapper que redirige movimientos al monitor del agente cuando
+    / agent_screen_only esta activo.
+    """
+    action = args.get("action", "")
+
+    # Only intercept "move" actions
+    if (
+        action == "move"
+        and config.automation.agent_screen_only
+        and background.is_background_mode_active()
+    ):
+        x = args.get("x")
+        y = args.get("y")
+        if x is not None and y is not None and background.is_on_user_screen(x, y):
+            # Redirect to agent monitor
+            coords = background.get_agent_move_coords()
+            if coords:
+                args = dict(args)
+                args["x"] = coords[0]
+                args["y"] = coords[1]
+
+    return await windows.manage_window(
+        window_title=args["window_title"],
+        action=args["action"],
+        x=args.get("x"),
+        y=args.get("y"),
+        width=args.get("width"),
+        height=args.get("height"),
+    )
 
 
 async def _handle_kill_switch(arguments: dict) -> list[TextContent]:
@@ -1825,7 +1950,7 @@ def main():
     # Start kill switch listener
     safety.start_kill_switch()
 
-    # Start voice hotkey (Ctrl+Shift+M)
+    # Start voice hotkey (Ctrl+Shift+M + Ctrl+Shift+N)
     try:
         voice_hotkey.start_voice_hotkey(
             hotkey="ctrl+shift+m",
@@ -1833,6 +1958,24 @@ def main():
         )
     except Exception as e:
         logger.warning(f"Voice hotkey failed to start: {e}")
+
+    # Auto-setup background mode if 2+ monitors detected
+    try:
+        monitors = background._manager._enumerate_monitors()
+        if len(monitors) >= 2:
+            import asyncio as _aio
+            loop = _aio.new_event_loop()
+            try:
+                result = loop.run_until_complete(background.setup_background_mode())
+                if result.get("success"):
+                    logger.info(
+                        f"🖥️ Background mode auto-configured: {result.get('mode')} "
+                        f"({len(monitors)} monitors)"
+                    )
+            finally:
+                loop.close()
+    except Exception as e:
+        logger.warning(f"Auto background mode failed: {e}")
 
     # Run MCP server via stdio
     asyncio.run(_run_server())

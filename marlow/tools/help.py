@@ -449,6 +449,23 @@ _TOOLS_CATALOG = [
         ],
     },
     {
+        "name": "UX",
+        "tools": [
+            {
+                "name": "set_agent_screen_only",
+                "description_en": "Enable/disable auto-redirect of windows to agent screen",
+                "description_es": "Activar/desactivar redireccion automatica al monitor del agente",
+                "params": ["enabled"],
+            },
+            {
+                "name": "toggle_voice_overlay",
+                "description_en": "Show/hide floating voice control overlay window",
+                "description_es": "Mostrar/ocultar ventana flotante de control de voz",
+                "params": ["visible"],
+            },
+        ],
+    },
+    {
         "name": "Security",
         "tools": [
             {

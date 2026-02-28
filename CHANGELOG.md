@@ -7,6 +7,34 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.9.0] - 2026-02-28
+
+UX improvements. 68 total MCP tools. Agent screen auto-redirect keeps
+windows on the second monitor. Voice overlay floating window for real-time
+voice control feedback with status indicator and mini-log.
+
+### Added
+- **Agent Screen Only mode** — `agent_screen_only` config setting (default: True)
+  - `open_application()` auto-moves new windows to agent monitor
+  - `manage_window(action="move")` redirects to agent screen when target is on user's monitor
+  - `setup_background_mode()` auto-executes at server startup if 2+ monitors detected
+  - New tool: `set_agent_screen_only(enabled)` — toggle the mode
+- **Voice Overlay** — floating tkinter window (`marlow/core/voice_overlay.py`)
+  - Status indicator: Idle (grey), Listening (red pulse), Processing (yellow), Ready (green)
+  - Shows transcribed user text and Marlow responses
+  - Last 5 lines mini-log, 300x200px, topmost, semi-transparent, bottom-right corner
+  - Opens automatically on voice hotkey press
+  - New tool: `toggle_voice_overlay(visible)` — show/hide manually
+- **Ctrl+Shift+N** — manual stop recording hotkey (skip silence detection)
+- Added `is_on_user_screen()`, `get_agent_move_coords()`, `is_background_mode_active()` helpers to background.py
+
+### Changed
+- Voice hotkey now registers both Ctrl+Shift+M (record) and Ctrl+Shift+N (stop)
+- Voice pipeline updates overlay status at each stage (listening → processing → ready)
+- `manage_window` dispatch wraps through `_manage_window_with_redirect` for agent screen checks
+
+---
+
 ## [0.8.0] - 2026-02-28
 
 Smart Wait tools. 66 total MCP tools. Intelligent polling-based wait functions

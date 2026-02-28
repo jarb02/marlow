@@ -275,6 +275,43 @@ async def move_to_user_screen(window_title: str) -> dict:
         return {"error": str(e)}
 
 
+def is_on_user_screen(x: int, y: int) -> bool:
+    """
+    Check if coordinates fall on the user's primary monitor.
+
+    Returns True if (x, y) is within the primary monitor bounds.
+    Returns False if background mode is not set up.
+
+    / Verifica si las coordenadas están en el monitor del usuario.
+    """
+    if not _manager.primary_monitor:
+        return False
+    p = _manager.primary_monitor
+    return (
+        p["left"] <= x < p.get("right", p["left"] + p.get("width", 1920))
+        and p.get("top", 0) <= y < p.get("bottom", p.get("top", 0) + p.get("height", 1080))
+    )
+
+
+def get_agent_move_coords() -> Optional[tuple[int, int]]:
+    """
+    Get safe coordinates for placing a window on the agent monitor.
+
+    Returns (x, y) for the agent monitor, or None if not available.
+
+    / Obtiene coordenadas seguras para colocar ventana en monitor del agente.
+    """
+    if not _manager.agent_monitor:
+        return None
+    agent = _manager.agent_monitor
+    return (agent["left"] + 50, agent.get("top", 0) + 50)
+
+
+def is_background_mode_active() -> bool:
+    """Check if background mode is set up."""
+    return _manager.mode is not None
+
+
 async def get_agent_screen_state() -> dict:
     """
     Get the state of windows on the agent screen.
@@ -328,5 +365,41 @@ async def get_agent_screen_state() -> dict:
             "tracked_windows": list(_manager._moved_windows.keys()),
         }
 
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def set_agent_screen_only(enabled: bool) -> dict:
+    """
+    Enable or disable agent_screen_only mode.
+
+    When enabled, open_application and manage_window auto-redirect
+    windows to the agent monitor instead of the user's screen.
+
+    Args:
+        enabled: True to enable, False to disable.
+
+    Returns:
+        Dictionary with new state.
+
+    / Activa o desactiva el modo agent_screen_only.
+    """
+    try:
+        from marlow.core.config import MarlowConfig
+
+        config = MarlowConfig.load()
+        config.automation.agent_screen_only = enabled
+        config.save()
+
+        return {
+            "success": True,
+            "agent_screen_only": enabled,
+            "background_mode": _manager.mode,
+            "hint": (
+                "Windows will auto-move to agent screen."
+                if enabled
+                else "Windows will stay where opened/moved."
+            ),
+        }
     except Exception as e:
         return {"error": str(e)}

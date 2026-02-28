@@ -1,16 +1,19 @@
 """
 Marlow Voice Hotkey
 
-Background process that listens for Ctrl+Shift+M, records speech
-with chunk-based VAD (voice activity detection), transcribes via
-faster-whisper, and types the result into the active MCP client window.
+Background process that listens for:
+- Ctrl+Shift+M → start recording speech
+- Ctrl+Shift+N → stop recording manually (skip silence detection)
+
+Records speech with chunk-based VAD (voice activity detection),
+transcribes via faster-whisper, and types the result into the
+active MCP client window. Opens voice overlay automatically.
 
 Not an MCP tool itself (except get_voice_hotkey_status for querying state).
 Started automatically from server.py main().
 
-/ Proceso background que escucha Ctrl+Shift+M, graba voz con
-/ deteccion de actividad por chunks, transcribe, y escribe el
-/ resultado en la ventana del cliente MCP activo.
+/ Proceso background con Ctrl+Shift+M (grabar) y Ctrl+Shift+N (parar).
+/ Graba voz con VAD, transcribe, escribe en cliente MCP. Abre overlay.
 """
 
 import time
@@ -28,11 +31,14 @@ logger = logging.getLogger("marlow.core.voice_hotkey")
 # ── Module state ──
 _hotkey_active: bool = False
 _recording: bool = False
+_manual_stop: bool = False  # set by Ctrl+Shift+N to stop recording early
 _hotkey_combo: str = "ctrl+shift+m"
+_stop_combo: str = "ctrl+shift+n"
 _last_text: Optional[str] = None
 _last_error: Optional[str] = None
 _kill_switch_check: Optional[Callable] = None
 _hotkey_handle: Optional[object] = None
+_stop_handle: Optional[object] = None
 _saved_hwnd: Optional[int] = None  # foreground window when hotkey pressed
 
 # ── Recording config ──
@@ -60,7 +66,8 @@ def start_voice_hotkey(
 
     / Registra hotkey global de voz via modulo keyboard.
     """
-    global _hotkey_active, _hotkey_combo, _kill_switch_check, _hotkey_handle
+    global _hotkey_active, _hotkey_combo, _kill_switch_check
+    global _hotkey_handle, _stop_handle
 
     if _hotkey_active:
         return {"success": True, "status": "already_active", "hotkey": _hotkey_combo}
@@ -71,9 +78,10 @@ def start_voice_hotkey(
     try:
         import keyboard
         _hotkey_handle = keyboard.add_hotkey(hotkey, _on_hotkey_pressed)
+        _stop_handle = keyboard.add_hotkey(_stop_combo, _on_stop_pressed)
         _hotkey_active = True
-        logger.info(f"Voice hotkey active: {hotkey}")
-        return {"success": True, "hotkey": hotkey}
+        logger.info(f"Voice hotkeys active: {hotkey} (record), {_stop_combo} (stop)")
+        return {"success": True, "hotkey": hotkey, "stop_hotkey": _stop_combo}
     except ImportError:
         logger.warning("keyboard module not available. Voice hotkey disabled.")
         return {"error": "keyboard module not installed"}
@@ -84,11 +92,11 @@ def start_voice_hotkey(
 
 def stop_voice_hotkey() -> dict:
     """
-    Unregister the voice hotkey.
+    Unregister both voice hotkeys (record + stop).
 
-    / Desregistra el hotkey de voz.
+    / Desregistra ambos hotkeys de voz (grabar + parar).
     """
-    global _hotkey_active, _hotkey_handle
+    global _hotkey_active, _hotkey_handle, _stop_handle
 
     if not _hotkey_active:
         return {"success": True, "status": "already_inactive"}
@@ -98,11 +106,14 @@ def stop_voice_hotkey() -> dict:
         if _hotkey_handle is not None:
             keyboard.remove_hotkey(_hotkey_handle)
             _hotkey_handle = None
+        if _stop_handle is not None:
+            keyboard.remove_hotkey(_stop_handle)
+            _stop_handle = None
         _hotkey_active = False
-        logger.info("Voice hotkey deactivated")
+        logger.info("Voice hotkeys deactivated")
         return {"success": True, "status": "deactivated"}
     except Exception as e:
-        logger.error(f"Failed to remove voice hotkey: {e}")
+        logger.error(f"Failed to remove voice hotkeys: {e}")
         return {"error": str(e)}
 
 
@@ -127,18 +138,18 @@ async def get_voice_hotkey_status() -> dict:
 
 def _on_hotkey_pressed():
     """
-    Callback when voice hotkey is pressed.
-    Saves the foreground window HWND, checks kill switch, starts recording.
+    Callback when Ctrl+Shift+M is pressed.
+    Saves foreground HWND, opens overlay, checks kill switch, starts recording.
 
-    / Callback cuando se presiona el hotkey de voz.
-    / Guarda el HWND de la ventana activa antes de grabar.
+    / Callback cuando se presiona Ctrl+Shift+M.
+    / Guarda HWND, abre overlay, verifica kill switch, inicia grabacion.
     """
-    global _recording, _saved_hwnd
+    global _recording, _saved_hwnd, _manual_stop
 
     # Check kill switch
     if _kill_switch_check and _kill_switch_check():
         logger.warning("Voice hotkey pressed but kill switch is active")
-        winsound.Beep(400, 300)  # error beep
+        winsound.Beep(400, 300)
         return
 
     # Don't start if already recording
@@ -146,22 +157,49 @@ def _on_hotkey_pressed():
         logger.debug("Voice hotkey pressed but already recording")
         return
 
+    _manual_stop = False
+
     # Save the foreground window HWND (the MCP client where user pressed hotkey)
     try:
         _saved_hwnd = ctypes.windll.user32.GetForegroundWindow()
     except Exception:
         _saved_hwnd = None
 
+    # Open overlay and set listening state
+    try:
+        from marlow.core import voice_overlay
+        voice_overlay.show_overlay()
+        voice_overlay.update_status(voice_overlay.STATUS_LISTENING)
+    except Exception:
+        pass
+
     # Start recording in daemon thread (non-blocking)
     thread = threading.Thread(target=_record_and_transcribe, daemon=True)
     thread.start()
 
 
+def _on_stop_pressed():
+    """
+    Callback when Ctrl+Shift+N is pressed.
+    Signals the recording loop to stop immediately.
+
+    / Callback cuando se presiona Ctrl+Shift+N.
+    / Señala al loop de grabacion que pare inmediatamente.
+    """
+    global _manual_stop
+
+    if _recording:
+        _manual_stop = True
+        logger.debug("Manual stop requested via Ctrl+Shift+N")
+
+
 def _record_and_transcribe():
     """
     Core pipeline: beep -> record with VAD -> save -> transcribe -> type into MCP client.
+    Updates overlay status throughout the pipeline.
 
     / Pipeline principal: beep -> grabar con VAD -> guardar -> transcribir -> escribir en cliente MCP.
+    / Actualiza el overlay durante todo el pipeline.
     """
     global _recording, _last_text, _last_error
 
@@ -176,13 +214,18 @@ def _record_and_transcribe():
         audio_data = _record_with_vad()
         if audio_data is None or len(audio_data) == 0:
             _last_error = "No audio recorded"
+            _overlay_status("idle")
             winsound.Beep(400, 300)
             return
+
+        # Update overlay: processing
+        _overlay_status("processing")
 
         # Save to WAV
         audio_path = _save_chunks_to_wav(audio_data)
         if audio_path is None:
             _last_error = "Failed to save audio"
+            _overlay_status("idle")
             winsound.Beep(400, 300)
             return
 
@@ -190,25 +233,33 @@ def _record_and_transcribe():
         text = _transcribe_sync(str(audio_path))
         if text is None or not text.strip():
             _last_error = "Transcription returned empty text"
+            _overlay_status("idle")
             winsound.Beep(400, 300)
             return
 
         _last_text = text.strip()
 
+        # Update overlay with transcribed text
+        _overlay_text(_last_text, "user")
+
         # Type into the MCP client window (saved on hotkey press)
         success = _type_into_active_window(_last_text)
         if not success:
             _last_error = "Failed to type into MCP client"
+            _overlay_status("idle")
             winsound.Beep(400, 300)
             return
 
-        # Success beep
+        # Success
+        _overlay_status("ready")
+        _overlay_text("Sent to MCP client", "marlow")
         winsound.Beep(1200, 200)
         logger.info(f"Voice command transcribed: {_last_text[:50]}...")
 
     except Exception as e:
         _last_error = str(e)
         logger.error(f"Voice hotkey pipeline error: {e}")
+        _overlay_status("idle")
         try:
             winsound.Beep(400, 300)
         except Exception:
@@ -245,6 +296,11 @@ def _record_with_vad() -> Optional[np.ndarray]:
         # Check kill switch between chunks
         if _kill_switch_check and _kill_switch_check():
             logger.warning("Kill switch activated during recording")
+            break
+
+        # Check manual stop (Ctrl+Shift+N)
+        if _manual_stop:
+            logger.debug(f"Manual stop at chunk {i+1}")
             break
 
         # Record one chunk
@@ -425,6 +481,24 @@ def _type_into_active_window(text: str) -> bool:
     except Exception as e:
         logger.error(f"Type into active window error: {e}")
         return _type_fallback(text)
+
+
+def _overlay_status(status: str) -> None:
+    """Update overlay status indicator (safe to call from any thread)."""
+    try:
+        from marlow.core import voice_overlay
+        voice_overlay.update_status(status)
+    except Exception:
+        pass
+
+
+def _overlay_text(text: str, source: str = "user") -> None:
+    """Update overlay text display (safe to call from any thread)."""
+    try:
+        from marlow.core import voice_overlay
+        voice_overlay.update_text(text, source)
+    except Exception:
+        pass
 
 
 def _type_fallback(text: str) -> bool:

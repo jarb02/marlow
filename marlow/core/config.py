@@ -95,6 +95,10 @@ class AutomationConfig:
     # Mouse movement speed (0 = instant, higher = slower)
     mouse_speed: float = 0.0
 
+    # Agent screen only: auto-move windows to agent monitor
+    # When True, open_application and manage_window auto-redirect to agent screen
+    agent_screen_only: bool = True
+
 
 @dataclass
 class MarlowConfig:
