@@ -49,19 +49,64 @@ def integration_tmp(tmp_path):
 
 
 # ─────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────
+
+async def _close_notepad(notepad_proc) -> None:
+    """
+    Reliably close Notepad (handles Win11 process aliasing).
+
+    Win11 tabbed Notepad may spawn a separate process, so the PID from
+    subprocess.Popen doesn't always match the window process. We find
+    the real PID via the window handle and force-kill it.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    # Step 1: Find Notepad window and kill via real PID
+    try:
+        from marlow.core.uia_utils import find_window
+        win = find_window("Notepad")
+        if win:
+            hwnd = win.handle
+            pid = wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid.value)],
+                    capture_output=True, timeout=5,
+                )
+                await asyncio.sleep(0.5)
+                return
+    except Exception:
+        pass
+
+    # Step 2: Fallback — kill the Popen process
+    if notepad_proc:
+        notepad_proc.kill()
+        try:
+            notepad_proc.wait(timeout=3)
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────────────────────────
 # 1. Background Mode Flow
 # ─────────────────────────────────────────────────────────────
 
 class TestBackgroundModeFlow:
     """
     Chain: setup_background_mode → open_application("Notepad") →
-    move_to_agent_screen → type_text → verify → move_to_user_screen →
-    restore_user_focus → verify focus.
+    move_to_agent_screen → type_text → verify on agent screen →
+    restore_user_focus → cleanup (close Notepad).
+
+    Respects agent_screen_only=True: Notepad stays on agent screen,
+    never moved back to user screen.
     """
 
     @pytest.mark.asyncio
     async def test_background_notepad_flow(self):
-        from marlow.tools import background, keyboard, system
+        from marlow.tools import background, keyboard
         from marlow.core import focus
 
         notepad_proc = None
@@ -78,7 +123,7 @@ class TestBackgroundModeFlow:
 
             # Step 2: Open Notepad
             notepad_proc = subprocess.Popen(["notepad.exe"])
-            time.sleep(1.5)  # wait for Notepad to start
+            await asyncio.sleep(1.5)  # wait for Notepad to start
 
             # Step 3: Move Notepad to agent screen
             move_result = await background.move_to_agent_screen(window_title="Notepad")
@@ -86,16 +131,22 @@ class TestBackgroundModeFlow:
                 pytest.skip(f"Move to agent screen failed: {move_result['error']}")
             assert move_result["success"] is True
 
-            # Step 4: Type into Notepad
+            # Step 4: Type into Notepad on agent screen
             type_result = await keyboard.type_text(
                 text="Integration test",
                 window_title="Notepad",
             )
             assert type_result.get("success") is True or "error" not in type_result
 
-            # Step 5: Move back to user screen
-            back_result = await background.move_to_user_screen(window_title="Notepad")
-            assert back_result.get("success") is True
+            # Step 5: Verify Notepad is still on agent screen (agent_screen_only)
+            state = await background.get_agent_screen_state()
+            agent_titles = [
+                w["title"] for w in state.get("windows", [])
+            ]
+            assert any("otepad" in t for t in agent_titles), (
+                f"Notepad should remain on agent screen (agent_screen_only=True). "
+                f"Agent windows: {agent_titles}"
+            )
 
             # Step 6: Restore user focus
             focus.save_user_focus()
@@ -103,13 +154,8 @@ class TestBackgroundModeFlow:
             assert "restored" in restore_result
 
         finally:
-            # Cleanup: close Notepad
-            if notepad_proc:
-                notepad_proc.terminate()
-                try:
-                    notepad_proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    notepad_proc.kill()
+            # Cleanup: close Notepad via its real window PID (handles Win11)
+            await _close_notepad(notepad_proc)
 
 
 # ─────────────────────────────────────────────────────────────
