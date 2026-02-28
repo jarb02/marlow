@@ -70,6 +70,9 @@ async def smart_find(
                 "methods_tried": methods_tried,
                 "tokens_cost": 0,
             }
+            if uia_result.get("partial_matches"):
+                result["partial_matches"] = uia_result["partial_matches"]
+                result["hint"] = uia_result.get("hint")
             if click_if_found and uia_result.get("element_ref"):
                 click_result = await _click_element(uia_result["element_ref"])
                 result["clicked"] = click_result
@@ -151,28 +154,66 @@ async def smart_find(
 
 
 async def _try_uia(target: str, window_title: Optional[str]) -> dict:
-    """Search for target in the UI Automation tree."""
+    """
+    Search for target in the UI Automation tree using fuzzy multi-property search.
+
+    / Busca el target en el arbol UIA con busqueda fuzzy multi-propiedad.
+    """
     try:
-        from marlow.tools.ui_tree import get_ui_tree
+        from pywinauto import Desktop
+        from marlow.core.uia_utils import find_window, find_element_enhanced
 
-        tree = await get_ui_tree(
-            window_title=window_title,
-            max_depth=5,
-            include_invisible=False,
-        )
+        if window_title:
+            win, err = find_window(window_title, list_available=False)
+            if err:
+                return {"found": False, "error": err.get("error", "Window not found")}
+        else:
+            desktop = Desktop(backend="uia")
+            win = desktop.window(active_only=True)
 
-        if "error" in tree:
-            return {"found": False, "error": tree["error"]}
+        candidates = find_element_enhanced(win, target, max_depth=5, max_results=5)
 
-        # Search the tree for target text
-        match = _search_tree(tree.get("elements", {}), target)
-        if match:
-            # Try to get a reference to the actual UIA element for clicking
-            element_ref = await _get_uia_element_ref(target, window_title)
+        if not candidates:
+            return {"found": False}
+
+        best = candidates[0]
+
+        if best["score"] > 0.8:
+            # Strong match — use directly
+            # / Match fuerte — usar directamente
+            element_info = {
+                "name": best["name"],
+                "control_type": best["control_type"],
+                "automation_id": best["automation_id"],
+                "property_matched": best["property_matched"],
+                "score": best["score"],
+                "bbox": best["bbox"],
+            }
             return {
                 "found": True,
-                "element_info": match,
-                "element_ref": element_ref,
+                "element_info": element_info,
+                "element_ref": best["element"],
+            }
+
+        if best["score"] >= 0.6:
+            # Partial matches — include for LLM to decide
+            # / Matches parciales — incluir para que el LLM decida
+            partial_matches = []
+            for c in candidates:
+                partial_matches.append({
+                    "name": c["name"],
+                    "control_type": c["control_type"],
+                    "automation_id": c["automation_id"],
+                    "property_matched": c["property_matched"],
+                    "score": c["score"],
+                    "bbox": c["bbox"],
+                })
+            return {
+                "found": True,
+                "element_info": partial_matches[0],
+                "element_ref": best["element"],
+                "partial_matches": partial_matches,
+                "hint": f"Best match score {best['score']} — partial matches included for review.",
             }
 
         return {"found": False}
@@ -180,52 +221,6 @@ async def _try_uia(target: str, window_title: Optional[str]) -> dict:
     except Exception as e:
         logger.debug(f"UIA search error: {e}")
         return {"found": False, "error": str(e)}
-
-
-def _search_tree(node: dict, target: str) -> Optional[dict]:
-    """Recursively search tree dict for target text."""
-    if not isinstance(node, dict):
-        return None
-
-    # Check name and automation_id
-    name = (node.get("name") or "").lower()
-    auto_id = (node.get("automation_id") or "").lower()
-
-    # Whole-word match to avoid false positives (e.g., "File" matching "Profile")
-    if target == name or target == auto_id or (" " + target + " ") in (" " + name + " "):
-        return {
-            "name": node.get("name"),
-            "control_type": node.get("control_type"),
-            "automation_id": node.get("automation_id"),
-        }
-
-    # Search children
-    for child in node.get("children", []):
-        result = _search_tree(child, target)
-        if result:
-            return result
-
-    return None
-
-
-async def _get_uia_element_ref(target: str, window_title: Optional[str]):
-    """Get a live pywinauto element reference for clicking."""
-    try:
-        from pywinauto import Desktop
-        from marlow.core.uia_utils import find_window, find_element_by_name
-
-        if window_title:
-            win, err = find_window(window_title, list_available=False)
-            if err:
-                return None
-        else:
-            desktop = Desktop(backend="uia")
-            win = desktop.window(active_only=True)
-
-        return find_element_by_name(win, target, max_depth=5)
-
-    except Exception:
-        return None
 
 
 async def _click_element(element) -> dict:
@@ -241,6 +236,69 @@ async def _click_element(element) -> dict:
         return {"success": True, "method": "click_input"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+async def find_elements(
+    query: str,
+    window_title: Optional[str] = None,
+    control_type: Optional[str] = None,
+) -> dict:
+    """
+    Multi-property fuzzy search for UI elements.
+
+    Searches name, automation_id, help_text, and class_name using
+    Levenshtein distance for fuzzy matching. Returns top 5 ranked candidates.
+
+    Args:
+        query: Text to search for (e.g., "Save", "btnSubmit", "Edit field").
+        window_title: Window to search in. If None, uses active window.
+        control_type: Filter by type (e.g., "Button", "Edit", "MenuItem").
+
+    Returns:
+        Dictionary with candidates list, each containing:
+        name, automation_id, control_type, property_matched, score, bbox.
+
+    / Busqueda fuzzy multi-propiedad para elementos UI.
+    / Retorna top 5 candidatos rankeados por score de similitud.
+    """
+    try:
+        from pywinauto import Desktop
+        from marlow.core.uia_utils import find_window, find_element_enhanced
+
+        if window_title:
+            win, err = find_window(window_title, list_available=True)
+            if err:
+                return err
+        else:
+            desktop = Desktop(backend="uia")
+            win = desktop.window(active_only=True)
+
+        candidates = find_element_enhanced(
+            win, query, control_type=control_type, max_depth=5, max_results=5,
+        )
+
+        results = []
+        for c in candidates:
+            results.append({
+                "name": c["name"],
+                "automation_id": c["automation_id"],
+                "control_type": c["control_type"],
+                "property_matched": c["property_matched"],
+                "score": c["score"],
+                "bbox": c["bbox"],
+            })
+
+        return {
+            "success": True,
+            "query": query,
+            "control_type_filter": control_type,
+            "candidates": results,
+            "count": len(results),
+            "window": window_title or "(active window)",
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
 async def _try_ocr(target: str, window_title: Optional[str]) -> dict:

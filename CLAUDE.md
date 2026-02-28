@@ -5,7 +5,7 @@
 
 **Nombre:** Marlow
 **Tagline:** "AI that works beside you, not instead of you"
-**Version:** 0.11.0
+**Version:** 0.12.0
 **Licencia:** MIT
 **Lenguaje:** Python 3.10+ (desarrollado en 3.14)
 **PyPI package:** marlow-mcp
@@ -42,7 +42,7 @@ Marlow va hacia un sistema de **vision por capas** y **Shadow Mode** (operar inv
 - **UX: COMPLETA** — 2 tools (agent_screen_only + voice overlay) + auto-setup background + Ctrl+Shift+N
 - **First-Use Experience: COMPLETA** — 1 tool (run_diagnostics) + setup wizard + install.py
 - **Integration Tests:** 17 tests (7 scenarios) — tool chains completos
-- **Total: 70 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
+- **Total: 71 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
 - **Plataforma probada:** Windows 11 Home 10.0.26200, dual monitor
 
 ## ESTRUCTURA DEL PROYECTO
@@ -55,8 +55,8 @@ marlow/
 │   ├── logo.png                   # Mascota: fantasma amigable con monitores
 │   └── banner.png                 # Banner para README con texto "MARLOW"
 ├── marlow/
-│   ├── __init__.py                # Version 0.11.0
-│   ├── server.py                  # Servidor MCP (70 tools, focus guard, safety pipeline)
+│   ├── __init__.py                # Version 0.12.0
+│   ├── server.py                  # Servidor MCP (71 tools, focus guard, safety pipeline)
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── config.py              # Configuracion con defaults seguros
@@ -143,7 +143,7 @@ winrt-Windows.Foundation.Collections>=3.0.0  # winrt collections
 ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 ```
 
-## HERRAMIENTAS MCP (70 tools)
+## HERRAMIENTAS MCP (71 tools)
 
 ### Phase 1: Core (14 tools)
 | Tool | Funcion | Modulo | Estado |
@@ -168,7 +168,8 @@ ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 |------|---------|--------|--------|
 | ocr_region | Extraer texto via Windows OCR (primary) + Tesseract (fallback) | tools/ocr.py | OK |
 | list_ocr_languages | Listar idiomas OCR disponibles por motor | tools/ocr.py | OK |
-| smart_find | Buscar UI: UIA->OCR->screenshot (escalamiento) | core/escalation.py | OK |
+| smart_find | Buscar UI: UIA fuzzy->OCR->screenshot (escalamiento) | core/escalation.py | OK |
+| find_elements | Busqueda fuzzy multi-propiedad (top 5 candidatos rankeados) | core/escalation.py | OK |
 | setup_background_mode | Configurar dual monitor / offscreen | tools/background.py | OK |
 | move_to_agent_screen | Mover ventana al monitor del agente | tools/background.py | OK |
 | move_to_user_screen | Devolver ventana al monitor del usuario | tools/background.py | OK |
@@ -276,9 +277,21 @@ El nuevo Notepad de Windows 11 (tabulado, clase `RichEditD2DPT`) necesita manejo
 - `_is_win11_notepad()` verifica class_name=="Notepad" + control RichEditD2DPT
 
 ### Smart Escalation (core/escalation.py)
-1. **UI Automation** — 0 tokens, ~10-50ms
+1. **UI Automation (fuzzy search)** — 0 tokens, ~10-50ms, Levenshtein multi-property matching
 2. **OCR (Windows OCR / Tesseract)** — 0 tokens, ~50-500ms
 3. **Screenshot + LLM Vision** — ~1,500 tokens (ultimo recurso)
+
+### Fuzzy Element Search (core/uia_utils.py)
+- `find_element_enhanced(parent, query, control_type, max_depth, max_results)` — busqueda principal
+- Busca en 4 propiedades: name → automation_id → help_text → class_name
+- Levenshtein distance normalizada (~20 lineas, zero deps): `_levenshtein()`, `_similarity()`
+- Thresholds por propiedad: name=0.7, automation_id=0.6, help_text=0.6, class_name=0.6
+- Scoring: exact=1.0, whole-word=0.95, starts-with=0.9, fuzzy=variable
+- Early exit en match perfecto (score 1.0) — no sigue buscando
+- Retorna top N candidatos rankeados: `[{element, property_matched, score, name, automation_id, control_type, bbox}]`
+- `find_element_by_name()` es wrapper de compatibilidad (retorna primer resultado)
+- `find_elements()` MCP tool expone la busqueda al LLM con top 5 candidatos
+- smart_find score >0.8 usa directamente, 0.6-0.8 incluye partial_matches para LLM
 
 ### Visual Diff (tools/visual_diff.py)
 - `visual_diff()` captura estado 'antes', retorna diff_id
@@ -588,7 +601,7 @@ Orden de preferencia para "ver" lo que hay en pantalla.
 
 ### Fase 1: Vision Enhancement
 - 1.1 **Windows OCR** reemplaza Tesseract como motor OCR default ✓ COMPLETADO v0.11.0
-- 1.2 **Multi-property fuzzy search** en UIA tree (buscar por name + automation_id + control_type)
+- 1.2 **Multi-property fuzzy search** en UIA tree (name + automation_id + help_text + class_name, Levenshtein) ✓ COMPLETADO v0.12.0
 - 1.3 **Deteccion de apps Electron** (class_name="Chrome_WidgetWin_1" + proceso con --type=)
 - 1.4 **Profundidad adaptativa** de UIA tree (expandir solo ramas relevantes, no todo el arbol)
 - 1.5 **COM invisible por default** en app_script.py (no mostrar ventana de Office)

@@ -7,6 +7,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.12.0] - 2026-02-28
+
+Multi-property fuzzy search for UI elements. 71 total MCP tools.
+find_element_enhanced searches name, automation_id, help_text, class_name
+using Levenshtein distance. smart_find now uses fuzzy search with score-based
+decision making. New find_elements tool exposes the search to the LLM.
+
+### Added
+
+#### New Tools (1 total)
+| Tool | Description |
+|------|-------------|
+| `find_elements` | Multi-property fuzzy search for UI elements (top 5 ranked candidates) |
+
+### Changed
+
+- **`marlow/core/uia_utils.py`** — Added `find_element_enhanced()` with Levenshtein fuzzy matching across 4 properties (name, automation_id, help_text, class_name). Thresholds: 0.7 for name, 0.6 for others. Early exit on perfect match (score 1.0). `find_element_by_name()` now wraps `find_element_enhanced()` for backward compatibility. Added `_levenshtein()` and `_similarity()` helpers (~20 lines, zero external deps).
+- **`marlow/core/escalation.py`** — Rewrote `_try_uia()` to use `find_element_enhanced()` instead of tree-dict search. Score > 0.8 used directly, 0.6-0.8 includes partial_matches for LLM review. Removed `_search_tree()` and `_get_uia_element_ref()` (replaced by enhanced search). Added `find_elements()` async MCP tool function.
+- **`marlow/server.py`** — Updated `smart_find` description, added `find_elements` tool definition and dispatch. Total: 71 tools.
+- **`marlow/tools/help.py`** — Updated `smart_find` description, added `find_elements` to Intelligence category.
+- **`marlow/__init__.py`** — Version bumped from `0.11.0` to `0.12.0`.
+
+---
+
 ## [0.11.0] - 2026-02-28
 
 Windows OCR replaces Tesseract as primary OCR engine. 70 total MCP tools.

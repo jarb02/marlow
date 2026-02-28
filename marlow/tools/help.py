@@ -187,9 +187,15 @@ _TOOLS_CATALOG = [
         "tools": [
             {
                 "name": "smart_find",
-                "description_en": "Find UI element: UIA -> OCR -> screenshot escalation",
-                "description_es": "Buscar elemento UI: UIA -> OCR -> screenshot (escalamiento)",
+                "description_en": "Find UI element: UIA fuzzy -> OCR -> screenshot escalation",
+                "description_es": "Buscar elemento UI: UIA fuzzy -> OCR -> screenshot (escalamiento)",
                 "params": ["target", "window_title", "click_if_found"],
+            },
+            {
+                "name": "find_elements",
+                "description_en": "Multi-property fuzzy search for UI elements (top 5 candidates)",
+                "description_es": "Busqueda fuzzy multi-propiedad para elementos UI (top 5 candidatos)",
+                "params": ["query", "window_title", "control_type"],
             },
             {
                 "name": "visual_diff",
