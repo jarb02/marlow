@@ -198,6 +198,12 @@ _TOOLS_CATALOG = [
                 "params": ["query", "window_title", "control_type"],
             },
             {
+                "name": "detect_app_framework",
+                "description_en": "Detect UI framework of a window (Electron, WPF, WinUI, etc.)",
+                "description_es": "Detectar framework UI de una ventana (Electron, WPF, WinUI, etc.)",
+                "params": ["window_title"],
+            },
+            {
                 "name": "visual_diff",
                 "description_en": "Capture 'before' state for visual comparison",
                 "description_es": "Capturar estado 'antes' para comparacion visual",

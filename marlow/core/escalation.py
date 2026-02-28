@@ -139,7 +139,7 @@ async def smart_find(
             "methods_tried": methods_tried,
         }
 
-    return {
+    result = {
         "success": True,
         "found": False,
         "method": "screenshot",
@@ -151,6 +151,14 @@ async def smart_find(
         "methods_tried": methods_tried,
         "tokens_cost": 1500,
     }
+
+    # Add framework hint if app is Electron/CEF
+    # / Agregar hint de framework si la app es Electron/CEF
+    fw_hint = _get_framework_hint(window_title)
+    if fw_hint:
+        result["framework_hint"] = fw_hint
+
+    return result
 
 
 async def _try_uia(target: str, window_title: Optional[str]) -> dict:
@@ -360,3 +368,29 @@ async def _try_screenshot(window_title: Optional[str]) -> dict:
         return await take_screenshot(window_title=window_title, quality=85)
     except Exception as e:
         return {"error": str(e)}
+
+
+def _get_framework_hint(window_title: Optional[str]) -> Optional[str]:
+    """
+    Get framework hint for a window (e.g., Electron CDP recommendation).
+    Returns None if no hint needed or if detection fails.
+
+    / Obtener hint de framework para una ventana.
+    """
+    if not window_title:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        from marlow.core.uia_utils import find_window
+        from marlow.core.app_detector import get_framework_hint
+
+        win, err = find_window(window_title, list_available=False)
+        if err:
+            return None
+        hwnd = win.handle
+        pid = wintypes.DWORD()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return get_framework_hint(pid.value)
+    except Exception:
+        return None

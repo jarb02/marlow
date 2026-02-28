@@ -7,6 +7,32 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.13.0] - 2026-02-28
+
+App framework detection via DLL analysis. 72 total MCP tools.
+Detects Electron, CEF, Chromium, WPF, WinForms, WinUI 3, UWP, Win32
+by scanning loaded DLLs. smart_find adds framework hint when Electron/CEF
+app has limited UIA coverage. Cached per PID for performance.
+
+### Added
+
+#### New Core Module (1)
+- **`marlow/core/app_detector.py`** — Framework detection via `psutil.Process.memory_maps()`. Rules-based DLL matching with fallback to exe path and command line args. Per-PID cache. `detect_framework(pid)`, `is_electron(pid)`, `detect_all_windows()`, `detect_app_framework()` async MCP tool, `get_framework_hint(pid)` for smart_find integration.
+
+#### New Tools (1 total)
+| Tool | Description |
+|------|-------------|
+| `detect_app_framework` | Detect UI framework of a window or all windows (Electron, WPF, WinUI, etc.) |
+
+### Changed
+
+- **`marlow/core/escalation.py`** — smart_find adds `framework_hint` when UIA+OCR fail on Electron/CEF apps: "This app is Electron. UIA has limited coverage (~40-60%). Consider connecting CDP."
+- **`marlow/server.py`** — Import app_detector, added `detect_app_framework` tool definition and dispatch. Total: 72 tools.
+- **`marlow/tools/help.py`** — Added `detect_app_framework` to Intelligence category.
+- **`marlow/__init__.py`** — Version bumped from `0.12.0` to `0.13.0`.
+
+---
+
 ## [0.12.0] - 2026-02-28
 
 Multi-property fuzzy search for UI elements. 71 total MCP tools.
