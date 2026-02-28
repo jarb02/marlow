@@ -66,6 +66,9 @@ from marlow.tools import wait
 # Voice Overlay
 from marlow.core import voice_overlay
 
+# Setup Wizard
+from marlow.core import setup_wizard
+
 # Help / Capabilities
 from marlow.tools import help as help_mod
 
@@ -1427,6 +1430,17 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
+
+        # ── Diagnostics ──
+        Tool(
+            name="run_diagnostics",
+            description=(
+                "Run system diagnostics: check Python, monitors, microphone, "
+                "Tesseract OCR, TTS engines, Whisper, system info, and safety config. "
+                "Returns structured results for troubleshooting."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
     ]
 
 
@@ -1824,6 +1838,8 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
             background_mode=background._manager.mode,
             voice_hotkey_active=voice_hotkey._hotkey_active,
         ),
+        # Diagnostics
+        "run_diagnostics": lambda args: setup_wizard.run_diagnostics(),
     }
 
     handler = tool_map.get(name)
@@ -1942,10 +1958,15 @@ def main():
     """Start the Marlow MCP server."""
     ensure_dirs()
 
-    logger.info(f"👻 Marlow v{__version__} starting...")
-    logger.info(f"🔒 Security: confirmation_mode={config.security.confirmation_mode}")
-    logger.info(f"🛑 Kill switch: {'enabled' if config.security.kill_switch_enabled else 'DISABLED'}")
-    logger.info(f"📊 Telemetry: NEVER (zero data leaves your machine)")
+    # First-use setup wizard (runs once, then never again)
+    if setup_wizard.is_first_run():
+        logger.info("First-use setup wizard starting...")
+        setup_wizard.run_setup_wizard()
+
+    logger.info(f"Marlow v{__version__} starting...")
+    logger.info(f"Security: confirmation_mode={config.security.confirmation_mode}")
+    logger.info(f"Kill switch: {'enabled' if config.security.kill_switch_enabled else 'DISABLED'}")
+    logger.info(f"Telemetry: NEVER (zero data leaves your machine)")
 
     # Start kill switch listener
     safety.start_kill_switch()
