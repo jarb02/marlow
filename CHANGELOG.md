@@ -7,6 +7,67 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.7.0] - 2026-02-28
+
+Self-Improve Level 1: Error Journal. 62 total MCP tools. Persistent diary of
+method failures and successes per tool+app combination. When invoke(), SetValue(),
+or UIA fails on a specific app, Marlow remembers and skips straight to the method
+that works next time.
+
+### Added
+
+#### New Core Module (1)
+- **`marlow/core/error_journal.py`** — `ErrorJournal` singleton maintains persistent diary in `~/.marlow/memory/error_journal.json`. Each entry: tool, app, method_failed, method_worked, error_message, params, timestamp, success_count, failure_count. Internal functions `record_failure()`, `record_success()`, `get_best_method()`, `get_known_issues()` used by tools. Max 500 entries with smart eviction (keeps high success_count entries). 2 MCP tools: `get_error_journal`, `clear_error_journal`.
+
+#### New Tools (2 total)
+| Tool | Description |
+|------|-------------|
+| `get_error_journal` | Show error journal (which methods fail/work per app) |
+| `clear_error_journal` | Clear error journal entries for an app or all |
+
+### Changed
+
+- **`marlow/tools/mouse.py`** — `_click_by_name()` consults `get_best_method("click", window)` before invoke(). If journal says invoke fails, skips to click_input(). Records failure on invoke exception, records success on fallback.
+- **`marlow/tools/keyboard.py`** — `_type_into_window()` and `_type_by_name()` consult `get_best_method("type_text", window)` before silent methods. If journal says SetValue fails, skips to type_keys(). Records failure/success.
+- **`marlow/core/escalation.py`** — `smart_find()` consults `get_best_method("smart_find", window)` before UIA step. If journal says UIA fails on an app, starts directly at OCR. Records failure on UIA miss, records success on OCR hit.
+- **`marlow/server.py`** — Added 2 new Tool definitions and dispatch entries. Import for error_journal. Total: 62 tools registered.
+- **`marlow/tools/help.py`** — Added "Self-Improve" category to `_TOOLS_CATALOG`.
+- **`marlow/__init__.py`** — Version bumped from `0.6.0` to `0.7.0`.
+
+---
+
+## [0.6.0] - 2026-02-28
+
+Adaptive Behavior system. 60 total MCP tools. Pattern detection suggests
+repeating action sequences. Workflow recording allows saving and replaying
+named tool call sequences with safety checks at each step.
+
+### Added
+
+#### New Core Modules (2)
+- **`marlow/core/adaptive.py`** — `PatternDetector` singleton analyzes tool call history with sliding window (length 2-10) to detect repeating subsequences (3+ occurrences). Persistent storage in `~/.marlow/memory/patterns.json`. Key params extracted: window_title, app_name, element_name, text, command. 3 MCP tools: `get_suggestions`, `accept_suggestion`, `dismiss_suggestion`.
+- **`marlow/core/workflows.py`** — `WorkflowManager` singleton records, saves, and replays named tool call sequences. Storage in `~/.marlow/workflows/workflows.json`. Meta-tools (kill_switch, workflow_*, adaptive tools, help) excluded from recording. Replay checks kill switch + safety approval before each step, delays between steps (100ms-5s), stops on first failure. 5 MCP tools: `workflow_record`, `workflow_stop`, `workflow_run`, `workflow_list`, `workflow_delete`.
+
+#### New Tools (8 total)
+| Tool | Description |
+|------|-------------|
+| `get_suggestions` | Detect repeating action patterns and suggest them |
+| `accept_suggestion` | Accept a pattern suggestion |
+| `dismiss_suggestion` | Dismiss a pattern suggestion |
+| `workflow_record` | Start recording a workflow |
+| `workflow_stop` | Stop recording and save workflow |
+| `workflow_run` | Replay a saved workflow with safety checks |
+| `workflow_list` | List all saved workflows |
+| `workflow_delete` | Delete a saved workflow |
+
+### Changed
+
+- **`marlow/server.py`** — Added 8 new Tool definitions and dispatch entries. Recording hook in `_call_tool_inner` feeds adaptive detector and workflow recorder. Total: 60 tools registered.
+- **`marlow/core/safety.py`** — Added `workflow_run` to `sensitive_tools` set (requires confirmation).
+- **`marlow/tools/help.py`** — Added "Adaptive" and "Workflow" categories to `_TOOLS_CATALOG`.
+
+---
+
 ## [0.5.0] - 2026-02-28
 
 Phase 5 complete. 52 total MCP tools. Voice control with TTS (edge-tts neural voices

@@ -53,6 +53,13 @@ from marlow.tools import watcher, scheduler
 from marlow.core import voice_hotkey
 from marlow.tools import tts
 
+# Adaptive Behavior + Workflows
+from marlow.core import adaptive
+from marlow.core import workflows
+
+# Self-Improve: Error Journal
+from marlow.core import error_journal
+
 # Help / Capabilities
 from marlow.tools import help as help_mod
 
@@ -1085,6 +1092,142 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}},
         ),
 
+        # ── Adaptive Behavior ──
+        Tool(
+            name="get_suggestions",
+            description=(
+                "Analyze recent tool actions and detect repeating patterns. "
+                "Returns suggestions for sequences you perform frequently. "
+                "Dismissed patterns are filtered out."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="accept_suggestion",
+            description="Mark a pattern suggestion as accepted (acknowledged as useful).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "pattern_id": {
+                        "type": "string",
+                        "description": "The pattern ID to accept.",
+                    },
+                },
+                "required": ["pattern_id"],
+            },
+        ),
+        Tool(
+            name="dismiss_suggestion",
+            description="Dismiss a pattern suggestion so it won't appear again.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "pattern_id": {
+                        "type": "string",
+                        "description": "The pattern ID to dismiss.",
+                    },
+                },
+                "required": ["pattern_id"],
+            },
+        ),
+
+        # ── Workflows ──
+        Tool(
+            name="workflow_record",
+            description=(
+                "Start recording a new workflow. All subsequent tool calls "
+                "(except meta-tools) will be captured as steps. "
+                "Call workflow_stop when done."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Unique name for this workflow.",
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
+        Tool(
+            name="workflow_stop",
+            description="Stop recording and save the current workflow.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="workflow_run",
+            description=(
+                "Replay a saved workflow. Executes each recorded step "
+                "with safety checks (kill switch + approval) before each. "
+                "Stops on first failure."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the workflow to run.",
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
+        Tool(
+            name="workflow_list",
+            description="List all saved workflows with step counts and creation dates.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="workflow_delete",
+            description="Delete a saved workflow by name.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the workflow to delete.",
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
+
+        # ── Self-Improve: Error Journal ──
+        Tool(
+            name="get_error_journal",
+            description=(
+                "Show the error journal — records which methods fail/work "
+                "on specific apps. Marlow uses this to skip methods that "
+                "are known to fail. Optionally filter by app/window."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "window": {
+                        "type": "string",
+                        "description": "Filter by window/app name.",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="clear_error_journal",
+            description=(
+                "Clear error journal entries for a specific app, "
+                "or all entries if no window specified."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "window": {
+                        "type": "string",
+                        "description": "Clear entries for this app only. Omit to clear all.",
+                    },
+                },
+            },
+        ),
+
         # ── Help / Capabilities ──
         Tool(
             name="get_capabilities",
@@ -1101,7 +1244,8 @@ async def list_tools() -> list[Tool]:
                         "description": (
                             "Filter to a specific category. Options: Core, System, "
                             "Background, Audio, Intelligence, Memory, Clipboard, "
-                            "Web, Extensions, Automation, Security, Help."
+                            "Web, Extensions, Automation, Adaptive, Workflow, "
+                            "Self-Improve, Security, Help."
                         ),
                     },
                 },
@@ -1170,6 +1314,15 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent | Ima
     except Exception as e:
         logger.error(f"Tool execution error: {name}: {e}")
         result = {"error": str(e)}
+
+    # ── Adaptive behavior: record action ──
+    try:
+        adaptive._detector.record_action(name, arguments)
+        if workflows._manager.is_recording:
+            success = isinstance(result, dict) and "error" not in result
+            workflows._manager.record_step(name, arguments, success)
+    except Exception:
+        pass  # Never break tool execution for adaptive tracking
 
     # ── Sanitize output (redact sensitive data) ──
     if isinstance(result, dict):
@@ -1410,6 +1563,35 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         "get_task_history": lambda args: scheduler.get_task_history(
             task_name=args.get("task_name"),
             limit=args.get("limit", 20),
+        ),
+        # Adaptive Behavior
+        "get_suggestions": lambda args: adaptive.get_suggestions(),
+        "accept_suggestion": lambda args: adaptive.accept_suggestion(
+            pattern_id=args["pattern_id"],
+        ),
+        "dismiss_suggestion": lambda args: adaptive.dismiss_suggestion(
+            pattern_id=args["pattern_id"],
+        ),
+        # Workflows
+        "workflow_record": lambda args: workflows.workflow_record(
+            name=args["name"],
+        ),
+        "workflow_stop": lambda args: workflows.workflow_stop(),
+        "workflow_run": lambda args: workflows.workflow_run(
+            name=args["name"],
+            safety_engine=safety,
+            dispatch_fn=_dispatch_tool,
+        ),
+        "workflow_list": lambda args: workflows.workflow_list(),
+        "workflow_delete": lambda args: workflows.workflow_delete(
+            name=args["name"],
+        ),
+        # Self-Improve: Error Journal
+        "get_error_journal": lambda args: error_journal.get_error_journal(
+            window=args.get("window"),
+        ),
+        "clear_error_journal": lambda args: error_journal.clear_error_journal(
+            window=args.get("window"),
         ),
         # Safety
         "restore_user_focus": lambda args: focus.restore_user_focus_tool(),

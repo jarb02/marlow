@@ -345,6 +345,81 @@ _TOOLS_CATALOG = [
         ],
     },
     {
+        "name": "Adaptive",
+        "tools": [
+            {
+                "name": "get_suggestions",
+                "description_en": "Detect repeating action patterns and suggest them",
+                "description_es": "Detectar patrones de acciones repetitivas y sugerirlos",
+                "params": [],
+            },
+            {
+                "name": "accept_suggestion",
+                "description_en": "Accept a pattern suggestion",
+                "description_es": "Aceptar una sugerencia de patron",
+                "params": ["pattern_id"],
+            },
+            {
+                "name": "dismiss_suggestion",
+                "description_en": "Dismiss a pattern suggestion",
+                "description_es": "Descartar una sugerencia de patron",
+                "params": ["pattern_id"],
+            },
+        ],
+    },
+    {
+        "name": "Workflow",
+        "tools": [
+            {
+                "name": "workflow_record",
+                "description_en": "Start recording a workflow",
+                "description_es": "Comenzar a grabar un workflow",
+                "params": ["name"],
+            },
+            {
+                "name": "workflow_stop",
+                "description_en": "Stop recording and save workflow",
+                "description_es": "Detener grabacion y guardar workflow",
+                "params": [],
+            },
+            {
+                "name": "workflow_run",
+                "description_en": "Replay a saved workflow with safety checks",
+                "description_es": "Reproducir un workflow guardado con checks de seguridad",
+                "params": ["name"],
+            },
+            {
+                "name": "workflow_list",
+                "description_en": "List all saved workflows",
+                "description_es": "Listar todos los workflows guardados",
+                "params": [],
+            },
+            {
+                "name": "workflow_delete",
+                "description_en": "Delete a saved workflow",
+                "description_es": "Eliminar un workflow guardado",
+                "params": ["name"],
+            },
+        ],
+    },
+    {
+        "name": "Self-Improve",
+        "tools": [
+            {
+                "name": "get_error_journal",
+                "description_en": "Show error journal (which methods fail/work per app)",
+                "description_es": "Mostrar diario de errores (que metodos fallan/funcionan por app)",
+                "params": ["window"],
+            },
+            {
+                "name": "clear_error_journal",
+                "description_en": "Clear error journal entries for an app or all",
+                "description_es": "Limpiar entradas del diario de errores por app o todas",
+                "params": ["window"],
+            },
+        ],
+    },
+    {
         "name": "Security",
         "tools": [
             {

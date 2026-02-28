@@ -75,6 +75,7 @@ async def _click_by_name(
     try:
         from pywinauto import Desktop
         from marlow.core.uia_utils import find_window, find_element_by_name
+        from marlow.core.error_journal import _journal
 
         # Find the window
         if window_title:
@@ -85,6 +86,8 @@ async def _click_by_name(
             desktop = Desktop(backend="uia")
             target_window = desktop.window(active_only=True)
 
+        win_text = target_window.window_text()
+
         # Search for element by name
         element = find_element_by_name(target_window, element_name)
 
@@ -94,18 +97,26 @@ async def _click_by_name(
                 "hint": "Try get_ui_tree() first to see available elements.",
             }
 
+        # Consult error journal: does invoke() fail on this app?
+        best = _journal.get_best_method("click", win_text)
+        skip_invoke = best == "click_input"
+
         # Try silent method first (background-friendly)
-        if use_silent:
+        if use_silent and not skip_invoke:
             try:
                 element.invoke()
+                _journal.record_success("click", win_text, "invoke")
                 return {
                     "success": True,
                     "method": "invoke (silent — background compatible)",
                     "element": element_name,
-                    "window": target_window.window_text(),
+                    "window": win_text,
                 }
-            except Exception:
+            except Exception as e:
+                _journal.record_failure("click", win_text, "invoke", str(e))
                 logger.debug(f"Silent invoke failed for '{element_name}', falling back to click_input")
+        elif skip_invoke:
+            logger.debug(f"Journal says invoke fails on '{win_text}', skipping to click_input")
 
         # Fallback to real click (focus is saved/restored by server.py call_tool)
         if double_click:
@@ -115,12 +126,16 @@ async def _click_by_name(
         else:
             element.click_input()
 
-        return {
+        _journal.record_success("click", win_text, "click_input")
+        result = {
             "success": True,
             "method": "click_input (real mouse — focus restored)",
             "element": element_name,
-            "window": target_window.window_text(),
+            "window": win_text,
         }
+        if skip_invoke:
+            result["journal_hint"] = "Skipped invoke() — journal knows it fails on this app"
+        return result
 
     except ImportError:
         return {"error": "pywinauto not installed. Run: pip install pywinauto"}

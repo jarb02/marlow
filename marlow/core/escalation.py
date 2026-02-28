@@ -43,30 +43,48 @@ async def smart_find(
     methods_tried = []
     target_lower = target.lower()
 
+    # Consult error journal: does UIA fail on this app?
+    from marlow.core.error_journal import _journal
+    best = _journal.get_best_method("smart_find", window_title)
+    skip_uia = best == "ocr"
+
     # ── Step 1: UI Automation Tree (0 tokens, ~10-50ms) ──
-    step_start = time.perf_counter()
-    uia_result = await _try_uia(target_lower, window_title)
-    elapsed = round((time.perf_counter() - step_start) * 1000, 1)
+    if not skip_uia:
+        step_start = time.perf_counter()
+        uia_result = await _try_uia(target_lower, window_title)
+        elapsed = round((time.perf_counter() - step_start) * 1000, 1)
 
-    methods_tried.append({
-        "method": "ui_automation",
-        "success": uia_result["found"],
-        "time_ms": elapsed,
-    })
-
-    if uia_result["found"]:
-        result = {
-            "success": True,
-            "found": True,
+        methods_tried.append({
             "method": "ui_automation",
-            "element": uia_result.get("element_info"),
-            "methods_tried": methods_tried,
-            "tokens_cost": 0,
-        }
-        if click_if_found and uia_result.get("element_ref"):
-            click_result = await _click_element(uia_result["element_ref"])
-            result["clicked"] = click_result
-        return result
+            "success": uia_result["found"],
+            "time_ms": elapsed,
+        })
+
+        if uia_result["found"]:
+            _journal.record_success("smart_find", window_title, "ui_automation")
+            result = {
+                "success": True,
+                "found": True,
+                "method": "ui_automation",
+                "element": uia_result.get("element_info"),
+                "methods_tried": methods_tried,
+                "tokens_cost": 0,
+            }
+            if click_if_found and uia_result.get("element_ref"):
+                click_result = await _click_element(uia_result["element_ref"])
+                result["clicked"] = click_result
+            return result
+
+        # UIA failed — record it
+        _journal.record_failure("smart_find", window_title, "ui_automation",
+                                f"Element '{target}' not found via UIA")
+    else:
+        methods_tried.append({
+            "method": "ui_automation",
+            "skipped": True,
+            "reason": "journal_says_uia_fails_on_this_app",
+        })
+        logger.debug(f"Journal says UIA fails on '{window_title}', starting at OCR")
 
     # ── Step 2: OCR (0 tokens, ~200-500ms) ──
     step_start = time.perf_counter()
@@ -81,6 +99,7 @@ async def smart_find(
     })
 
     if ocr_result["found"]:
+        _journal.record_success("smart_find", window_title, "ocr")
         result = {
             "success": True,
             "found": True,
@@ -89,6 +108,8 @@ async def smart_find(
             "methods_tried": methods_tried,
             "tokens_cost": 0,
         }
+        if skip_uia:
+            result["journal_hint"] = "Skipped UIA — journal knows it fails on this app"
         if click_if_found and ocr_result.get("click_coords"):
             coords = ocr_result["click_coords"]
             from marlow.tools.mouse import click

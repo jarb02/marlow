@@ -231,10 +231,13 @@ async def _type_into_window(
     """
     try:
         from marlow.core.uia_utils import find_window
+        from marlow.core.error_journal import _journal
 
         target_window, err = find_window(window_title)
         if err:
             return err
+
+        win_text = target_window.window_text()
 
         # Protect user data: if Notepad tab has content, open a new tab first
         tab_info = _ensure_safe_notepad_tab(target_window)
@@ -251,17 +254,26 @@ async def _type_into_window(
         ct = element.element_info.control_type
         cn = element.element_info.class_name
 
+        # Consult error journal: does silent typing fail on this app?
+        best = _journal.get_best_method("type_text", win_text)
+        skip_silent = best == "type_keys"
+
         # Try silent methods first (background compatible)
-        if use_silent:
+        if use_silent and not skip_silent:
             result = _set_text_silent(element, text, clear_first)
             if result:
-                result["window"] = target_window.window_text()
+                _journal.record_success("type_text", win_text, "set_text_silent")
+                result["window"] = win_text
                 result["control"] = f"{ct} ({cn})"
                 result["text_length"] = len(text)
                 if tab_info:
                     result["notepad_protection"] = tab_info
                 return result
+            _journal.record_failure("type_text", win_text, "set_text_silent",
+                                    f"Silent methods failed for {ct}/{cn}")
             logger.debug(f"Silent methods failed for {ct}/{cn}, falling back")
+        elif skip_silent:
+            logger.debug(f"Journal says silent typing fails on '{win_text}', skipping to type_keys")
 
         # Fallback to keyboard simulation (focus saved/restored by server.py)
         element.click_input()
@@ -269,13 +281,16 @@ async def _type_into_window(
             element.type_keys("^a{DELETE}", with_spaces=True)
         element.type_keys(text, with_spaces=True, with_newlines=True)
 
+        _journal.record_success("type_text", win_text, "type_keys")
         result = {
             "success": True,
             "method": "type_keys (keyboard simulation)",
-            "window": target_window.window_text(),
+            "window": win_text,
             "control": f"{ct} ({cn})",
             "text_length": len(text),
         }
+        if skip_silent:
+            result["journal_hint"] = "Skipped silent methods — journal knows they fail on this app"
         if tab_info:
             result["notepad_protection"] = tab_info
         return result
@@ -298,6 +313,7 @@ async def _type_by_name(
     try:
         from pywinauto import Desktop
         from marlow.core.uia_utils import find_window, find_element_by_name
+        from marlow.core.error_journal import _journal
 
         # Find window
         if window_title:
@@ -307,6 +323,8 @@ async def _type_by_name(
         else:
             desktop = Desktop(backend="uia")
             target_window = desktop.window(active_only=True)
+
+        win_text = target_window.window_text()
 
         # Find element by name first
         element = find_element_by_name(target_window, element_name)
@@ -333,16 +351,25 @@ async def _type_by_name(
                 if element is None:
                     return {"error": "Editor not found after creating new tab"}
 
+        # Consult error journal: does silent typing fail on this app?
+        best = _journal.get_best_method("type_text", win_text)
+        skip_silent = best == "type_keys"
+
         # Try silent methods first (background compatible)
-        if use_silent:
+        if use_silent and not skip_silent:
             result = _set_text_silent(element, text, clear_first)
             if result:
+                _journal.record_success("type_text", win_text, "set_text_silent")
                 result["element"] = element_name
                 result["text_length"] = len(text)
                 if tab_info:
                     result["notepad_protection"] = tab_info
                 return result
+            _journal.record_failure("type_text", win_text, "set_text_silent",
+                                    f"Silent methods failed for '{element_name}'")
             logger.debug(f"Silent methods failed for '{element_name}'")
+        elif skip_silent:
+            logger.debug(f"Journal says silent typing fails on '{win_text}', skipping to type_keys")
 
         # Fallback to keyboard simulation (focus saved/restored by server.py)
         element.click_input()
@@ -350,12 +377,15 @@ async def _type_by_name(
             element.type_keys("^a{DELETE}", with_spaces=True)
         element.type_keys(text, with_spaces=True, with_newlines=True)
 
+        _journal.record_success("type_text", win_text, "type_keys")
         result = {
             "success": True,
             "method": "type_keys (keyboard simulation)",
             "element": element_name,
             "text_length": len(text),
         }
+        if skip_silent:
+            result["journal_hint"] = "Skipped silent methods — journal knows they fail on this app"
         if tab_info:
             result["notepad_protection"] = tab_info
         return result
