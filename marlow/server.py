@@ -60,6 +60,9 @@ from marlow.core import workflows
 # Self-Improve: Error Journal
 from marlow.core import error_journal
 
+# Smart Wait
+from marlow.tools import wait
+
 # Help / Capabilities
 from marlow.tools import help as help_mod
 
@@ -1228,6 +1231,127 @@ async def list_tools() -> list[Tool]:
             },
         ),
 
+        # ── Smart Wait ──
+        Tool(
+            name="wait_for_element",
+            description=(
+                "Wait for a UI element to appear in the Accessibility Tree. "
+                "Polls every interval seconds until found or timeout. "
+                "Returns element info with position when found."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name/text of element to wait for (e.g., 'Save', 'OK').",
+                    },
+                    "window_title": {
+                        "type": "string",
+                        "description": "Window to search in.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Max seconds to wait (default: 30, max: 120).",
+                        "default": 30,
+                    },
+                    "interval": {
+                        "type": "number",
+                        "description": "Seconds between checks (default: 1).",
+                        "default": 1,
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
+        Tool(
+            name="wait_for_text",
+            description=(
+                "Wait for specific text to appear on screen via OCR. "
+                "Polls every interval seconds, case insensitive. "
+                "Returns text position and surrounding context when found."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Text to wait for.",
+                    },
+                    "window_title": {
+                        "type": "string",
+                        "description": "Window to OCR. If omitted, full screen.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Max seconds to wait (default: 30, max: 120).",
+                        "default": 30,
+                    },
+                    "interval": {
+                        "type": "number",
+                        "description": "Seconds between checks (default: 2).",
+                        "default": 2,
+                    },
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
+            name="wait_for_window",
+            description=(
+                "Wait for a window with the given title to appear. "
+                "Useful after open_application to wait for the app to load. "
+                "Returns window info with position when found."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Window title (or partial) to wait for.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Max seconds to wait (default: 30, max: 120).",
+                        "default": 30,
+                    },
+                    "interval": {
+                        "type": "number",
+                        "description": "Seconds between checks (default: 1).",
+                        "default": 1,
+                    },
+                },
+                "required": ["title"],
+            },
+        ),
+        Tool(
+            name="wait_for_idle",
+            description=(
+                "Wait until the screen or window stops changing (idle state). "
+                "Compares screenshots every second. When no change for "
+                "stable_seconds, considers idle. Useful for waiting for loading."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "window_title": {
+                        "type": "string",
+                        "description": "Window to monitor. If omitted, full screen.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Max seconds to wait (default: 30, max: 120).",
+                        "default": 30,
+                    },
+                    "stable_seconds": {
+                        "type": "number",
+                        "description": "Seconds of no change = idle (default: 2, max: 10).",
+                        "default": 2,
+                    },
+                },
+            },
+        ),
+
         # ── Help / Capabilities ──
         Tool(
             name="get_capabilities",
@@ -1245,7 +1369,7 @@ async def list_tools() -> list[Tool]:
                             "Filter to a specific category. Options: Core, System, "
                             "Background, Audio, Intelligence, Memory, Clipboard, "
                             "Web, Extensions, Automation, Adaptive, Workflow, "
-                            "Self-Improve, Security, Help."
+                            "Self-Improve, Wait, Security, Help."
                         ),
                     },
                 },
@@ -1592,6 +1716,29 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         ),
         "clear_error_journal": lambda args: error_journal.clear_error_journal(
             window=args.get("window"),
+        ),
+        # Smart Wait
+        "wait_for_element": lambda args: wait.wait_for_element(
+            name=args["name"],
+            window_title=args.get("window_title"),
+            timeout=args.get("timeout", 30),
+            interval=args.get("interval", 1),
+        ),
+        "wait_for_text": lambda args: wait.wait_for_text(
+            text=args["text"],
+            window_title=args.get("window_title"),
+            timeout=args.get("timeout", 30),
+            interval=args.get("interval", 2),
+        ),
+        "wait_for_window": lambda args: wait.wait_for_window(
+            title=args["title"],
+            timeout=args.get("timeout", 30),
+            interval=args.get("interval", 1),
+        ),
+        "wait_for_idle": lambda args: wait.wait_for_idle(
+            window_title=args.get("window_title"),
+            timeout=args.get("timeout", 30),
+            stable_seconds=args.get("stable_seconds", 2),
         ),
         # Safety
         "restore_user_focus": lambda args: focus.restore_user_focus_tool(),

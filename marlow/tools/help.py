@@ -420,6 +420,35 @@ _TOOLS_CATALOG = [
         ],
     },
     {
+        "name": "Wait",
+        "tools": [
+            {
+                "name": "wait_for_element",
+                "description_en": "Wait for a UI element to appear (polls UIA tree)",
+                "description_es": "Esperar a que un elemento UI aparezca (encuesta UIA tree)",
+                "params": ["name", "window_title", "timeout", "interval"],
+            },
+            {
+                "name": "wait_for_text",
+                "description_en": "Wait for text to appear on screen via OCR",
+                "description_es": "Esperar a que un texto aparezca en pantalla via OCR",
+                "params": ["text", "window_title", "timeout", "interval"],
+            },
+            {
+                "name": "wait_for_window",
+                "description_en": "Wait for a window to appear by title",
+                "description_es": "Esperar a que una ventana aparezca por titulo",
+                "params": ["title", "timeout", "interval"],
+            },
+            {
+                "name": "wait_for_idle",
+                "description_en": "Wait for screen/window to stop changing (idle)",
+                "description_es": "Esperar a que la pantalla/ventana deje de cambiar (idle)",
+                "params": ["window_title", "timeout", "stable_seconds"],
+            },
+        ],
+    },
+    {
         "name": "Security",
         "tools": [
             {

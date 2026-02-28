@@ -7,6 +7,32 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.8.0] - 2026-02-28
+
+Smart Wait tools. 66 total MCP tools. Intelligent polling-based wait functions
+for UI elements, text on screen, window appearance, and screen idle detection.
+
+### Added
+
+#### New Tool Module (1)
+- **`marlow/tools/wait.py`** — 4 tools for intelligent waiting with configurable timeout and interval. `wait_for_element` polls UI Automation tree via `find_element_by_name()` for a named element. `wait_for_text` polls OCR via `ocr_region()` for text on screen (case insensitive, returns position and context). `wait_for_window` polls for a window title to appear via pywinauto Desktop. `wait_for_idle` compares consecutive screenshots (downscaled 4x via mss+PIL) and declares idle when no change for `stable_seconds`. All tools clamp timeout to 1-120s.
+
+#### New Tools (4 total)
+| Tool | Description |
+|------|-------------|
+| `wait_for_element` | Wait for a UI element to appear (polls UIA tree) |
+| `wait_for_text` | Wait for text on screen via OCR |
+| `wait_for_window` | Wait for a window to appear by title |
+| `wait_for_idle` | Wait for screen/window to stop changing (idle) |
+
+### Changed
+
+- **`marlow/server.py`** — Added 4 new Tool definitions and dispatch entries. Import for wait module. Total: 66 tools registered.
+- **`marlow/tools/help.py`** — Added "Wait" category to `_TOOLS_CATALOG`.
+- **`marlow/__init__.py`** — Version bumped from `0.7.0` to `0.8.0`.
+
+---
+
 ## [0.7.0] - 2026-02-28
 
 Self-Improve Level 1: Error Journal. 62 total MCP tools. Persistent diary of
