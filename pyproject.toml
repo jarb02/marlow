@@ -55,10 +55,17 @@ dependencies = [
     "watchdog>=4.0.0",
     "pyttsx3>=2.90",
     "edge-tts>=6.1.0",
+    "winrt-runtime>=3.0.0",
+    "winrt-Windows.Media.Ocr>=3.0.0",
+    "winrt-Windows.Graphics.Imaging>=3.0.0",
+    "winrt-Windows.Storage.Streams>=3.0.0",
+    "winrt-Windows.Globalization>=3.0.0",
+    "winrt-Windows.Foundation>=3.0.0",
+    "winrt-Windows.Foundation.Collections>=3.0.0",
 ]
 
 [project.optional-dependencies]
-ocr = ["pytesseract>=0.3.10"]
+ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requires binary install)
 
 [project.urls]
 Homepage = "https://github.com/jarb02/marlow"

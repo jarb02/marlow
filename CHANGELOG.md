@@ -7,6 +7,38 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.11.0] - 2026-02-28
+
+Windows OCR replaces Tesseract as primary OCR engine. 70 total MCP tools.
+Built-in Windows 10/11 OCR via winrt — zero external dependencies, ~50-200ms,
+word-level bounding boxes for click targeting. Tesseract kept as fallback.
+
+### Added
+
+#### New Tools (1 total)
+| Tool | Description |
+|------|-------------|
+| `list_ocr_languages` | List available OCR languages per engine (Windows OCR + Tesseract) |
+
+### Changed
+
+- **`marlow/tools/ocr.py`** — Complete rewrite. Primary engine: `Windows.Media.Ocr` via winrt (built-in Windows 10/11, zero deps, ~50-200ms). Fallback: Tesseract. New `engine` parameter to force specific engine. `language` parameter now accepts BCP-47 tags for Windows OCR (e.g., "en-US", "es-MX") and auto-converts to Tesseract codes when falling back. Words now have flat bounding boxes (`{text, x, y, width, height}`) instead of nested `bbox`. New `list_ocr_languages()` function. `_windows_ocr_available()` helper for feature detection.
+- **`marlow/core/escalation.py`** — Updated `_try_ocr()` to use new flat word bbox format (`word["x"]` instead of `word["bbox"]["x"]`). No longer passes `preprocess=True` (Windows OCR handles its own preprocessing). Match info now includes direct `x, y, width, height` fields.
+- **`marlow/server.py`** — Updated `ocr_region` tool description, parameters (`language` now BCP-47, added `engine` enum), and dispatch. Added `list_ocr_languages` tool definition and dispatch. Total: 70 tools registered.
+- **`marlow/tools/help.py`** — Updated `ocr_region` description to reflect Windows OCR primary. Added `list_ocr_languages` to catalog.
+- **`marlow/core/setup_wizard.py`** — Step 4 now checks both Windows OCR and Tesseract engines. Diagnostics reports both engines' availability.
+- **`marlow/__init__.py`** — Version bumped from `0.10.0` to `0.11.0`.
+
+### Dependencies (new)
+- `winrt-Windows.Media.Ocr` — Windows OCR API
+- `winrt-Windows.Graphics.Imaging` — Image processing for OCR
+- `winrt-Windows.Storage.Streams` — Stream handling for bitmap loading
+- `winrt-Windows.Globalization` — Language support for OCR
+- `winrt-Windows.Foundation` + `winrt-Windows.Foundation.Collections` — winrt base types
+- `winrt-runtime` — winrt Python runtime
+
+---
+
 ## [0.10.0] - 2026-02-28
 
 First-use experience. 69 total MCP tools. Setup wizard auto-runs on first launch,

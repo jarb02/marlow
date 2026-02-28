@@ -380,9 +380,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="ocr_region",
             description=(
-                "Extract text from a window or screen region using OCR (Tesseract). "
-                "Cost: 0 tokens (returns text). Speed: ~200-500ms. "
-                "Useful when UI Automation can't read text (images, custom controls)."
+                "Extract text from a window or screen region using OCR. "
+                "Primary: Windows OCR (~50-200ms, built-in). Fallback: Tesseract (~200-500ms). "
+                "Cost: 0 tokens. Returns text + word bounding boxes for clicking."
             ),
             inputSchema={
                 "type": "object",
@@ -403,16 +403,26 @@ async def list_tools() -> list[Tool]:
                     },
                     "language": {
                         "type": "string",
-                        "description": "Tesseract language code (default: eng).",
-                        "default": "eng",
+                        "description": (
+                            "Language for OCR. Windows OCR: BCP-47 tag (e.g., 'en-US', 'es-MX'). "
+                            "Tesseract: ISO 639-3 (e.g., 'eng', 'spa'). Auto-detects if omitted."
+                        ),
                     },
-                    "preprocess": {
-                        "type": "boolean",
-                        "description": "Apply image preprocessing for better accuracy.",
-                        "default": True,
+                    "engine": {
+                        "type": "string",
+                        "enum": ["windows", "tesseract"],
+                        "description": "Force a specific OCR engine. Default: auto (Windows primary, Tesseract fallback).",
                     },
                 },
             },
+        ),
+        Tool(
+            name="list_ocr_languages",
+            description=(
+                "List available OCR languages for each engine (Windows OCR and Tesseract). "
+                "Use to check which languages are installed before running OCR."
+            ),
+            inputSchema={"type": "object", "properties": {}},
         ),
 
         # ── Phase 2: Smart Find (Escalation) ──
@@ -1628,9 +1638,10 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         "ocr_region": lambda args: ocr.ocr_region(
             window_title=args.get("window_title"),
             region=args.get("region"),
-            language=args.get("language", "eng"),
-            preprocess=args.get("preprocess", True),
+            language=args.get("language"),
+            engine=args.get("engine"),
         ),
+        "list_ocr_languages": lambda args: ocr.list_ocr_languages(),
         # Phase 2: Smart Find
         "smart_find": lambda args: escalation.smart_find(
             target=args["target"],

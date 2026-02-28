@@ -5,7 +5,7 @@
 
 **Nombre:** Marlow
 **Tagline:** "AI that works beside you, not instead of you"
-**Version:** 0.10.0
+**Version:** 0.11.0
 **Licencia:** MIT
 **Lenguaje:** Python 3.10+ (desarrollado en 3.14)
 **PyPI package:** marlow-mcp
@@ -42,7 +42,7 @@ Marlow va hacia un sistema de **vision por capas** y **Shadow Mode** (operar inv
 - **UX: COMPLETA** — 2 tools (agent_screen_only + voice overlay) + auto-setup background + Ctrl+Shift+N
 - **First-Use Experience: COMPLETA** — 1 tool (run_diagnostics) + setup wizard + install.py
 - **Integration Tests:** 17 tests (7 scenarios) — tool chains completos
-- **Total: 69 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
+- **Total: 70 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
 - **Plataforma probada:** Windows 11 Home 10.0.26200, dual monitor
 
 ## ESTRUCTURA DEL PROYECTO
@@ -56,7 +56,7 @@ marlow/
 │   └── banner.png                 # Banner para README con texto "MARLOW"
 ├── marlow/
 │   ├── __init__.py                # Version 0.10.0
-│   ├── server.py                  # Servidor MCP (69 tools, focus guard, safety pipeline)
+│   ├── server.py                  # Servidor MCP (70 tools, focus guard, safety pipeline)
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── config.py              # Configuracion con defaults seguros
@@ -79,7 +79,7 @@ marlow/
 │   │   ├── keyboard.py            # type_text, press_key, hotkey — con proteccion Notepad
 │   │   ├── windows.py             # list_windows, focus_window, manage_window
 │   │   ├── system.py              # run_command, open_application, clipboard, system_info
-│   │   ├── ocr.py                 # ocr_region — Tesseract OCR con preprocessing
+│   │   ├── ocr.py                 # ocr_region — Windows OCR (primary) + Tesseract (fallback)
 │   │   ├── background.py          # BackgroundManager — dual monitor / offscreen
 │   │   ├── audio.py               # WASAPI loopback, mic capture, whisper transcription
 │   │   ├── voice.py               # listen_for_command — mic + transcribe + silence detect
@@ -130,13 +130,20 @@ beautifulsoup4>=4.12.0   # HTML parsing (scraper)
 watchdog>=4.0.0          # File system event monitoring
 pyttsx3>=2.90            # TTS offline fallback (SAPI5)
 edge-tts>=6.1.0          # TTS primario (voces neurales Microsoft Edge)
+winrt-runtime>=3.0.0     # Windows OCR runtime
+winrt-Windows.Media.Ocr>=3.0.0  # Windows OCR API (primary OCR engine)
+winrt-Windows.Graphics.Imaging>=3.0.0  # Image processing para OCR
+winrt-Windows.Storage.Streams>=3.0.0   # Streams para bitmap loading
+winrt-Windows.Globalization>=3.0.0     # Soporte de idiomas para OCR
+winrt-Windows.Foundation>=3.0.0        # winrt base types
+winrt-Windows.Foundation.Collections>=3.0.0  # winrt collections
 
 # Opcionales
 [project.optional-dependencies]
-ocr = ["pytesseract>=0.3.10"]  # Requiere Tesseract binary instalado
+ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 ```
 
-## HERRAMIENTAS MCP (69 tools)
+## HERRAMIENTAS MCP (70 tools)
 
 ### Phase 1: Core (14 tools)
 | Tool | Funcion | Modulo | Estado |
@@ -159,7 +166,8 @@ ocr = ["pytesseract>=0.3.10"]  # Requiere Tesseract binary instalado
 ### Phase 2: Advanced (13 tools)
 | Tool | Funcion | Modulo | Estado |
 |------|---------|--------|--------|
-| ocr_region | Extraer texto via OCR (Tesseract) | tools/ocr.py | OK (requiere Tesseract) |
+| ocr_region | Extraer texto via Windows OCR (primary) + Tesseract (fallback) | tools/ocr.py | OK |
+| list_ocr_languages | Listar idiomas OCR disponibles por motor | tools/ocr.py | OK |
 | smart_find | Buscar UI: UIA->OCR->screenshot (escalamiento) | core/escalation.py | OK |
 | setup_background_mode | Configurar dual monitor / offscreen | tools/background.py | OK |
 | move_to_agent_screen | Mover ventana al monitor del agente | tools/background.py | OK |
@@ -269,7 +277,7 @@ El nuevo Notepad de Windows 11 (tabulado, clase `RichEditD2DPT`) necesita manejo
 
 ### Smart Escalation (core/escalation.py)
 1. **UI Automation** — 0 tokens, ~10-50ms
-2. **OCR (Tesseract)** — 0 tokens, ~200-500ms
+2. **OCR (Windows OCR / Tesseract)** — 0 tokens, ~50-500ms
 3. **Screenshot + LLM Vision** — ~1,500 tokens (ultimo recurso)
 
 ### Visual Diff (tools/visual_diff.py)
@@ -404,7 +412,7 @@ El nuevo Notepad de Windows 11 (tabulado, clase `RichEditD2DPT`) necesita manejo
 - `SETUP_FILE = ~/.marlow/setup_complete.json` — marker file
 - `is_first_run()` — `not SETUP_FILE.exists()`
 - `run_setup_wizard()` — synchronous, called from `main()` before event loop
-- 8 steps: Python, monitors, microphone, Tesseract, TTS, Whisper download, config, summary
+- 8 steps: Python, monitors, microphone, OCR engines, TTS, Whisper download, config, summary
 - Each step: `{"status": "ok"|"warning"|"skip", "detail": "..."}`
 - Never raises — catches all errors per step
 - Saves results + timestamp to `setup_complete.json`
@@ -539,7 +547,7 @@ Orden de preferencia para "ver" lo que hay en pantalla.
 ## ROADMAP
 
 ### Fase 1 (siguiente): Vision Enhancement
-- **Windows OCR** reemplaza Tesseract como motor OCR default (nativo, sin instalar binarios)
+- **Windows OCR** reemplaza Tesseract como motor OCR default (nativo, sin instalar binarios) ✓ DONE v0.11.0
 - **Multi-property fuzzy search** en UIA tree (buscar por name + automation_id + control_type)
 - **Deteccion de apps Electron** (class_name="Chrome_WidgetWin_1" + proceso con --type=)
 - **Profundidad adaptativa** de UIA tree (expandir solo ramas relevantes, no todo el arbol)
