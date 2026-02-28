@@ -7,6 +7,33 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.10.0] - 2026-02-28
+
+First-use experience. 69 total MCP tools. Setup wizard auto-runs on first launch,
+detects hardware and software, pre-downloads Whisper model. Simple installer script
+for non-technical users. Diagnostics MCP tool for troubleshooting.
+
+### Added
+
+#### New Core Module (1)
+- **`marlow/core/setup_wizard.py`** — First-use setup wizard with 8 steps: detect Python version, detect monitors (auto-setup background mode if 2+), detect microphone (sounddevice), detect Tesseract OCR, detect TTS engines (edge-tts + pyttsx3), pre-download Whisper base model (120s timeout), create default config, save setup marker. `is_first_run()` checks for `~/.marlow/setup_complete.json`. `run_diagnostics()` async MCP tool returns structured component status for troubleshooting.
+
+#### New Root Script (1)
+- **`install.py`** — Standalone installer for non-technical users. Bilingual EN/ES output. 4 steps: check Python >= 3.10, pip install in editable mode, run setup wizard via subprocess, detect and configure MCP clients (Claude Desktop, Cursor) by adding Marlow to their config files (never overwrites existing entries).
+
+#### New Tools (1 total)
+| Tool | Description |
+|------|-------------|
+| `run_diagnostics` | Run system diagnostics (Python, monitors, mic, OCR, TTS, Whisper, system info, safety) |
+
+### Changed
+
+- **`marlow/server.py`** — Import setup_wizard, call `run_setup_wizard()` on first launch in `main()`. Added 1 new Tool definition and dispatch entry for `run_diagnostics`. Total: 69 tools registered.
+- **`marlow/tools/help.py`** — Added `run_diagnostics` to "Help" category in `_TOOLS_CATALOG`.
+- **`marlow/__init__.py`** — Version bumped from `0.9.0` to `0.10.0`.
+
+---
+
 ## [0.9.0] - 2026-02-28
 
 UX improvements. 68 total MCP tools. Agent screen auto-redirect keeps

@@ -503,6 +503,12 @@ _TOOLS_CATALOG = [
                 "description_es": "Obtener version de Marlow y estado del sistema",
                 "params": [],
             },
+            {
+                "name": "run_diagnostics",
+                "description_en": "Run system diagnostics for troubleshooting",
+                "description_es": "Ejecutar diagnosticos del sistema para troubleshooting",
+                "params": [],
+            },
         ],
     },
 ]
