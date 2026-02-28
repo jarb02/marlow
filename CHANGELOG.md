@@ -7,6 +7,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.14.0] - 2026-02-28
+
+Adaptive UIA tree depth + COM invisible mode. 72 total MCP tools (no new tools).
+get_ui_tree now uses depth="auto" by default, picking optimal depth per app framework
+via app_detector. run_app_script now runs COM apps invisible by default (visible=false).
+
+### Changed
+
+- **`marlow/tools/ui_tree.py`** — `get_ui_tree()` now accepts `max_depth="auto"` (default). Uses `app_detector.detect_framework()` to set depth: WinUI/UWP/Win32/WPF=15, WinForms=12, Chromium/WebView2=8, Electron/CEF=5, unknown=10. Results include `depth_used`, `depth_reason`, and `framework` metadata. User can still pass `max_depth=N` to override.
+- **`marlow/tools/app_script.py`** — Added `visible: bool = False` parameter. New COM instances now run invisible by default (`app.Visible = False`). Existing instances keep their current visibility. Pass `visible=true` to show the window.
+- **`marlow/server.py`** — Updated `get_ui_tree` tool definition (auto depth description), `run_app_script` tool definition (visible param). Updated dispatch defaults.
+- **`marlow/tools/help.py`** — Updated descriptions for `get_ui_tree` (auto depth) and `run_app_script` (invisible default, visible param).
+- **`marlow/__init__.py`** — Version bumped from `0.13.0` to `0.14.0`.
+
+---
+
 ## [0.13.0] - 2026-02-28
 
 App framework detection via DLL analysis. 72 total MCP tools.

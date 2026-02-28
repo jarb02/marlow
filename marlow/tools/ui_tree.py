@@ -5,18 +5,56 @@ Reads the Windows UI Automation Accessibility Tree to understand
 what's on screen without screenshots. This is the primary method
 for Marlow to "see" the desktop — costs 0 tokens, works in background mode.
 
+Adaptive depth: when depth="auto" (default), uses app_detector to pick
+the optimal tree depth per framework. User can override with depth=N.
+
 Inspired by sbroenne's approach: UI Automation first, screenshots last.
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Union
 
 logger = logging.getLogger("marlow.tools.ui_tree")
+
+# Optimal depth per framework — tuned for coverage vs performance
+# / Profundidad optima por framework — ajustada para cobertura vs rendimiento
+_DEPTH_MAP = {
+    "winui3": 15,
+    "uwp": 15,
+    "win32": 15,
+    "wpf": 15,
+    "winforms": 12,
+    "chromium": 8,
+    "edge_webview2": 8,
+    "electron": 5,
+    "cef": 5,
+}
+_DEPTH_DEFAULT = 10  # Unknown framework fallback
+
+
+def _resolve_depth(pid: int) -> tuple[int, str, Optional[str]]:
+    """
+    Pick optimal tree depth based on app framework.
+
+    Returns (depth, reason, framework_name).
+    / Elige profundidad optima del arbol segun framework de la app.
+    """
+    try:
+        from marlow.core.app_detector import detect_framework
+        info = detect_framework(pid)
+        fw = info.get("framework", "unknown")
+        if fw in _DEPTH_MAP:
+            depth = _DEPTH_MAP[fw]
+            return depth, f"auto ({fw})", fw
+        return _DEPTH_DEFAULT, f"auto (unknown framework)", fw
+    except Exception as e:
+        logger.debug(f"Framework detection failed, using default depth: {e}")
+        return _DEPTH_DEFAULT, "auto (detection failed)", None
 
 
 async def get_ui_tree(
     window_title: Optional[str] = None,
-    max_depth: int = 3,
+    max_depth: Union[int, str] = "auto",
     include_invisible: bool = False,
 ) -> dict:
     """
@@ -26,18 +64,19 @@ async def get_ui_tree(
     without needing screenshots. Cost: 0 tokens. Speed: ~10-50ms.
 
     Args:
-        window_title: Title of the window to inspect. If None, uses the 
+        window_title: Title of the window to inspect. If None, uses the
                       currently focused window.
-        max_depth: How deep to traverse the element tree (default: 3).
-                   Higher values = more detail but more data.
+        max_depth: Tree depth. "auto" (default) picks optimal depth per app
+                   framework. Pass an integer to override.
         include_invisible: Whether to include non-visible elements.
 
     Returns:
         Dictionary with the UI tree structure including:
-        - Window info (title, size, position)
+        - Window info (title, size, position, framework)
         - Element hierarchy (buttons, text fields, menus, etc.)
         - Each element: name, type, value, enabled state, automation_id
-    
+        - depth_used, depth_reason: what depth was chosen and why
+
     / Obtiene el Árbol de Accesibilidad UI Automation de una ventana.
     / Esta es la "visión" principal de Marlow — lee la estructura de cualquier
     / ventana sin necesitar screenshots. Costo: 0 tokens. Velocidad: ~10-50ms.
@@ -54,9 +93,26 @@ async def get_ui_tree(
             desktop = Desktop(backend="uia")
             target = desktop.window(active_only=True)
 
+        # Resolve depth: "auto" → framework-based, int → user override
+        # / Resolver profundidad: "auto" → basada en framework, int → override del usuario
+        pid = target.process_id()
+        if max_depth == "auto":
+            depth, depth_reason, framework = _resolve_depth(pid)
+        else:
+            depth = int(max_depth)
+            framework = None
+            depth_reason = f"user override ({depth})"
+            # Still detect framework for metadata
+            try:
+                from marlow.core.app_detector import detect_framework
+                info = detect_framework(pid)
+                framework = info.get("framework", "unknown")
+            except Exception:
+                pass
+
         # Build the tree
         # Desktop.windows() returns UIAWrapper objects directly — no wrapper_object() needed
-        tree = _build_element_tree(target, max_depth, include_invisible)
+        tree = _build_element_tree(target, depth, include_invisible)
 
         # Get window info
         rect = target.rectangle()
@@ -64,14 +120,18 @@ async def get_ui_tree(
             "title": target.window_text(),
             "position": {"x": rect.left, "y": rect.top},
             "size": {"width": rect.width(), "height": rect.height()},
-            "process_id": target.process_id(),
+            "process_id": pid,
             "is_active": target.is_active(),
         }
+        if framework:
+            window_info["framework"] = framework
 
         return {
             "window": window_info,
             "elements": tree,
             "element_count": _count_elements(tree),
+            "depth_used": depth,
+            "depth_reason": depth_reason,
         }
 
     except ImportError:
