@@ -7,6 +7,47 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.5.0] - 2026-02-27
+
+Phase 5 complete. 50 total MCP tools. Voice control with TTS (edge-tts neural voices
+with pyttsx3 offline fallback), voice hotkey for hands-free dictation, and
+speak-then-listen for conversational flows.
+
+### Added
+
+#### New Tool Modules (1)
+- **`marlow/tools/tts.py`** — 2 tools: `speak` uses edge-tts as primary engine (Microsoft Edge neural voices: es-MX-DaliaNeural, es-MX-JorgeNeural, en-US-JennyNeural, en-US-GuyNeural, etc.) with pyttsx3 SAPI5 as offline fallback. Auto-detects Spanish/English via character analysis + common word matching. Audio playback via Windows MCI API (`ctypes.windll.winmm.mciSendStringW`) — plays MP3 natively with zero external deps. `speak_and_listen` combines TTS + `listen_for_command()` for conversational flows. Fresh pyttsx3 engine per call to avoid COM threading deadlocks.
+
+#### New Core Module (1)
+- **`marlow/core/voice_hotkey.py`** — Background voice hotkey (Ctrl+Shift+M). Saves foreground window HWND on hotkey press, records speech with chunk-based VAD (0.5s chunks, RMS threshold, stops after 2s silence post-speech, max 30s), transcribes via faster-whisper, then restores focus and types text into the saved window via UIA `SetValue()` with clipboard paste fallback. Kill switch checked before recording and between each chunk. Audio feedback via `winsound.Beep()`. 1 MCP tool: `get_voice_hotkey_status` returns hotkey state, recording status, last transcribed text.
+
+#### New Tools (3 total)
+| Tool | Description |
+|------|-------------|
+| `speak` | Text-to-speech with edge-tts neural voices (ES/EN auto-detect) |
+| `speak_and_listen` | Speak text, then listen for voice response |
+| `get_voice_hotkey_status` | Check voice hotkey status (active, recording, last text) |
+
+#### Edge-TTS Voice Aliases
+| Alias | Voice ID | Language |
+|-------|----------|----------|
+| dalia | es-MX-DaliaNeural | Spanish (Mexico) |
+| jorge | es-MX-JorgeNeural | Spanish (Mexico) |
+| elvira | es-ES-ElviraNeural | Spanish (Spain) |
+| alvaro | es-ES-AlvaroNeural | Spanish (Spain) |
+| jenny | en-US-JennyNeural | English (US) |
+| guy | en-US-GuyNeural | English (US) |
+| sonia | en-GB-SoniaNeural | English (UK) |
+| ryan | en-GB-RyanNeural | English (UK) |
+
+### Changed
+
+- **`pyproject.toml`** — Added `pyttsx3>=2.90` and `edge-tts>=6.1.0` to main dependencies.
+- **`marlow/__init__.py`** — Version bumped from `0.4.1` to `0.5.0`.
+- **`marlow/server.py`** — Added 3 new Tool definitions and dispatch entries. Voice hotkey startup in `main()` after kill switch. Total: 50 tools registered.
+
+---
+
 ## [0.4.1] - 2026-02-27
 
 Comprehensive code audit: 21 issues fixed across 6 critical, 7 important, and 8 minor
@@ -263,7 +304,7 @@ All tools tested on Windows 11 with MCP client integration verified.
 
 ## Roadmap
 
-### Phase 5 (Planned)
+### Phase 6 (Planned)
 - End-to-end testing with real workflows
 - PyPI publish (`pip install marlow-mcp`)
 - MCP Registry listing

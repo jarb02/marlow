@@ -49,6 +49,10 @@ from marlow.extensions import registry as ext_registry
 # Phase 4 Tools
 from marlow.tools import watcher, scheduler
 
+# Phase 5: Voice Control + TTS
+from marlow.core import voice_hotkey
+from marlow.tools import tts
+
 # ─────────────────────────────────────────────────────────────
 # Setup
 # ─────────────────────────────────────────────────────────────
@@ -1002,6 +1006,81 @@ async def list_tools() -> list[Tool]:
                 "required": ["action"],
             },
         ),
+
+        # ── Phase 5: Voice Control + TTS ──
+        Tool(
+            name="speak",
+            description=(
+                "Speak text aloud using Windows SAPI5 text-to-speech. "
+                "Auto-detects Spanish/English. Uses system speakers."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Text to speak aloud.",
+                    },
+                    "language": {
+                        "type": "string",
+                        "enum": ["auto", "es", "en"],
+                        "description": "Language: 'auto' (detect), 'es', or 'en'.",
+                        "default": "auto",
+                    },
+                    "voice": {
+                        "type": "string",
+                        "description": "Specific voice name (e.g., 'David', 'Sabina').",
+                    },
+                    "rate": {
+                        "type": "integer",
+                        "description": "Speech rate in words/min (default: 175).",
+                        "default": 175,
+                    },
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
+            name="speak_and_listen",
+            description=(
+                "Speak text aloud, then listen for a voice response. "
+                "Combines TTS + mic recording + transcription. "
+                "Ideal for conversational flows."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Text to speak first.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "How long to listen after speaking (default: 10, max: 60).",
+                        "default": 10,
+                    },
+                    "language": {
+                        "type": "string",
+                        "enum": ["auto", "es", "en"],
+                        "description": "Language for TTS and transcription.",
+                        "default": "auto",
+                    },
+                    "voice": {
+                        "type": "string",
+                        "description": "Specific voice name for TTS.",
+                    },
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
+            name="get_voice_hotkey_status",
+            description=(
+                "Check the status of the voice hotkey (Ctrl+Shift+M). "
+                "Shows if active, currently recording, last transcribed text, and errors."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
     ]
 
 
@@ -1300,6 +1379,20 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         ),
         # Safety
         "restore_user_focus": lambda args: focus.restore_user_focus_tool(),
+        # Phase 5: Voice Control + TTS
+        "speak": lambda args: tts.speak(
+            text=args["text"],
+            language=args.get("language", "auto"),
+            voice=args.get("voice"),
+            rate=args.get("rate", 175),
+        ),
+        "speak_and_listen": lambda args: tts.speak_and_listen(
+            text=args["text"],
+            timeout=args.get("timeout", 10),
+            language=args.get("language", "auto"),
+            voice=args.get("voice"),
+        ),
+        "get_voice_hotkey_status": lambda args: voice_hotkey.get_voice_hotkey_status(),
     }
 
     handler = tool_map.get(name)
@@ -1359,6 +1452,15 @@ def main():
 
     # Start kill switch listener
     safety.start_kill_switch()
+
+    # Start voice hotkey (Ctrl+Shift+M)
+    try:
+        voice_hotkey.start_voice_hotkey(
+            hotkey="ctrl+shift+m",
+            kill_check=lambda: safety.is_killed,
+        )
+    except Exception as e:
+        logger.warning(f"Voice hotkey failed to start: {e}")
 
     # Run MCP server via stdio
     asyncio.run(_run_server())
