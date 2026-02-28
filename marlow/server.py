@@ -430,8 +430,8 @@ async def list_tools() -> list[Tool]:
             name="smart_find",
             description=(
                 "Find a UI element using escalating methods: "
-                "1) UI Automation (0 tokens, ~10-50ms) → "
-                "2) OCR (0 tokens, ~200-500ms) → "
+                "1) UI Automation with fuzzy search (0 tokens, ~10-50ms) → "
+                "2) OCR (0 tokens, ~50-200ms) → "
                 "3) Screenshot for LLM Vision (~1,500 tokens). "
                 "BEST tool for finding elements — automatically picks the cheapest method."
             ),
@@ -453,6 +453,33 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["target"],
+            },
+        ),
+        Tool(
+            name="find_elements",
+            description=(
+                "Multi-property fuzzy search for UI elements. "
+                "Searches name, automation_id, help_text, class_name with Levenshtein distance. "
+                "Returns top 5 candidates ranked by similarity score. "
+                "Use when you need to explore what elements exist or find approximate matches."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Text to search for (e.g., 'Save', 'btnSubmit', 'Edit').",
+                    },
+                    "window_title": {
+                        "type": "string",
+                        "description": "Window to search in. If omitted, uses active window.",
+                    },
+                    "control_type": {
+                        "type": "string",
+                        "description": "Filter by control type (e.g., 'Button', 'Edit', 'MenuItem').",
+                    },
+                },
+                "required": ["query"],
             },
         ),
 
@@ -1647,6 +1674,11 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
             target=args["target"],
             window_title=args.get("window_title"),
             click_if_found=args.get("click_if_found", False),
+        ),
+        "find_elements": lambda args: escalation.find_elements(
+            query=args["query"],
+            window_title=args.get("window_title"),
+            control_type=args.get("control_type"),
         ),
         # Phase 2: Background Mode
         "setup_background_mode": lambda args: background.setup_background_mode(
