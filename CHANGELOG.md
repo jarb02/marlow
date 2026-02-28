@@ -40,11 +40,24 @@ speak-then-listen for conversational flows.
 | sonia | en-GB-SoniaNeural | English (UK) |
 | ryan | en-GB-RyanNeural | English (UK) |
 
+#### Integration Tests (`tests/test_integration.py`)
+17 tests across 7 scenarios testing complete tool chains:
+1. **Background Mode Flow** — setup → open Notepad → move to agent screen → type → move back → restore focus
+2. **Audio Pipeline** — capture (system/mic) → verify WAV → TTS speak; transcription pipeline (skips if whisper model not cached)
+3. **Kill Switch Stops Scheduler** — schedule_task → kill switch → verify 0 runs → verify skip entries
+4. **Memory Persistence** — save → recall → verify → delete → verify gone; list keys
+5. **Focus Under Stress** — 5 tool actions with focus save/restore after each
+6. **Security Chain** — safe echo OK → format C: BLOCKED → scheduled del /f BLOCKED → app_script import/eval/dunder BLOCKED
+7. **Watcher + Scheduler** — watch_folder → create file → verify event → schedule_task → verify history
+
+All tests use try/finally cleanup and `asyncio.wait_for()` timeouts for audio operations.
+
 ### Changed
 
 - **`pyproject.toml`** — Added `pyttsx3>=2.90` and `edge-tts>=6.1.0` to main dependencies.
 - **`marlow/__init__.py`** — Version bumped from `0.4.1` to `0.5.0`.
 - **`marlow/server.py`** — Added 3 new Tool definitions and dispatch entries. Voice hotkey startup in `main()` after kill switch. Total: 50 tools registered.
+- **Total test count** — 142 tests (125 unit + 17 integration), all passing.
 
 ---
 
