@@ -138,6 +138,7 @@ async def run_app_script(
     app_name: str,
     script: str,
     timeout: int = 30,
+    visible: bool = False,
 ) -> dict:
     """
     Run a Python script that controls a Windows application via COM.
@@ -158,11 +159,15 @@ async def run_app_script(
         script: Python script to execute. Has access to 'app' variable.
                 Store output in 'result' variable.
         timeout: Maximum execution time in seconds (default: 30).
+        visible: Whether to show the app window (default: False).
+                 When False, new instances run invisibly in the background.
+                 Existing instances keep their current visibility.
 
     Returns:
         Dictionary with script result or error.
 
     / Ejecuta un script Python que controla una aplicacion Windows via COM.
+    / visible=False por default — instancias nuevas corren invisible en background.
     """
     # Validate app name
     app_lower = app_name.lower().strip()
@@ -197,8 +202,8 @@ async def run_app_script(
             if app is None:
                 try:
                     app = win32com.client.Dispatch(prog_id)
-                    app.Visible = True
-                    connection_method = "Dispatch (new instance)"
+                    app.Visible = visible
+                    connection_method = f"Dispatch (new instance, visible={visible})"
                 except Exception as e:
                     return {
                         "error": f"Failed to connect to {app_name}: {e}",

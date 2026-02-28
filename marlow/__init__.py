@@ -5,5 +5,5 @@ Windows desktop automation MCP server with background mode,
 security-first design, and zero telemetry.
 """
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 __author__ = "Jose"

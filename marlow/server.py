@@ -111,7 +111,8 @@ async def list_tools() -> list[Tool]:
                 "Read the Windows UI Automation Accessibility Tree for a window. "
                 "This is Marlow's primary 'vision' — understands what's on screen "
                 "without screenshots. Cost: 0 tokens. Speed: ~10-50ms. "
-                "ALWAYS try this before take_screenshot."
+                "ALWAYS try this before take_screenshot. "
+                "Depth is auto-tuned per app framework (Electron=5, WinUI=15, etc.)."
             ),
             inputSchema={
                 "type": "object",
@@ -121,9 +122,12 @@ async def list_tools() -> list[Tool]:
                         "description": "Window title to inspect. If omitted, uses the active window.",
                     },
                     "max_depth": {
-                        "type": "integer",
-                        "description": "Tree depth (default: 3). Higher = more detail.",
-                        "default": 3,
+                        "description": (
+                            "Tree depth. 'auto' (default) picks optimal depth per app framework "
+                            "(WinUI/WPF=15, WinForms=12, Chromium=8, Electron=5). "
+                            "Pass integer to override."
+                        ),
+                        "default": "auto",
                     },
                     "include_invisible": {
                         "type": "boolean",
@@ -673,7 +677,8 @@ async def list_tools() -> list[Tool]:
                 "Run a Python script that controls an Office/Adobe app via COM. "
                 "The script has access to 'app' (COM object). Store output in 'result'. "
                 "Supported: Word, Excel, PowerPoint, Outlook, Photoshop, Access. "
-                "⚠️ Sandboxed: no imports, no file access, no eval/exec."
+                "⚠️ Sandboxed: no imports, no file access, no eval/exec. "
+                "Apps run invisible by default (visible=false)."
             ),
             inputSchema={
                 "type": "object",
@@ -692,6 +697,11 @@ async def list_tools() -> list[Tool]:
                         "type": "integer",
                         "description": "Max execution time in seconds (default: 30).",
                         "default": 30,
+                    },
+                    "visible": {
+                        "type": "boolean",
+                        "description": "Show app window. Default false (invisible background mode).",
+                        "default": False,
                     },
                 },
                 "required": ["app_name", "script"],
@@ -1628,7 +1638,7 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         # UI Tree
         "get_ui_tree": lambda args: ui_tree.get_ui_tree(
             window_title=args.get("window_title"),
-            max_depth=args.get("max_depth", 3),
+            max_depth=args.get("max_depth", "auto"),
             include_invisible=args.get("include_invisible", False),
         ),
         # Screenshot
@@ -1740,6 +1750,7 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
             app_name=args["app_name"],
             script=args["script"],
             timeout=args.get("timeout", 30),
+            visible=args.get("visible", False),
         ),
         # Safety
         # Phase 3: Visual Diff

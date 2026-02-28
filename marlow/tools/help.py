@@ -17,8 +17,8 @@ _TOOLS_CATALOG = [
         "tools": [
             {
                 "name": "get_ui_tree",
-                "description_en": "Read Windows UI Automation Accessibility Tree (0 tokens)",
-                "description_es": "Lee el arbol de accesibilidad de UI Automation (0 tokens)",
+                "description_en": "Read Windows UI Automation Accessibility Tree (0 tokens, auto depth per framework)",
+                "description_es": "Lee el arbol de accesibilidad de UI Automation (0 tokens, profundidad auto por framework)",
                 "params": ["window_title", "max_depth", "include_invisible"],
             },
             {
@@ -100,9 +100,9 @@ _TOOLS_CATALOG = [
             },
             {
                 "name": "run_app_script",
-                "description_en": "COM automation for Office/Adobe apps (sandboxed)",
-                "description_es": "Automatizacion COM para apps Office/Adobe (sandboxed)",
-                "params": ["app_name", "script", "timeout"],
+                "description_en": "COM automation for Office/Adobe apps (sandboxed, invisible by default)",
+                "description_es": "Automatizacion COM para apps Office/Adobe (sandboxed, invisible por default)",
+                "params": ["app_name", "script", "timeout", "visible"],
             },
         ],
     },

@@ -5,7 +5,7 @@
 
 **Nombre:** Marlow
 **Tagline:** "AI that works beside you, not instead of you"
-**Version:** 0.13.0
+**Version:** 0.14.0
 **Licencia:** MIT
 **Lenguaje:** Python 3.10+ (desarrollado en 3.14)
 **PyPI package:** marlow-mcp
@@ -149,7 +149,7 @@ ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 ### Phase 1: Core (14 tools)
 | Tool | Funcion | Modulo | Estado |
 |------|---------|--------|--------|
-| get_ui_tree | Lee Accessibility Tree de ventana (0 tokens) | tools/ui_tree.py | OK |
+| get_ui_tree | Lee Accessibility Tree de ventana (0 tokens, auto depth per framework) | tools/ui_tree.py | OK |
 | take_screenshot | Screenshot pantalla/ventana/region | tools/screenshot.py | OK |
 | click | Click por nombre (silent invoke) O coordenadas | tools/mouse.py | OK |
 | type_text | Escribir texto con proteccion Notepad Win11 | tools/keyboard.py | OK |
@@ -181,7 +181,7 @@ ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 | transcribe_audio | Transcribir audio (faster-whisper CPU int8) | tools/audio.py | OK |
 | download_whisper_model | Pre-descargar modelo whisper (evita timeout) | tools/audio.py | OK |
 | listen_for_command | Escuchar comando de voz (mic+transcribe) | tools/voice.py | OK |
-| run_app_script | COM automation sandboxed (Office/Adobe) | tools/app_script.py | OK |
+| run_app_script | COM automation sandboxed, invisible by default (Office/Adobe) | tools/app_script.py | OK |
 | restore_user_focus | Restaurar foco manualmente si se pierde | core/focus.py | OK |
 
 ### Phase 3: Intelligence + Extensions (12 tools)
@@ -434,6 +434,21 @@ El nuevo Notepad de Windows 11 (tabulado, clase `RichEditD2DPT`) necesita manejo
 - `get_framework_hint(pid)` — retorna hint para smart_find si app es Electron/CEF
 - Integrado en escalation.py: `_get_framework_hint()` agrega nota cuando UIA+OCR fallan en Electron
 
+### Adaptive UIA Tree Depth (tools/ui_tree.py)
+- `get_ui_tree()` default `max_depth="auto"` — resuelve profundidad por framework via `app_detector`
+- `_DEPTH_MAP`: winui3/uwp/win32/wpf=15, winforms=12, chromium/edge_webview2=8, electron/cef=5
+- `_DEPTH_DEFAULT = 10` para frameworks desconocidos
+- `_resolve_depth(pid)` → `(depth, reason, framework)` — detecta framework y retorna profundidad optima
+- User override: `max_depth=N` fuerza profundidad, aun detecta framework para metadata
+- Resultado incluye: `depth_used`, `depth_reason`, `window.framework`
+
+### COM Invisible Mode (tools/app_script.py)
+- `run_app_script()` parametro `visible: bool = False` — instancias nuevas corren invisible
+- `GetActiveObject` (instancias existentes): respeta visibilidad actual, no modifica
+- `Dispatch` (instancias nuevas): `app.Visible = visible` — False por default
+- `visible=True` para mostrar la ventana (override)
+- No afecta Outlook/Photoshop que tipicamente requieren UI visible
+
 ### Setup Wizard (core/setup_wizard.py)
 - `SETUP_FILE = ~/.marlow/setup_complete.json` — marker file
 - `is_first_run()` — `not SETUP_FILE.exists()`
@@ -616,8 +631,8 @@ Orden de preferencia para "ver" lo que hay en pantalla.
 - 1.1 **Windows OCR** reemplaza Tesseract como motor OCR default ✓ COMPLETADO v0.11.0
 - 1.2 **Multi-property fuzzy search** en UIA tree (name + automation_id + help_text + class_name, Levenshtein) ✓ COMPLETADO v0.12.0
 - 1.3 **Deteccion de apps Electron** (DLL analysis + exe path + cmdline, 8 frameworks) ✓ COMPLETADO v0.13.0
-- 1.4 **Profundidad adaptativa** de UIA tree (expandir solo ramas relevantes, no todo el arbol)
-- 1.5 **COM invisible por default** en app_script.py (no mostrar ventana de Office)
+- 1.4 **Profundidad adaptativa** de UIA tree (auto depth per framework: WinUI=15, Chromium=8, Electron=5) ✓ COMPLETADO v0.14.0
+- 1.5 **COM invisible por default** en app_script.py (visible=False, no mostrar ventana de Office) ✓ COMPLETADO v0.14.0
 
 ### Fase 2: App Intelligence
 - 2.1 **CDP para apps Electron** (VS Code, Slack, Notion) — debug protocol via puerto remoto
