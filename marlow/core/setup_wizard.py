@@ -90,22 +90,27 @@ def run_setup_wizard() -> dict:
         results["microphone"] = {"status": "skip", "detail": str(e)}
         logger.warning(f"  [3/8] Microphone detection failed: {e}")
 
-    # ── Step 4: Detect Tesseract OCR ──
+    # ── Step 4: Detect OCR engines ──
     try:
-        from marlow.tools.ocr import _find_tesseract
+        from marlow.tools.ocr import _windows_ocr_available, _find_tesseract
+        ocr_engines = []
+        if _windows_ocr_available():
+            ocr_engines.append("windows_ocr")
         tess_path = _find_tesseract()
         if tess_path:
-            results["tesseract"] = {"status": "ok", "detail": tess_path}
-            logger.info(f"  [4/8] Tesseract OCR: found at {tess_path}")
+            ocr_engines.append(f"tesseract ({tess_path})")
+        if ocr_engines:
+            results["ocr"] = {"status": "ok", "detail": ", ".join(ocr_engines)}
+            logger.info(f"  [4/8] OCR engines: {', '.join(ocr_engines)}")
         else:
-            results["tesseract"] = {
-                "status": "skip",
-                "detail": "Not installed (optional — install with: winget install UB-Mannheim.TesseractOCR)",
+            results["ocr"] = {
+                "status": "warning",
+                "detail": "No OCR engines available (install winrt-Windows.Media.Ocr or Tesseract)",
             }
-            logger.info("  [4/8] Tesseract OCR: not found (optional)")
+            logger.warning("  [4/8] OCR: no engines available")
     except Exception as e:
-        results["tesseract"] = {"status": "skip", "detail": str(e)}
-        logger.warning(f"  [4/8] Tesseract check failed: {e}")
+        results["ocr"] = {"status": "skip", "detail": str(e)}
+        logger.warning(f"  [4/8] OCR check failed: {e}")
 
     # ── Step 5: Detect TTS engines ──
     try:
@@ -242,17 +247,21 @@ async def run_diagnostics() -> dict:
     except Exception as e:
         components["microphone"] = {"status": "error", "detail": str(e)}
 
-    # ── Tesseract OCR ──
+    # ── OCR engines ──
     try:
-        from marlow.tools.ocr import _find_tesseract
+        from marlow.tools.ocr import _windows_ocr_available, _find_tesseract
+        ocr_engines = {}
+        ocr_engines["windows_ocr"] = _windows_ocr_available()
         tess_path = _find_tesseract()
-        components["tesseract"] = {
-            "status": "ok" if tess_path else "skip",
-            "path": tess_path,
-            "note": None if tess_path else "Optional — install with: winget install UB-Mannheim.TesseractOCR",
+        ocr_engines["tesseract"] = tess_path
+        has_any = ocr_engines["windows_ocr"] or tess_path
+        components["ocr"] = {
+            "status": "ok" if has_any else "warning",
+            "engines": ocr_engines,
+            "note": None if has_any else "Install winrt-Windows.Media.Ocr or Tesseract",
         }
     except Exception as e:
-        components["tesseract"] = {"status": "error", "detail": str(e)}
+        components["ocr"] = {"status": "error", "detail": str(e)}
 
     # ── TTS ──
     tts_engines = []

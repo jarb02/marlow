@@ -205,9 +205,15 @@ _TOOLS_CATALOG = [
             },
             {
                 "name": "ocr_region",
-                "description_en": "Extract text via Tesseract OCR",
-                "description_es": "Extraer texto via Tesseract OCR",
-                "params": ["window_title", "region", "language", "preprocess"],
+                "description_en": "Extract text via Windows OCR (primary) or Tesseract (fallback)",
+                "description_es": "Extraer texto via Windows OCR (primario) o Tesseract (fallback)",
+                "params": ["window_title", "region", "language", "engine"],
+            },
+            {
+                "name": "list_ocr_languages",
+                "description_en": "List available OCR languages per engine",
+                "description_es": "Listar idiomas OCR disponibles por motor",
+                "params": [],
             },
         ],
     },

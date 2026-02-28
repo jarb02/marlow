@@ -3,7 +3,7 @@ Marlow Smart Escalation Engine
 
 Finds UI elements using a tiered approach:
   Step 1: UI Automation API — 0 tokens, ~10-50ms
-  Step 2: OCR (Tesseract) — 0 tokens, ~200-500ms
+  Step 2: OCR (Windows OCR / Tesseract) — 0 tokens, ~50-500ms
   Step 3: Screenshot + LLM Vision — ~1,500 tokens (last resort)
 
 Each step is tried in order. If a cheaper method succeeds, the
@@ -244,33 +244,38 @@ async def _click_element(element) -> dict:
 
 
 async def _try_ocr(target: str, window_title: Optional[str]) -> dict:
-    """Search for target text using OCR."""
+    """Search for target text using OCR (Windows OCR primary, Tesseract fallback)."""
     try:
         from marlow.tools.ocr import ocr_region
 
-        result = await ocr_region(window_title=window_title, preprocess=True)
+        result = await ocr_region(window_title=window_title)
 
         if "error" in result:
-            # Tesseract not installed — skip gracefully
             return {"found": False, "skipped": True, "reason": result["error"]}
 
         # Search OCR words for target
+        # Words have flat bbox: {text, x, y, width, height} (both engines)
         for word in result.get("words", []):
             if target in word["text"].lower():
-                bbox = word["bbox"]
                 # Click center of the bounding box
-                click_x = bbox["x"] + bbox["width"] // 2
-                click_y = bbox["y"] + bbox["height"] // 2
+                # / Click al centro del bounding box
+                click_x = word["x"] + word["width"] // 2
+                click_y = word["y"] + word["height"] // 2
                 # Note: bbox coords are relative to the screenshot, which
                 # corresponds to the window position. For window screenshots
                 # we need to add the window offset.
+                match_info = {
+                    "text": word["text"],
+                    "x": word["x"],
+                    "y": word["y"],
+                    "width": word["width"],
+                    "height": word["height"],
+                }
+                if "confidence" in word:
+                    match_info["confidence"] = word["confidence"]
                 return {
                     "found": True,
-                    "match": {
-                        "text": word["text"],
-                        "confidence": word["confidence"],
-                        "bbox": bbox,
-                    },
+                    "match": match_info,
                     "click_coords": {"x": click_x, "y": click_y},
                 }
 
