@@ -41,6 +41,7 @@ from marlow.tools import ui_tree, screenshot, mouse, keyboard, windows, system
 from marlow.tools import ocr, background, audio, voice, app_script
 from marlow.core import escalation
 from marlow.core import focus
+from marlow.core import app_detector
 
 # Phase 3 Tools
 from marlow.tools import visual_diff, memory, clipboard_ext, scraper
@@ -480,6 +481,25 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["query"],
+            },
+        ),
+
+        # ── Phase 2: App Framework Detection ──
+        Tool(
+            name="detect_app_framework",
+            description=(
+                "Detect the UI framework of a window (Electron, CEF, Chromium, WPF, WinForms, "
+                "WinUI 3, UWP, Win32) by analyzing loaded DLLs. If no window specified, scans "
+                "all visible windows. Useful to choose the best automation strategy."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "window_title": {
+                        "type": "string",
+                        "description": "Window to analyze. If omitted, scans all visible windows.",
+                    },
+                },
             },
         ),
 
@@ -1679,6 +1699,9 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
             query=args["query"],
             window_title=args.get("window_title"),
             control_type=args.get("control_type"),
+        ),
+        "detect_app_framework": lambda args: app_detector.detect_app_framework(
+            window_title=args.get("window_title"),
         ),
         # Phase 2: Background Mode
         "setup_background_mode": lambda args: background.setup_background_mode(

@@ -5,7 +5,7 @@
 
 **Nombre:** Marlow
 **Tagline:** "AI that works beside you, not instead of you"
-**Version:** 0.12.0
+**Version:** 0.13.0
 **Licencia:** MIT
 **Lenguaje:** Python 3.10+ (desarrollado en 3.14)
 **PyPI package:** marlow-mcp
@@ -42,7 +42,7 @@ Marlow va hacia un sistema de **vision por capas** y **Shadow Mode** (operar inv
 - **UX: COMPLETA** — 2 tools (agent_screen_only + voice overlay) + auto-setup background + Ctrl+Shift+N
 - **First-Use Experience: COMPLETA** — 1 tool (run_diagnostics) + setup wizard + install.py
 - **Integration Tests:** 17 tests (7 scenarios) — tool chains completos
-- **Total: 71 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
+- **Total: 72 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
 - **Plataforma probada:** Windows 11 Home 10.0.26200, dual monitor
 
 ## ESTRUCTURA DEL PROYECTO
@@ -55,8 +55,8 @@ marlow/
 │   ├── logo.png                   # Mascota: fantasma amigable con monitores
 │   └── banner.png                 # Banner para README con texto "MARLOW"
 ├── marlow/
-│   ├── __init__.py                # Version 0.12.0
-│   ├── server.py                  # Servidor MCP (71 tools, focus guard, safety pipeline)
+│   ├── __init__.py                # Version 0.13.0
+│   ├── server.py                  # Servidor MCP (72 tools, focus guard, safety pipeline)
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── config.py              # Configuracion con defaults seguros
@@ -70,7 +70,8 @@ marlow/
 │   │   ├── adaptive.py            # PatternDetector: deteccion de patrones repetitivos + 3 tools
 │   │   ├── workflows.py           # WorkflowManager: grabar, guardar, reproducir secuencias + 5 tools
 │   │   ├── error_journal.py       # ErrorJournal: diario de errores/soluciones por tool+app + 2 tools
-│   │   └── setup_wizard.py        # Setup wizard (8 steps) + run_diagnostics MCP tool
+│   │   ├── setup_wizard.py        # Setup wizard (8 steps) + run_diagnostics MCP tool
+│   │   └── app_detector.py       # Framework detection via DLL analysis + detect_app_framework tool
 │   ├── tools/
 │   │   ├── __init__.py
 │   │   ├── ui_tree.py             # get_ui_tree — Accessibility Tree (0 tokens)
@@ -143,7 +144,7 @@ winrt-Windows.Foundation.Collections>=3.0.0  # winrt collections
 ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 ```
 
-## HERRAMIENTAS MCP (71 tools)
+## HERRAMIENTAS MCP (72 tools)
 
 ### Phase 1: Core (14 tools)
 | Tool | Funcion | Modulo | Estado |
@@ -170,6 +171,7 @@ ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 | list_ocr_languages | Listar idiomas OCR disponibles por motor | tools/ocr.py | OK |
 | smart_find | Buscar UI: UIA fuzzy->OCR->screenshot (escalamiento) | core/escalation.py | OK |
 | find_elements | Busqueda fuzzy multi-propiedad (top 5 candidatos rankeados) | core/escalation.py | OK |
+| detect_app_framework | Detectar framework UI (Electron, WPF, WinUI, etc.) via DLLs | core/app_detector.py | OK |
 | setup_background_mode | Configurar dual monitor / offscreen | tools/background.py | OK |
 | move_to_agent_screen | Mover ventana al monitor del agente | tools/background.py | OK |
 | move_to_user_screen | Devolver ventana al monitor del usuario | tools/background.py | OK |
@@ -421,6 +423,17 @@ El nuevo Notepad de Windows 11 (tabulado, clase `RichEditD2DPT`) necesita manejo
 - Timeout clamped: 1-120s; interval clamped: 0.5-10s; stable_seconds clamped: 1-10s
 - Retorna info detallada: elapsed_seconds, checks count, element/window info con posicion
 
+### App Framework Detector (core/app_detector.py)
+- `detect_framework(pid)` — analiza DLLs cargadas via `psutil.Process.memory_maps()`
+- Detecta 8 frameworks: electron, cef, chromium, edge_webview2, winui3, uwp, wpf, winforms, win32
+- Rules-based matching: markers DLL → framework, con fallback a exe path y cmdline
+- Cache por PID (`_cache: dict[int, dict]`) para no re-escanear procesos conocidos
+- `is_electron(pid)` — shortcut retorna True si Electron o CEF
+- `detect_all_windows()` — escanea todas las ventanas, retorna framework de cada una
+- `detect_app_framework(window_title)` — MCP tool, una ventana o todas
+- `get_framework_hint(pid)` — retorna hint para smart_find si app es Electron/CEF
+- Integrado en escalation.py: `_get_framework_hint()` agrega nota cuando UIA+OCR fallan en Electron
+
 ### Setup Wizard (core/setup_wizard.py)
 - `SETUP_FILE = ~/.marlow/setup_complete.json` — marker file
 - `is_first_run()` — `not SETUP_FILE.exists()`
@@ -602,7 +615,7 @@ Orden de preferencia para "ver" lo que hay en pantalla.
 ### Fase 1: Vision Enhancement
 - 1.1 **Windows OCR** reemplaza Tesseract como motor OCR default ✓ COMPLETADO v0.11.0
 - 1.2 **Multi-property fuzzy search** en UIA tree (name + automation_id + help_text + class_name, Levenshtein) ✓ COMPLETADO v0.12.0
-- 1.3 **Deteccion de apps Electron** (class_name="Chrome_WidgetWin_1" + proceso con --type=)
+- 1.3 **Deteccion de apps Electron** (DLL analysis + exe path + cmdline, 8 frameworks) ✓ COMPLETADO v0.13.0
 - 1.4 **Profundidad adaptativa** de UIA tree (expandir solo ramas relevantes, no todo el arbol)
 - 1.5 **COM invisible por default** en app_script.py (no mostrar ventana de Office)
 
