@@ -55,7 +55,7 @@ marlow/
 │   ├── logo.png                   # Mascota: fantasma amigable con monitores
 │   └── banner.png                 # Banner para README con texto "MARLOW"
 ├── marlow/
-│   ├── __init__.py                # Version 0.10.0
+│   ├── __init__.py                # Version 0.11.0
 │   ├── server.py                  # Servidor MCP (70 tools, focus guard, safety pipeline)
 │   ├── core/
 │   │   ├── __init__.py
@@ -544,34 +544,90 @@ Orden de preferencia para "ver" lo que hay en pantalla.
 - **pyvda:** Para Virtual Desktops, con fallback silencioso si no esta instalado
 - **Spotify:** Usar Web API, no CDP (Spotify tiene API oficial publica)
 
-## ROADMAP
+## PRINCIPIO DE GPU
 
-### Fase 1 (siguiente): Vision Enhancement
-- **Windows OCR** reemplaza Tesseract como motor OCR default (nativo, sin instalar binarios) ✓ DONE v0.11.0
-- **Multi-property fuzzy search** en UIA tree (buscar por name + automation_id + control_type)
-- **Deteccion de apps Electron** (class_name="Chrome_WidgetWin_1" + proceso con --type=)
-- **Profundidad adaptativa** de UIA tree (expandir solo ramas relevantes, no todo el arbol)
-- **COM invisible por default** en app_script.py (no mostrar ventana de Office)
+**Auto-detect, transparente, graceful fallback.**
 
-### Fase 2: App-Specific Intelligence
-- **CDP para apps Electron** (VS Code, Slack, Notion) — debug protocol via puerto remoto
-- **UIA event handlers** via comtypes (reaccionar a cambios en tiempo real, no polling)
-- **Auto-handling de dialogos** (detectar y responder a popups conocidos automaticamente)
+- Sin GPU todo funciona bien. Con GPU todo funciona mejor.
+- Dependencias GPU son siempre opcionales (`[project.optional-dependencies]`).
+- Auto-deteccion al inicio: `torch.cuda.is_available()` / `onnxruntime.get_available_providers()`.
+- Cada componente que puede usar GPU tiene fallback CPU transparente.
+- El usuario nunca necesita configurar nada — Marlow detecta y usa lo mejor disponible.
+- Aplica a: ASR (faster-whisper/Moonshine), VAD (Silero), Vision (OmniParser futuro).
+
+## ARQUITECTURA DE AUDIO
+
+### Activacion de voz
+| Modo | Metodo | Estado |
+|------|--------|--------|
+| Hotkey | Ctrl+Shift+M graba, Ctrl+Shift+N para | Implementado (voice_hotkey.py) |
+| Wake Word | "Hey Marlow" via OpenWakeWord — siempre escuchando | Fase 6 |
+| Multi-turn | Conversacion continua sin re-activar | Fase 6 |
+
+### ASR — Automatic Speech Recognition
+| Motor | Caso de uso | Estado |
+|-------|-------------|--------|
+| Moonshine v2 streaming | Comandos cortos (<10s), baja latencia | Fase 6 |
+| faster-whisper (CPU int8) | Audio largo, transcripcion, dictado | Implementado |
+| faster-whisper (GPU auto) | Mismo pero acelerado si hay GPU | Fase 5 |
+
+### TTS — Text-to-Speech (cadena de fallback)
+| Prioridad | Motor | Requiere | Estado |
+|-----------|-------|----------|--------|
+| 1 | edge-tts (voces neurales Microsoft) | Internet | Implementado |
+| 2 | Piper TTS (ONNX offline, alta calidad) | Modelo descargado | Fase 5 |
+| 3 | pyttsx3 (SAPI5 nativo Windows) | Nada | Implementado |
+
+### VAD — Voice Activity Detection
+| Motor | Metodo | Estado |
+|-------|--------|--------|
+| RMS threshold | Energia de audio > 500 | Implementado (voice_hotkey.py) |
+| Silero VAD | Red neuronal ONNX, preciso | Fase 5 (reemplaza RMS) |
+
+## ROADMAP v4 (7 fases)
+
+### Fase 1: Vision Enhancement
+- 1.1 **Windows OCR** reemplaza Tesseract como motor OCR default ✓ COMPLETADO v0.11.0
+- 1.2 **Multi-property fuzzy search** en UIA tree (buscar por name + automation_id + control_type)
+- 1.3 **Deteccion de apps Electron** (class_name="Chrome_WidgetWin_1" + proceso con --type=)
+- 1.4 **Profundidad adaptativa** de UIA tree (expandir solo ramas relevantes, no todo el arbol)
+- 1.5 **COM invisible por default** en app_script.py (no mostrar ventana de Office)
+
+### Fase 2: App Intelligence
+- 2.1 **CDP para apps Electron** (VS Code, Slack, Notion) — debug protocol via puerto remoto
+- 2.2 **UIA event handlers** via comtypes (reaccionar a cambios en tiempo real, no polling)
+- 2.3 **Auto-handling de dialogos** (detectar y responder a popups conocidos automaticamente)
 
 ### Fase 3: Understanding
-- **Set-of-Mark prompting** — numerar elementos en screenshot para que LLM los identifique
-- **Context awareness** — entender que app esta activa y adaptar estrategia
-- **App Knowledge Base** — base de datos de como interactuar con cada app conocida
-- **Teach Marlow mode** — el usuario muestra una accion, Marlow la aprende como workflow
+- 3.1 **Set-of-Mark prompting** — numerar elementos en screenshot para que LLM los identifique
+- 3.2 **Context awareness** — entender que app esta activa y adaptar estrategia
+- 3.3 **App Knowledge Base** — base de datos de como interactuar con cada app conocida
+- 3.4 **Teach Marlow mode** — el usuario muestra una accion, Marlow la aprende como workflow
 
 ### Fase 4: Shadow Mode
-- **Virtual Desktops** con pyvda — crear desktop invisible para operar sin que el usuario vea
-- **SendMessage tier** — interactuar sin foco ni visibilidad via mensajes Win32
-- **PrintWindow** — capturar screenshots de ventanas sin que esten visibles
-- **Toast notifications** — notificar al usuario de resultados sin interrumpir
-- **System tray** — icono persistente con estado de Marlow
+- 4.1 **Virtual Desktops** con pyvda — crear desktop invisible para operar sin que el usuario vea
+- 4.2 **SendMessage tier** — interactuar sin foco ni visibilidad via mensajes Win32
+- 4.3 **PrintWindow** — capturar screenshots de ventanas sin que esten visibles
+- 4.4 **Toast notifications** — notificar al usuario de resultados sin interrumpir
+- 4.5 **System tray** — icono persistente con estado de Marlow
 
-### Fase 5: Sensor Fusion
-- **OmniParser** — modelo de vision para entender UIs complejas
-- **Proactive monitoring** — detectar cambios en apps y reaccionar sin que el usuario pida
-- **Headless browser** — Playwright/Puppeteer para web automation sin ventana visible
+### Fase 5: Voice Core
+- 5.1 **Silero VAD** reemplaza RMS threshold (red neuronal ONNX, deteccion precisa de voz)
+- 5.2 **Piper TTS** offline como segundo fallback (ONNX, alta calidad, sin internet)
+- 5.3 **GPU auto-detect** para ASR (faster-whisper usa GPU si disponible, CPU si no)
+- 5.4 **Audio calibracion** — detectar ruido ambiente y ajustar threshold automaticamente
+
+### Fase 6: Natural Conversation
+- 6.1 **Moonshine v2 streaming** — ASR streaming para comandos cortos con baja latencia
+- 6.2 **OpenWakeWord "Hey Marlow"** — wake word siempre escuchando, activa sin hotkey
+- 6.3 **Barge-in** — interrumpir a Marlow mientras habla con nuevo comando de voz
+- 6.4 **Multi-turn voice** — conversacion continua sin re-activar por cada frase
+- 6.5 **Soundboard** — sonidos de feedback (beeps, confirmacion, error) configurables
+
+### Fase 7: Advanced
+- 7.1 **Sensor fusion** — combinar UIA + OCR + vision + audio para entendimiento completo
+- 7.2 **OmniParser** — modelo de vision para entender UIs complejas (GPU opcional)
+- 7.3 **YAMNet** — clasificacion de sonidos del sistema (alertas, notificaciones, errores)
+- 7.4 **NVDA integration** — usar motor de accesibilidad NVDA como fuente adicional de info
+- 7.5 **Meeting transcription** — transcribir reuniones en tiempo real (system audio + mic)
+- 7.6 **Dictado** — modo dictado continuo que escribe todo lo que el usuario dice
