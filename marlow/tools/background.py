@@ -201,20 +201,45 @@ async def move_to_agent_screen(window_title: str) -> dict:
 
         # Move to agent monitor using Win32 API (UIAWrapper has no move_window)
         agent = _manager.agent_monitor
-        new_x = agent["left"] + 50
-        new_y = agent.get("top", 0) + 50
+        margin = 10
+        new_x = agent["left"] + margin
+        new_y = agent.get("top", 0) + margin
         hwnd = target.handle
+
+        # Clamp window size to fit within agent monitor
+        # / Ajustar tamaño de ventana para que quepa en el monitor del agente
+        win_w = rect.width()
+        win_h = rect.height()
+        max_w = agent["width"] - margin * 2
+        max_h = agent["height"] - margin * 2
+        resized = False
+
+        if win_w > max_w:
+            win_w = max(max_w, 400)  # minimum usable width
+            resized = True
+        if win_h > max_h:
+            win_h = max(max_h, 300)  # minimum usable height
+            resized = True
+
         ctypes.windll.user32.MoveWindow(
-            hwnd, new_x, new_y, rect.width(), rect.height(), True
+            hwnd, new_x, new_y, win_w, win_h, True
         )
 
-        return {
+        result = {
             "success": True,
             "window": title,
             "moved_to": _manager.mode,
             "new_position": {"x": new_x, "y": new_y},
+            "new_size": {"width": win_w, "height": win_h},
             "original_position": _manager._moved_windows[title],
         }
+        if resized:
+            result["resized"] = True
+            result["reason"] = (
+                f"Window resized to fit agent monitor "
+                f"({agent['width']}x{agent['height']})"
+            )
+        return result
 
     except Exception as e:
         return {"error": str(e)}
