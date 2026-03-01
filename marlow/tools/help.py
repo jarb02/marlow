@@ -660,6 +660,7 @@ async def get_capabilities(category: str | None = None) -> dict:
     return {
         "success": True,
         "total_tools": _TOTAL_TOOLS,
+        "tip": "Press Ctrl+Shift+M to activate voice control. You can ask Marlow anything by voice.",
         "categories": _TOOLS_CATALOG,
     }
 
