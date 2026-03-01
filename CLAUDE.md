@@ -1,786 +1,254 @@
 # CLAUDE.md — Instrucciones para Claude Code
 # Proyecto: Marlow — Windows Desktop Automation MCP Server
 
-## IDENTIDAD DEL PROYECTO
+## IDENTIDAD
 
-**Nombre:** Marlow
-**Tagline:** "AI that works beside you, not instead of you"
-**Version:** 0.19.0
-**Licencia:** MIT
-**Lenguaje:** Python 3.10+ (desarrollado en 3.14)
-**PyPI package:** marlow-mcp
-**MCP SDK:** v1.26.0
+**Marlow** v0.19.0 — "AI that works beside you, not instead of you"
+Python 3.10+ (dev 3.14) | MIT | PyPI: marlow-mcp | MCP SDK v1.26.0
 
-Marlow es un MCP Server para Windows que automatiza el escritorio con:
-- Seguridad desde el commit #1 (kill switch, confirmacion, data sanitization)
-- Metodos silenciosos para modo background (no roba mouse/teclado)
-- Proteccion de foco — nunca roba la ventana activa del usuario
-- Persistencia entre sesiones (memory system)
-- Sistema de extensiones con permisos sandboxed
-- Cero telemetria — los datos nunca salen de la maquina
+MCP Server para Windows: automatizacion de escritorio con seguridad desde commit #1, metodos silenciosos (no roba mouse/teclado), proteccion de foco, persistencia entre sesiones, extensiones sandboxed, cero telemetria.
 
-## VISION DEL PROYECTO
-
-Marlow va hacia un sistema de **vision por capas** y **Shadow Mode** (operar invisible).
+## VISION
 
 **Principio rector:** Primero ver bien, despues entender, despues ser invisible.
+**Capas:** UIA tree (estructura) → OCR con bboxes (texto) → CDP (Electron) → Computer Vision (ultimo recurso).
+**Shadow Mode (futuro):** Virtual Desktops invisibles + SendMessage + PrintWindow + COM invisible.
 
-**Capas de vision:** UIA tree (estructura) + OCR con bboxes (texto visual) + CDP (apps Electron) + Computer Vision (ultimo recurso). Cada capa agrega informacion que la anterior no puede capturar.
+## ESTADO (94 tools, 142 tests)
 
-**Shadow Mode:** Operar en Virtual Desktops invisibles al usuario, usando metodos que no requieren foco ni visibilidad (SendMessage, PrintWindow, COM invisible). El usuario nunca ve que Marlow esta trabajando.
+| Fase | Tools | Estado |
+|------|-------|--------|
+| Core (Phase 1) | 14 | COMPLETA |
+| Advanced (Phase 2: audio/OCR/background/COM/voice) | 19 | COMPLETA |
+| Intelligence + Extensions (Phase 3) | 12 | COMPLETA |
+| Automation (Phase 4: watcher/scheduler) | 8 | COMPLETA |
+| Voice + TTS (Phase 5) | 3 | COMPLETA |
+| Adaptive + Workflows | 8 | COMPLETA |
+| Self-Improve + Smart Wait | 6 | COMPLETA |
+| UX + Diagnostics | 3 | COMPLETA |
+| CDP (Chrome DevTools Protocol) | 15 | COMPLETA |
+| UIA Events + Dialog Handler | 5 | COMPLETA |
+| Cascade Recovery | 1 | COMPLETA |
 
-## ESTADO DEL PROYECTO
+Plataforma: Windows 11 Home 10.0.26200, dual monitor
 
-- **Phase 1: COMPLETA** — 14 tools core, 125 unit tests passing
-- **Phase 2: COMPLETA** — 13 tools (audio/OCR/background/COM/voice/escalation)
-- **Phase 3: COMPLETA** — 12 tools (visual_diff/memory/clipboard/scraper/extensions)
-- **Phase 4: COMPLETA** — 8 tools (watcher/scheduler)
-- **Phase 5: COMPLETA** — 3 tools (speak/speak_and_listen/voice hotkey) + edge-tts + voice hotkey background
-- **Adaptive Behavior: COMPLETA** — 8 tools (pattern detection + workflow record/replay)
-- **Self-Improve: COMPLETA** — 2 tools (error journal) + integracion en mouse/keyboard/escalation
-- **Smart Wait: COMPLETA** — 4 tools (wait_for_element/text/window/idle)
-- **UX: COMPLETA** — 2 tools (agent_screen_only + voice overlay) + auto-setup background + Ctrl+Shift+N
-- **First-Use Experience: COMPLETA** — 1 tool (run_diagnostics) + setup wizard + install.py
-- **Integration Tests:** 17 tests (7 scenarios) — tool chains completos
-- **CDP Manager: COMPLETA** — 12 tools (CDP discover/connect/input/read/evaluate/DOM)
-- **CDP Auto-Restart: COMPLETA** — 3 tools (cdp_ensure, cdp_restart_confirmed, cdp_get_knowledge_base)
-- **UIA Events + Dialog Handler: COMPLETA** — 5 tools (start/stop/get_ui_events, handle_dialog, get_dialog_info)
-- **Cascade Recovery: COMPLETA** — 1 tool (cascade_find) + integrado en smart_find
-- **Total: 94 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
-- **Plataforma probada:** Windows 11 Home 10.0.26200, dual monitor
-
-## ESTRUCTURA DEL PROYECTO
+## ESTRUCTURA
 
 ```
 marlow/
-├── .github/
-│   └── SECURITY.md               # Politica de reportes de vulnerabilidades
-├── assets/
-│   ├── logo.png                   # Mascota: fantasma amigable con monitores
-│   └── banner.png                 # Banner para README con texto "MARLOW"
-├── marlow/
-│   ├── __init__.py                # Version 0.13.0
-│   ├── server.py                  # Servidor MCP (72 tools, focus guard, safety pipeline)
-│   ├── core/
-│   │   ├── __init__.py
-│   │   ├── config.py              # Configuracion con defaults seguros
-│   │   ├── safety.py              # Kill switch, confirmacion, blocked apps/cmds, rate limiter
-│   │   ├── sanitizer.py           # Redacta tarjetas, SSN, passwords antes de enviar al AI
-│   │   ├── escalation.py          # Smart find: UIA -> OCR -> screenshot (escalamiento)
-│   │   ├── focus.py               # Guardar/restaurar foco del usuario (Win32 API)
-│   │   ├── uia_utils.py           # Utilidades compartidas: find_window, find_element_by_name
-│   │   ├── voice_hotkey.py        # Hotkey Ctrl+Shift+M (grabar) + Ctrl+Shift+N (parar) + overlay
-│   │   ├── voice_overlay.py       # Ventana flotante tkinter para feedback de voice control
-│   │   ├── adaptive.py            # PatternDetector: deteccion de patrones repetitivos + 3 tools
-│   │   ├── workflows.py           # WorkflowManager: grabar, guardar, reproducir secuencias + 5 tools
-│   │   ├── error_journal.py       # ErrorJournal: diario de errores/soluciones por tool+app + 2 tools
-│   │   ├── setup_wizard.py        # Setup wizard (8 steps) + run_diagnostics MCP tool
-│   │   ├── app_detector.py       # Framework detection via DLL analysis + detect_app_framework tool
-│   │   ├── cdp_manager.py        # CDP Manager: WebSocket connections to Electron/CEF apps (12 tools)
-│   │   ├── uia_events.py        # UIA Event Handlers: real-time UI monitoring via COM events (3 tools)
-│   │   ├── dialog_handler.py    # Dialog Handler: auto-detect and handle system/app dialogs (2 tools)
-│   │   └── cascade_recovery.py  # Cascade Recovery: 5-step fallback when smart_find fails (1 tool)
-│   ├── tools/
-│   │   ├── __init__.py
-│   │   ├── ui_tree.py             # get_ui_tree — Accessibility Tree (0 tokens)
-│   │   ├── screenshot.py          # take_screenshot (~1,500 tokens, ultimo recurso)
-│   │   ├── mouse.py               # click — por nombre (silent) o coordenadas
-│   │   ├── keyboard.py            # type_text, press_key, hotkey — con proteccion Notepad
-│   │   ├── windows.py             # list_windows, focus_window, manage_window
-│   │   ├── system.py              # run_command, open_application, clipboard, system_info
-│   │   ├── ocr.py                 # ocr_region — Windows OCR (primary) + Tesseract (fallback)
-│   │   ├── background.py          # BackgroundManager — dual monitor / offscreen
-│   │   ├── audio.py               # WASAPI loopback, mic capture, whisper transcription
-│   │   ├── voice.py               # listen_for_command — mic + transcribe + silence detect
-│   │   ├── app_script.py          # run_app_script — COM automation sandboxed
-│   │   ├── visual_diff.py         # visual_diff — comparacion antes/despues
-│   │   ├── memory.py              # memory_save/recall — persistencia entre sesiones
-│   │   ├── clipboard_ext.py       # clipboard_history — historial de clipboard
-│   │   ├── scraper.py             # scrape_url — web scraping (httpx + BeautifulSoup)
-│   │   ├── watcher.py             # watch_folder — monitoreo de carpetas (watchdog)
-│   │   ├── scheduler.py           # schedule_task — tareas programadas recurrentes
-│   │   ├── tts.py                 # speak, speak_and_listen — TTS edge-tts + pyttsx3 fallback
-│   │   └── wait.py                # wait_for_element/text/window/idle — esperas inteligentes con polling
-│   └── extensions/
-│       ├── __init__.py             # Extension loader y manifest validation
-│       ├── registry.py             # Descubrimiento, instalacion, auditoria
-│       └── sandbox.py              # Enforcement de permisos declarados
-├── tests/
-│   ├── test_config.py             # Verifica defaults seguros
-│   ├── test_safety.py             # Blocked apps, commands, rate limiter
-│   ├── test_sanitizer.py          # Datos sensibles redactados correctamente
-│   └── test_integration.py        # 17 integration tests (7 scenarios, tool chains completos)
-├── install.py                     # Instalador simple para usuarios no tecnicos
-├── README.md                      # Bilingue EN/ES con tabla comparativa
-├── CHANGELOG.md                   # Historial de cambios
-├── LICENSE                        # MIT
-└── pyproject.toml                 # Config para pip install / PyPI
-```
-
-## DEPENDENCIAS
-
-```toml
-# Principales (pip install marlow-mcp)
-mcp[cli]>=1.0.0          # Framework MCP
-pywinauto>=0.6.8         # UI Automation + Win32 API
-pyautogui>=0.9.54        # Mouse/keyboard fallback
-mss>=9.0.0               # Screenshots rapidos
-Pillow>=10.0.0           # Procesamiento de imagenes
-psutil>=5.9.0            # Info del sistema
-keyboard>=0.13.5         # Kill switch global hotkey
-pywin32>=306             # Windows API avanzada
-cryptography>=41.0.0     # Encriptacion AES-256
-PyAudioWPatch>=0.2.12.6  # WASAPI loopback (system audio)
-sounddevice>=0.4.6       # Mic recording
-soundfile>=0.12.1        # WAV file I/O
-faster-whisper>=1.0.0    # Transcripcion CPU int8
-httpx>=0.27.0            # HTTP client async (scraper)
-beautifulsoup4>=4.12.0   # HTML parsing (scraper)
-watchdog>=4.0.0          # File system event monitoring
-pyttsx3>=2.90            # TTS offline fallback (SAPI5)
-edge-tts>=6.1.0          # TTS primario (voces neurales Microsoft Edge)
-winrt-runtime>=3.0.0     # Windows OCR runtime
-winrt-Windows.Media.Ocr>=3.0.0  # Windows OCR API (primary OCR engine)
-winrt-Windows.Graphics.Imaging>=3.0.0  # Image processing para OCR
-winrt-Windows.Storage.Streams>=3.0.0   # Streams para bitmap loading
-winrt-Windows.Globalization>=3.0.0     # Soporte de idiomas para OCR
-winrt-Windows.Foundation>=3.0.0        # winrt base types
-winrt-Windows.Foundation.Collections>=3.0.0  # winrt collections
-websocket-client>=1.7.0  # CDP WebSocket connections (Chrome DevTools Protocol)
-
-# Opcionales
-[project.optional-dependencies]
-ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
+├── server.py                  # MCP server (94 tools, focus guard, safety pipeline)
+├── __init__.py                # Version
+├── core/
+│   ├── config.py              # Config con defaults seguros
+│   ├── safety.py              # Kill switch, confirmacion, blocked apps/cmds, rate limiter
+│   ├── sanitizer.py           # Redacta datos sensibles
+│   ├── escalation.py          # Smart find: UIA→OCR→cascade→screenshot
+│   ├── cascade_recovery.py    # 5-step fallback pipeline
+│   ├── focus.py               # Save/restore foco (Win32 API)
+│   ├── uia_utils.py           # find_window, find_element_enhanced (fuzzy Levenshtein)
+│   ├── uia_events.py          # COM event handlers (window/focus/structure changes)
+│   ├── dialog_handler.py      # Dialog detection/classification/auto-handling
+│   ├── app_detector.py        # Framework detection via DLL analysis
+│   ├── cdp_manager.py         # CDP WebSocket connections (Electron/CEF)
+│   ├── adaptive.py            # Pattern detection
+│   ├── workflows.py           # Record/replay workflows
+│   ├── error_journal.py       # Error/solution diary per tool+app
+│   ├── voice_hotkey.py        # Ctrl+Shift+M (record) + Ctrl+Shift+N (stop)
+│   ├── voice_overlay.py       # Floating tkinter overlay
+│   └── setup_wizard.py        # First-run wizard + diagnostics
+├── tools/
+│   ├── ui_tree.py             # get_ui_tree (auto depth per framework)
+│   ├── screenshot.py          # take_screenshot
+│   ├── mouse.py               # click (silent invoke or coords)
+│   ├── keyboard.py            # type_text, press_key, hotkey (Notepad Win11 safe)
+│   ├── windows.py             # list_windows, focus_window, manage_window
+│   ├── system.py              # run_command, open_application, clipboard, system_info
+│   ├── ocr.py                 # Windows OCR (primary) + Tesseract (fallback)
+│   ├── background.py          # Dual monitor / offscreen + agent_screen_only
+│   ├── audio.py               # WASAPI loopback, mic, whisper transcription
+│   ├── voice.py               # listen_for_command
+│   ├── app_script.py          # COM automation sandboxed (invisible default)
+│   ├── visual_diff.py         # Before/after pixel comparison
+│   ├── memory.py              # Persistent key-value storage
+│   ├── clipboard_ext.py       # Clipboard history daemon
+│   ├── scraper.py             # httpx + BeautifulSoup
+│   ├── watcher.py             # watchdog folder monitoring
+│   ├── scheduler.py           # Recurring task scheduler
+│   ├── tts.py                 # edge-tts + pyttsx3 fallback
+│   └── wait.py                # wait_for_element/text/window/idle
+├── extensions/                # Plugin system (manifest + sandbox)
+└── tests/                     # 125 unit + 17 integration tests
 ```
 
 ## HERRAMIENTAS MCP (94 tools)
 
-### Phase 1: Core (14 tools)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| get_ui_tree | Lee Accessibility Tree de ventana (0 tokens, auto depth per framework) | tools/ui_tree.py | OK |
-| take_screenshot | Screenshot pantalla/ventana/region | tools/screenshot.py | OK |
-| click | Click por nombre (silent invoke) O coordenadas | tools/mouse.py | OK |
-| type_text | Escribir texto con proteccion Notepad Win11 | tools/keyboard.py | OK |
-| press_key | Presionar tecla individual | tools/keyboard.py | OK |
-| hotkey | Atajos de teclado (Ctrl+C, etc.) | tools/keyboard.py | OK |
-| list_windows | Lista ventanas abiertas | tools/windows.py | OK |
-| focus_window | Traer ventana al frente | tools/windows.py | OK |
-| manage_window | Mover, resize, min, max, close (ctypes MoveWindow) | tools/windows.py | OK |
-| run_command | PowerShell/CMD (destructivos bloqueados) | tools/system.py | OK |
-| open_application | Abrir app por nombre o ruta | tools/system.py | OK |
-| clipboard | Leer/escribir portapapeles | tools/system.py | OK |
-| system_info | CPU, RAM, disco, procesos | tools/system.py | OK |
-| kill_switch | Detener TODA automatizacion | server.py | OK |
+**Core (14):** get_ui_tree, take_screenshot, click, type_text, press_key, hotkey, list_windows, focus_window, manage_window, run_command, open_application, clipboard, system_info, kill_switch
 
-### Phase 2: Advanced (13 tools)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| ocr_region | Extraer texto via Windows OCR (primary) + Tesseract (fallback) | tools/ocr.py | OK |
-| list_ocr_languages | Listar idiomas OCR disponibles por motor | tools/ocr.py | OK |
-| smart_find | Buscar UI: UIA fuzzy->OCR->screenshot (escalamiento) | core/escalation.py | OK |
-| find_elements | Busqueda fuzzy multi-propiedad (top 5 candidatos rankeados) | core/escalation.py | OK |
-| cascade_find | Recuperacion multi-paso: wait, dialogos, fuzzy amplio, OCR, screenshot | core/cascade_recovery.py | OK |
-| detect_app_framework | Detectar framework UI (Electron, WPF, WinUI, etc.) via DLLs | core/app_detector.py | OK |
-| setup_background_mode | Configurar dual monitor / offscreen | tools/background.py | OK |
-| move_to_agent_screen | Mover ventana al monitor del agente | tools/background.py | OK |
-| move_to_user_screen | Devolver ventana al monitor del usuario | tools/background.py | OK |
-| get_agent_screen_state | Listar ventanas en pantalla del agente | tools/background.py | OK |
-| capture_system_audio | Grabar audio del sistema (WASAPI loopback) | tools/audio.py | OK |
-| capture_mic_audio | Grabar audio del microfono | tools/audio.py | OK |
-| transcribe_audio | Transcribir audio (faster-whisper CPU int8) | tools/audio.py | OK |
-| download_whisper_model | Pre-descargar modelo whisper (evita timeout) | tools/audio.py | OK |
-| listen_for_command | Escuchar comando de voz (mic+transcribe) | tools/voice.py | OK |
-| run_app_script | COM automation sandboxed, invisible by default (Office/Adobe) | tools/app_script.py | OK |
-| restore_user_focus | Restaurar foco manualmente si se pierde | core/focus.py | OK |
+**Advanced (17):** ocr_region, list_ocr_languages, smart_find, find_elements, cascade_find, detect_app_framework, setup_background_mode, move_to_agent_screen, move_to_user_screen, get_agent_screen_state, capture_system_audio, capture_mic_audio, transcribe_audio, download_whisper_model, listen_for_command, run_app_script, restore_user_focus
 
-### Phase 3: Intelligence + Extensions (12 tools)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| visual_diff | Capturar estado 'antes' para comparacion | tools/visual_diff.py | OK |
-| visual_diff_compare | Comparar antes/despues, % de cambio | tools/visual_diff.py | OK |
-| memory_save | Guardar valor persistente entre sesiones | tools/memory.py | OK |
-| memory_recall | Recuperar memorias por key/categoria | tools/memory.py | OK |
-| memory_delete | Eliminar una memoria especifica | tools/memory.py | OK |
-| memory_list | Listar todas las memorias por categoria | tools/memory.py | OK |
-| clipboard_history | Historial de clipboard (start/stop/list/search/clear) | tools/clipboard_ext.py | OK |
-| scrape_url | Extraer contenido de URL (text/links/tables/html) | tools/scraper.py | OK |
-| extensions_list | Listar extensiones instaladas | extensions/registry.py | OK |
-| extensions_install | Instalar extension desde pip | extensions/registry.py | OK |
-| extensions_uninstall | Desinstalar extension | extensions/registry.py | OK |
-| extensions_audit | Auditar seguridad de una extension | extensions/registry.py | OK |
+**Intelligence + Extensions (12):** visual_diff, visual_diff_compare, memory_save, memory_recall, memory_delete, memory_list, clipboard_history, scrape_url, extensions_list, extensions_install, extensions_uninstall, extensions_audit
 
-### Phase 4: Automation (8 tools)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| watch_folder | Monitorear carpeta por cambios (watchdog) | tools/watcher.py | OK |
-| unwatch_folder | Detener monitoreo de carpeta | tools/watcher.py | OK |
-| get_watch_events | Obtener eventos del filesystem detectados | tools/watcher.py | OK |
-| list_watchers | Listar watchers activos | tools/watcher.py | OK |
-| schedule_task | Programar tarea recurrente (intervalo) | tools/scheduler.py | OK |
-| list_scheduled_tasks | Listar tareas programadas | tools/scheduler.py | OK |
-| remove_task | Eliminar tarea programada | tools/scheduler.py | OK |
-| get_task_history | Historial de ejecuciones de tareas | tools/scheduler.py | OK |
+**Automation (8):** watch_folder, unwatch_folder, get_watch_events, list_watchers, schedule_task, list_scheduled_tasks, remove_task, get_task_history
 
-### Phase 5: Voice Control + TTS (3 tools + background hotkey)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| speak | TTS con edge-tts (neural) + pyttsx3 fallback (offline) | tools/tts.py | OK |
-| speak_and_listen | Hablar + escuchar respuesta de voz | tools/tts.py | OK |
-| get_voice_hotkey_status | Estado del hotkey Ctrl+Shift+M | core/voice_hotkey.py | OK |
-| *(background)* voice_hotkey | Ctrl+Shift+M: graba, transcribe, escribe en MCP client | core/voice_hotkey.py | OK |
+**Voice + TTS (3):** speak, speak_and_listen, get_voice_hotkey_status
 
-### Adaptive Behavior (3 tools)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| get_suggestions | Detectar patrones repetitivos y sugerirlos | core/adaptive.py | OK |
-| accept_suggestion | Aceptar sugerencia de patron | core/adaptive.py | OK |
-| dismiss_suggestion | Descartar sugerencia de patron | core/adaptive.py | OK |
+**Adaptive + Workflows (8):** get_suggestions, accept_suggestion, dismiss_suggestion, workflow_record, workflow_stop, workflow_run, workflow_list, workflow_delete
 
-### Workflows (5 tools)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| workflow_record | Comenzar a grabar un workflow | core/workflows.py | OK |
-| workflow_stop | Detener grabacion y guardar workflow | core/workflows.py | OK |
-| workflow_run | Reproducir workflow con safety checks | core/workflows.py | OK |
-| workflow_list | Listar todos los workflows guardados | core/workflows.py | OK |
-| workflow_delete | Eliminar un workflow guardado | core/workflows.py | OK |
+**Self-Improve (2):** get_error_journal, clear_error_journal
 
-### Self-Improve (2 tools)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| get_error_journal | Mostrar diario de errores por app | core/error_journal.py | OK |
-| clear_error_journal | Limpiar entradas del diario de errores | core/error_journal.py | OK |
+**Smart Wait (4):** wait_for_element, wait_for_text, wait_for_window, wait_for_idle
 
-### Smart Wait (4 tools)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| wait_for_element | Esperar a que un elemento UI aparezca (polling UIA) | tools/wait.py | OK |
-| wait_for_text | Esperar a que texto aparezca en pantalla (polling OCR) | tools/wait.py | OK |
-| wait_for_window | Esperar a que una ventana aparezca | tools/wait.py | OK |
-| wait_for_idle | Esperar a que pantalla/ventana deje de cambiar | tools/wait.py | OK |
+**UX (2):** set_agent_screen_only, toggle_voice_overlay
 
-### UX (2 tools)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| set_agent_screen_only | Activar/desactivar auto-redirect al monitor del agente | tools/background.py | OK |
-| toggle_voice_overlay | Mostrar/ocultar ventana flotante de voice control | core/voice_overlay.py | OK |
+**Monitor (5):** start_ui_monitor, stop_ui_monitor, get_ui_events, handle_dialog, get_dialog_info
 
-### Monitor — UIA Events + Dialog Handler (5 tools)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| start_ui_monitor | Iniciar monitoreo de eventos UI en tiempo real (COM events) | core/uia_events.py | OK |
-| stop_ui_monitor | Detener monitoreo de eventos UI | core/uia_events.py | OK |
-| get_ui_events | Obtener eventos UI recientes (ventanas, foco) | core/uia_events.py | OK |
-| handle_dialog | Detectar y manejar dialogos activos (auto/report/dismiss) | core/dialog_handler.py | OK |
-| get_dialog_info | Info completa de un dialogo (botones, texto, tipo) | core/dialog_handler.py | OK |
+**Diagnostics (1):** run_diagnostics
 
-### Diagnostics (1 tool)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| run_diagnostics | Diagnosticos del sistema para troubleshooting | core/setup_wizard.py | OK |
-
-### CDP — Chrome DevTools Protocol (12 tools)
-| Tool | Funcion | Modulo | Estado |
-|------|---------|--------|--------|
-| cdp_discover | Escanear puertos localhost buscando CDP activo | core/cdp_manager.py | OK |
-| cdp_connect | Conectar a endpoint CDP via WebSocket | core/cdp_manager.py | OK |
-| cdp_disconnect | Desconectar de endpoint CDP | core/cdp_manager.py | OK |
-| cdp_list_connections | Listar conexiones CDP activas | core/cdp_manager.py | OK |
-| cdp_send | Enviar comando CDP crudo (avanzado) | core/cdp_manager.py | OK |
-| cdp_click | Click en coordenadas de pagina via CDP (invisible) | core/cdp_manager.py | OK |
-| cdp_type_text | Escribir texto via CDP (invisible) | core/cdp_manager.py | OK |
-| cdp_key_combo | Combinacion de teclas via CDP (invisible) | core/cdp_manager.py | OK |
-| cdp_screenshot | Screenshot via CDP (funciona oculta) | core/cdp_manager.py | OK |
-| cdp_evaluate | Evaluar JavaScript en contexto de pagina | core/cdp_manager.py | OK |
-| cdp_get_dom | Obtener arbol DOM via CDP | core/cdp_manager.py | OK |
-| cdp_click_selector | Click en elemento por selector CSS via CDP | core/cdp_manager.py | OK |
-| cdp_ensure | Asegurar CDP disponible para app Electron (propone restart) | core/cdp_manager.py | OK |
-| cdp_restart_confirmed | Reiniciar app con CDP despues de confirmacion | core/cdp_manager.py | OK |
-| cdp_get_knowledge_base | Knowledge base CDP (apps, puertos, historial) | core/cdp_manager.py | OK |
+**CDP (15):** cdp_discover, cdp_connect, cdp_disconnect, cdp_list_connections, cdp_send, cdp_click, cdp_type_text, cdp_key_combo, cdp_screenshot, cdp_evaluate, cdp_get_dom, cdp_click_selector, cdp_ensure, cdp_restart_confirmed, cdp_get_knowledge_base
 
 ## ARQUITECTURA CLAVE
 
-### Focus Guard (core/focus.py)
-Marlow NUNCA roba el foco de la ventana activa del usuario:
-- `server.py:call_tool()` usa try/finally para save/restore foco en CADA tool call
-- `save_user_focus()` — guarda HWND via `GetForegroundWindow()`
-- `restore_user_focus()` — restaura via `SetForegroundWindow()` + `AttachThreadInput` trick
-- `preserve_focus()` — context manager para calls individuales que roban foco
-- `focus_window` y `restore_user_focus` estan excluidos del auto-restore
+### Focus Guard (focus.py)
+`server.py:call_tool()` wraps ALL tools in try/finally save/restore foco via `GetForegroundWindow()` + `SetForegroundWindow()` + `AttachThreadInput`. `focus_window` y `restore_user_focus` excluidos del auto-restore.
 
-### Notepad Win11 Protection (keyboard.py)
-El nuevo Notepad de Windows 11 (tabulado, clase `RichEditD2DPT`) necesita manejo especial:
-- `_find_editable_element()` busca por control_type (Document, Edit) en vez de nombre
-- `_set_text_silent()` usa `iface_value.SetValue()` (UIA ValuePattern)
-- `_ensure_safe_notepad_tab()` abre tab nuevo si el actual tiene contenido
-- `_is_win11_notepad()` verifica class_name=="Notepad" + control RichEditD2DPT
+### Smart Escalation (escalation.py)
+1. **UIA fuzzy search** — 0 tokens, ~10-50ms, Levenshtein on name/automation_id/help_text/class_name
+2. **OCR** — 0 tokens, ~50-500ms, Windows OCR primary + Tesseract fallback
+3. **Cascade recovery** — 5 steps: wait+retry, dialog check, wide fuzzy (0.4), OCR, screenshot
+4. **Screenshot + LLM** — ~1,500 tokens (last resort)
 
-### Smart Escalation (core/escalation.py)
-1. **UI Automation (fuzzy search)** — 0 tokens, ~10-50ms, Levenshtein multi-property matching
-2. **OCR (Windows OCR / Tesseract)** — 0 tokens, ~50-500ms
-3. **Screenshot + LLM Vision** — ~1,500 tokens (ultimo recurso)
+Score thresholds: >0.8 use directly, 0.6-0.8 partial_matches for LLM, <0.6 escalate.
 
-### Fuzzy Element Search (core/uia_utils.py)
-- `find_element_enhanced(parent, query, control_type, max_depth, max_results)` — busqueda principal
-- Busca en 4 propiedades: name → automation_id → help_text → class_name
-- Levenshtein distance normalizada (~20 lineas, zero deps): `_levenshtein()`, `_similarity()`
-- Thresholds por propiedad: name=0.7, automation_id=0.6, help_text=0.6, class_name=0.6
-- Scoring: exact=1.0, whole-word=0.95, starts-with=0.9, fuzzy=variable
-- Early exit en match perfecto (score 1.0) — no sigue buscando
-- Retorna top N candidatos rankeados: `[{element, property_matched, score, name, automation_id, control_type, bbox}]`
-- `find_element_by_name()` es wrapper de compatibilidad (retorna primer resultado)
-- `find_elements()` MCP tool expone la busqueda al LLM con top 5 candidatos
-- smart_find score >0.8 usa directamente, 0.6-0.8 incluye partial_matches para LLM
+### Fuzzy Element Search (uia_utils.py)
+`find_element_enhanced()` searches 4 properties with Levenshtein distance. Thresholds: name=0.7, automation_id/help_text/class_name=0.6. Early exit on exact match. Returns top N ranked candidates with score/bbox.
 
-### Visual Diff (tools/visual_diff.py)
-- `visual_diff()` captura estado 'antes', retorna diff_id
-- `visual_diff_compare(diff_id)` captura 'despues', compara pixel a pixel
-- Usa PIL ImageChops.difference(), threshold de 30 para ruido
-- Estados expiran despues de 5 minutos (auto-cleanup)
-- Retorna change_percent, changed_region (bounding box), changed flag
+### Notepad Win11 (keyboard.py)
+RichEditD2DPT class: `_find_editable_element()` by control_type, `SetValue()` via UIA ValuePattern, `_ensure_safe_notepad_tab()` opens new tab if content exists.
 
-### Memory System (tools/memory.py)
-- Almacenamiento JSON en `~/.marlow/memory/`
-- Categorias: general, preferences, projects, tasks
-- Cada categoria es un archivo separado (general.json, etc.)
-- Operaciones: save, recall (por key, categoria, o ambos), delete, list
+### CDP Manager (cdp_manager.py)
+Singleton manages WebSocket connections to Electron/CEF CDP endpoints. Invisible input: dispatchMouseEvent, insertText, dispatchKeyEvent. Auto-restart requires user confirmation. Knowledge base at `~/.marlow/cdp_knowledge.json`. Default ports for 10 known apps.
 
-### Clipboard History (tools/clipboard_ext.py)
-- Thread daemon monitorea clipboard cada 1 segundo via Win32 API
-- Historial max 100 entradas, truncadas a 500 chars cada una
-- Operaciones: start, stop, list, search, clear
+### UIA Events (uia_events.py)
+STA daemon thread with `CoInitialize()` + Win32 message pump. 3 COM handlers via comtypes: WindowOpened/Closed, FocusChanged, StructureChanged. Thread-safe event buffer (max 500), empty events filtered.
 
-### Web Scraper (tools/scraper.py)
-- httpx async client + BeautifulSoup parser
-- Formatos: text (5KB max), links (100 max), tables, html (10KB max)
-- Seguridad: localhost/private IPs bloqueados, timeout 30s, max 5 redirects
-- User-Agent honesto: "Marlow/{version} (Desktop Automation Tool)" — usa __version__ dinamico
+### Dialog Handler (dialog_handler.py)
+Scans UIA tree for buttons/text, classifies: not_responding > error > save > update > confirmation > info. Actions: report/dismiss/auto. Filters by `#32770` class to avoid false positives.
 
-### Extension System (extensions/)
-- Extensiones son paquetes pip con `marlow_extension.json` manifest
-- Manifest declara permisos: com_automation, file_system, network, shell_commands
-- `ExtensionSandbox` verifica acciones contra permisos declarados
-- Registry descubre, instala, desinstala, audita extensiones
-- Datos en `~/.marlow/extensions/installed.json`
+### Cascade Recovery (cascade_recovery.py)
+5-step pipeline: (1) wait 1.5s + retry UIA, (2) check blocking dialogs, (3) wide fuzzy threshold 0.4, (4) OCR search, (5) screenshot for LLM. Timeout 5-30s. Enabled via `config.automation.cascade_recovery=True`.
 
-### Folder Watcher (tools/watcher.py)
-- watchdog Observer (lazy import) + factory handler en threads daemon
-- Eventos: created, modified, deleted, moved (configurable)
-- Buffer de hasta 500 eventos, filtrable por watch_id y timestamp
-- Watchers se pueden detener individualmente via unwatch_folder
+### Error Journal (error_journal.py)
+Records failures/successes per tool+app. `get_best_method()` returns highest success_count method. Integrated in mouse, keyboard, escalation. Max 500 entries with smart eviction.
 
-### Task Scheduler (tools/scheduler.py)
-- TaskRunner threads daemon ejecutan comandos a intervalos regulares
-- PowerShell o CMD, timeout 60s por ejecucion, max_runs configurable
-- Intervalo minimo: 10 segundos (anti-abuse)
-- Historial de hasta 200 ejecuciones con stdout/stderr/exit_code
-- Comandos pasan por SafetyEngine (destructivos bloqueados)
+### Agent Screen Only (background.py)
+`agent_screen_only=True` (default): auto-setup dual monitor, redirect new windows to agent screen, block moves to user screen. `open_application()` post-hook moves new windows.
 
-### TTS — Text-to-Speech (tools/tts.py)
-- **Motor primario: edge-tts** — voces neurales de Microsoft Edge, alta calidad, async
-  - Voces ES: `es-MX-DaliaNeural` (default), `es-MX-JorgeNeural`, `es-ES-ElviraNeural`, `es-ES-AlvaroNeural`
-  - Voces EN: `en-US-JennyNeural` (default), `en-US-GuyNeural`, `en-GB-SoniaNeural`, `en-GB-RyanNeural`
-  - Aliases amigables: "dalia", "jorge", "elvira", "jenny", "guy", "sonia"
-- **Fallback: pyttsx3** — SAPI5 offline cuando edge-tts falla (sin internet)
-- **Playback: Windows MCI API** — `ctypes.windll.winmm.mciSendStringW()` reproduce MP3 nativo, cero deps externas
-- **Deteccion de idioma:** caracteres especiales (ñ, ¿, ¡, acentos) + palabras comunes espanol
-- `speak()` — habla texto, auto-detecta idioma, edge-tts -> pyttsx3 fallback
-- `speak_and_listen()` — habla + luego escucha via `listen_for_command()`
-- Engine pyttsx3 se crea fresco por llamada (evita deadlocks COM en executor threads)
+### App Framework Detector (app_detector.py)
+Analyzes DLLs via `psutil.Process.memory_maps()`. Detects 8 frameworks (electron, cef, chromium, edge_webview2, winui3, uwp, wpf, winforms). Cached per PID. UIA tree depth auto-adjusted.
 
-### Agent Screen Only (config.py + server.py + background.py)
-- `agent_screen_only: bool = True` en `AutomationConfig` — default activado
-- `setup_background_mode()` se ejecuta automaticamente en `main()` si hay 2+ monitores
-- `open_application()` post-hook: espera ~3s, busca ventana por nombre, llama `move_to_agent_screen()`
-- `manage_window(action="move")` pasa por `_manage_window_with_redirect()` que verifica `is_on_user_screen(x,y)`
-- Si destino esta en monitor del usuario y `agent_screen_only=True`, redirige a `get_agent_move_coords()`
-- `set_agent_screen_only(enabled)` actualiza config y persiste a disco
-- Helpers en background.py: `is_on_user_screen()`, `get_agent_move_coords()`, `is_background_mode_active()`
+### Other Subsystems
+- **Workflows:** record/replay tool sequences, meta-tools excluded, safety check per step, delay 100ms-5s
+- **Visual Diff:** PIL ImageChops pixel comparison, threshold 30, 5min expiry
+- **Memory:** JSON in `~/.marlow/memory/`, categories: general/preferences/projects/tasks
+- **Clipboard History:** daemon polls 1s, max 100 entries
+- **Scraper:** httpx + BS4, localhost/private IPs blocked, honest User-Agent
+- **Extensions:** pip packages with manifest, sandboxed permissions
+- **Watcher:** watchdog observer, max 500 events, filterable
+- **Scheduler:** daemon threads, interval min 10s, max 200 history, safety-checked
+- **TTS:** edge-tts (neural) → pyttsx3 (SAPI5 offline), MCI API playback, auto language detect
+- **Voice Hotkey:** Ctrl+Shift+M record, chunk-based VAD (RMS 500), max 30s
+- **Voice Overlay:** tkinter topmost 300x200px, color-coded status
+- **Adaptive:** PatternDetector sliding window 2-10, 3+ repetitions trigger suggestion
+- **Setup Wizard:** 8 diagnostic steps, marker at `~/.marlow/setup_complete.json`
+- **Smart Wait:** 4 polling tools, timeout 1-120s, interval 0.5-10s
 
-### Voice Hotkey (core/voice_hotkey.py)
-- **Ctrl+Shift+M** inicia grabacion, **Ctrl+Shift+N** para manualmente (flag `_manual_stop`)
-- Al presionar M: guarda HWND, abre overlay, inicia grabacion en daemon thread
-- **Grabacion chunk-based VAD:** chunks de 0.5s, RMS threshold 500, para despues de 2s silencio post-voz o manual stop
-- **Pipeline:** beep -> overlay(listening) -> grabar -> overlay(processing) -> transcribir -> overlay(user text) -> escribir -> overlay(ready)
-- Restaura foco via `AttachThreadInput` + `SetForegroundWindow` (misma tecnica que focus.py)
-- Escribe en ventana guardada via UIA `SetValue()`, fallback clipboard paste via PowerShell stdin
-- Kill switch y manual stop se verifican entre cada chunk de grabacion
-- Max 30 segundos de grabacion
+## SEGURIDAD (NO NEGOCIABLE)
 
-### Voice Overlay (core/voice_overlay.py)
-- Ventana flotante tkinter corriendo en daemon thread separado (`VoiceOverlay._run_tk()`)
-- Comunicacion thread-safe via `queue.Queue` + `root.after(100ms)` polling
-- **Topmost + semi-transparente** (alpha 0.85) + sin barra de titulo (`overrideredirect`)
-- **300x200px**, esquina inferior derecha del monitor del usuario
-- Estado visual: circulo de color (idle=gris, listening=rojo pulsante, processing=amarillo, ready=verde)
-- Mini-log scrolleable con ultimas 5 lineas de conversacion
-- **Escape** cierra overlay (keybinding en la ventana)
-- Se abre automaticamente cuando se presiona Ctrl+Shift+M
-- API publica: `show_overlay()`, `hide_overlay()`, `update_status()`, `update_text()`
+1. TODA accion pasa por SafetyEngine
+2. Kill switch: Ctrl+Shift+Escape
+3. Confirmacion "all" default; modo "block" bloquea todo
+4. Apps bloqueadas: banking, PayPal, password managers, authenticators
+5. Comandos bloqueados: format, del /f, rm -rf, shutdown, reg delete, etc.
+6. Sanitizacion: credit cards, SSN, emails, passwords redactados
+7. CERO telemetria — nada sale de la maquina
+8. AES-256 logs, rate limiter 30/min, focus guard
+9. Extensions sandboxed, scheduler safety-checked, app_script AST validation
+10. clipboard stdin (no injection), registry regex, re.escape() en window_title
 
-### Adaptive Behavior (core/adaptive.py)
-- `PatternDetector` singleton (`_detector`) analiza historial de tool calls
-- Buffer rolling de hasta 500 acciones con timestamp
-- Extrae solo params clave: `window_title`, `app_name`, `element_name`, `text`, `command`
-- Sliding window de longitud 2-10 busca subsecuencias repetidas 3+ veces
-- Patrones persistidos en `~/.marlow/memory/patterns.json`
-- Cada patron: `{id, sequence, frequency, first_seen, last_seen, dismissed, accepted}`
-- `get_suggestions()` analiza y retorna solo patrones no descartados
-- `accept_suggestion(id)` / `dismiss_suggestion(id)` actualizan estado
+## ARQUITECTURA DE INPUT
 
-### Workflow System (core/workflows.py)
-- `WorkflowManager` singleton (`_manager`) graba y reproduce secuencias de tool calls
-- Storage en `~/.marlow/workflows/workflows.json`
-- Meta-tools excluidos de grabacion: kill_switch, workflow_*, adaptive tools, help tools
-- `workflow_record(name)` inicia grabacion; `workflow_stop()` guarda
-- `record_step()` captura tool, params, delay_ms entre pasos (solo exitosos)
-- `workflow_run(name)` reproduce: verifica kill switch + `safety.approve_action()` por paso
-- Delay entre pasos clamped: min 100ms, max 5s
-- Se detiene en primer fallo, retorna resultados parciales
+| Tier | Metodo | Roba foco | Requiere visibilidad |
+|------|--------|-----------|---------------------|
+| 0 | CDP / COM invisible | No | No |
+| 1 | UIA Patterns (invoke, SetValue) | No* | No |
+| 2 | SendMessage/PostMessage (futuro) | No | No |
+| 3 | click_input + focus restore | Si | Si |
+| 4 | pyautogui | Si | Si |
 
-### Error Journal — Self-Improve (core/error_journal.py)
-- `ErrorJournal` singleton (`_journal`) mantiene diario de fallos/exitos por tool+app
-- Storage en `~/.marlow/memory/error_journal.json`
-- Cada entrada: `{tool, app, window, method_failed, method_worked, error_message, params, timestamp, success_count, failure_count}`
-- `record_failure(tool, window, method, error)` — registra fallo, deduplica por tool+app+method
-- `record_success(tool, window, method)` — vincula metodo exitoso a la falla mas reciente
-- `get_best_method(tool, window)` — retorna el metodo con mayor success_count para tool+app
-- `get_known_issues(window)` — lista problemas conocidos, filtrable por app
-- Normaliza window title a app name: `"Document - Notepad"` → `"notepad"`
-- Max 500 entradas, eviccion inteligente: mantiene alto success_count, elimina viejas de bajo valor
-- **Integracion:** mouse.py (`click`), keyboard.py (`type_text`), escalation.py (`smart_find`)
+## ARQUITECTURA DE VISION
 
-### Smart Wait (tools/wait.py)
-- 4 herramientas de espera inteligente con polling configurable
-- `wait_for_element(name, window_title, timeout, interval)` — polls `find_element_by_name()` del UIA tree
-- `wait_for_text(text, window_title, timeout, interval)` — polls `ocr_region()`, case insensitive, busca en words + full text
-- `wait_for_window(title, timeout, interval)` — polls `Desktop.windows(title_re=...)` con `re.escape()`
-- `wait_for_idle(window_title, timeout, stable_seconds)` — compara screenshots consecutivos (mss + PIL downscale 4x NEAREST)
-- `_capture_frame()` helper asincrono con `run_in_executor` para captura blocking
-- Timeout clamped: 1-120s; interval clamped: 0.5-10s; stable_seconds clamped: 1-10s
-- Retorna info detallada: elapsed_seconds, checks count, element/window info con posicion
-
-### App Framework Detector (core/app_detector.py)
-- `detect_framework(pid)` — analiza DLLs cargadas via `psutil.Process.memory_maps()`
-- Detecta 8 frameworks: electron, cef, chromium, edge_webview2, winui3, uwp, wpf, winforms, win32
-- Rules-based matching: markers DLL → framework, con fallback a exe path y cmdline
-- Cache por PID (`_cache: dict[int, dict]`) para no re-escanear procesos conocidos
-- `is_electron(pid)` — shortcut retorna True si Electron o CEF
-- `detect_all_windows()` — escanea todas las ventanas, retorna framework de cada una
-- `detect_app_framework(window_title)` — MCP tool, una ventana o todas
-- `get_framework_hint(pid)` — retorna hint para smart_find si app es Electron/CEF
-- Integrado en escalation.py: `_get_framework_hint()` agrega nota cuando UIA+OCR fallan en Electron
-
-### Adaptive UIA Tree Depth (tools/ui_tree.py)
-- `get_ui_tree()` default `max_depth="auto"` — resuelve profundidad por framework via `app_detector`
-- `_DEPTH_MAP`: winui3/uwp/win32/wpf=15, winforms=12, chromium/edge_webview2=8, electron/cef=5
-- `_DEPTH_DEFAULT = 10` para frameworks desconocidos
-- `_resolve_depth(pid)` → `(depth, reason, framework)` — detecta framework y retorna profundidad optima
-- User override: `max_depth=N` fuerza profundidad, aun detecta framework para metadata
-- Resultado incluye: `depth_used`, `depth_reason`, `window.framework`
-
-### COM Invisible Mode (tools/app_script.py)
-- `run_app_script()` parametro `visible: bool = False` — instancias nuevas corren invisible
-- `GetActiveObject` (instancias existentes): respeta visibilidad actual, no modifica
-- `Dispatch` (instancias nuevas): `app.Visible = visible` — False por default
-- `visible=True` para mostrar la ventana (override)
-- No afecta Outlook/Photoshop que tipicamente requieren UI visible
-
-### CDP Manager (core/cdp_manager.py)
-- `CDPManager` singleton (`get_manager()`) — maneja conexiones WebSocket a endpoints CDP
-- **Descubrimiento:** `discover_cdp_ports(port_range)` escanea puertos via HTTP GET `/json`, async parallel probes con timeout 2s
-- **Conexion:** `connect(port)` establece WebSocket (`websocket-client`) al primer target tipo "page"
-- **Comandos:** `send_command(port, method, params)` envia JSON con auto-increment msg_id, espera respuesta matching, timeout 10s
-- **Input invisible** (no roban foco, no mueven mouse):
-  - `cdp_click(port, x, y)` — Input.dispatchMouseEvent (mousePressed + mouseReleased)
-  - `cdp_type(port, text)` — Input.insertText (unicode-safe)
-  - `cdp_key_combo(port, key, modifiers)` — Input.dispatchKeyEvent (keyDown + keyUp) con bitmask modifiers
-- **Lectura:**
-  - `cdp_screenshot(port, format)` — Page.captureScreenshot, retorna base64 (funciona oculta)
-  - `cdp_evaluate(port, expression)` — Runtime.evaluate con returnByValue
-  - `cdp_get_dom(port, depth)` — DOM.getDocument, retorna arbol de nodos
-- **Conveniencia:** `cdp_click_selector(port, css_selector)` — document.querySelector().click() via Runtime.evaluate
-- **Limpieza:** `_cleanup_connection(port)` remueve conexiones muertas automaticamente en send/recv errors
-- **Auto-restart** (requiere confirmacion del usuario):
-  - `ensure_cdp(app_name)` — 3 pasos: check conexion existente, scan puertos, proponer restart
-  - Retorna `{action_required: "restart", ...}` si necesita reinicio — nunca auto-reinicia
-  - `restart_confirmed(app_name, port)` — cierra app (WM_CLOSE + 3s + terminate), relanza con `--remote-debugging-port` y `ELECTRON_EXTRA_LAUNCH_ARGS`, espera 15s, auto-conecta
-  - `_find_app_process()` busca por nombre de proceso y exe path via psutil
-  - `_close_app_cleanly()` — WM_CLOSE via `PostMessageW` + `EnumWindows`, fallback terminate
-  - `_build_restart_command()` — filtra flags de debugging existentes, agrega `--remote-allow-origins=*`
-- **Default ports:** `DEFAULT_CDP_PORTS` — 10 apps conocidas (code=9229, slack=9230, notion=9232, etc.)
-- **Knowledge Base:** `~/.marlow/cdp_knowledge.json` — persiste apps que necesitaron restart y su puerto
-- **Dependencia:** `websocket-client>=1.7.0` (sync, wrapped en `run_in_executor` para async)
-- 15 MCP tool functions expuestas como wrappers del singleton
-
-### UIA Event Handlers (core/uia_events.py)
-- `UIAEventManager` singleton via `get_manager()` (double-checked locking, same as cdp_manager)
-- **STA daemon thread** with `CoInitialize()` + Win32 message pump (`PeekMessageW` loop, 50ms cycle)
-- `_load_com_types()` lazy-loads UIA COM type library via `comtypes.client.GetModule("UIAutomationCore.dll")`
-- 3 COM handler classes via `comtypes.COMObject`:
-  - `WindowEventHandler` — implements `IUIAutomationEventHandler`, handles WindowOpened (20016) + WindowClosed (20017)
-  - `FocusEventHandler` — implements `IUIAutomationFocusChangedEventHandler`
-  - `StructureEventHandler` — implements `IUIAutomationStructureChangedEventHandler`
-- Events stored in thread-safe buffer (max 500), empty events filtered out
-- Filterable by event_type and ISO timestamp, newest first
-- Graceful degradation: returns clear error if COM types unavailable
-- `start()` waits up to 10s for daemon thread to signal ready
-- `stop()` sets stop event, joins thread (5s timeout), calls `RemoveAllEventHandlers()`
-- Handler instances stored in list to prevent garbage collection
-- 3 MCP tools: `start_ui_monitor`, `stop_ui_monitor`, `get_ui_events`
-
-### Cascade Recovery (core/cascade_recovery.py)
-- `cascade_find(target, window_title, timeout)` — 5-step recovery pipeline
-- Step 1 (wait_retry): sleep 1.5s, retry UIA search with score>0.8 (app may be loading)
-- Step 2 (dialog_check): call `handle_dialog(report)` to detect blocking dialogs
-- Step 3 (fuzzy_wide): walk UIA tree with threshold 0.4 (vs normal 0.6), max_depth 8, top 5 candidates
-- Step 4 (ocr): call `ocr_region()`, search words for target text, return bounding box + click coords
-- Step 5 (screenshot): call `take_screenshot()`, return base64 for LLM vision
-- Timeout clamped 5-30s, each step checks remaining time before proceeding
-- Each step records result in Error Journal (`record_success`/`record_failure`)
-- Returns `{found, method, element_info, attempts, elapsed_seconds, steps_tried}`
-- Integrated in `escalation.py`: when UIA+OCR fail, `smart_find` delegates to cascade if `cascade_recovery=True` (default)
-- Config: `AutomationConfig.cascade_recovery: bool = True`
-- 1 MCP tool: `cascade_find`
-
-### Dialog Handler (core/dialog_handler.py)
-- `_scan_dialog_elements(window)` walks UIA tree (max depth 8) extracting buttons, text, controls
-- `_classify_dialog(scan)` matches against keyword patterns:
-  - `not_responding` > `error` > `save` > `update` > `confirmation` > `info` > `unknown`
-  - Returns `{dialog_type, confidence, suggested_action, detail}`
-- `handle_dialog(action, window_title)` — 3 actions:
-  - `report` — scan and return info (no click)
-  - `dismiss` — click best dismiss button (Cancel > No > Close > OK priority)
-  - `auto` — info dialogs: click OK; update: click Later/postpone; error/save/confirm: report
-- `get_dialog_info(window_title)` — returns buttons, texts, type, confidence, suggested_action
-- `_scan_for_dialogs()` auto-scans all windows, filters by class `#32770` (Win32 dialog) to avoid false positives
-- `_click_button()` uses UIA invoke (silent), fallback to click_input
-- Known button sets: dismiss (cancel, no, close...), accept (ok, yes, save...), postpone (later, skip...)
-- Known text patterns: error keywords, warning, update, not_responding, save
-- 2 MCP tools: `handle_dialog`, `get_dialog_info`
-
-### Setup Wizard (core/setup_wizard.py)
-- `SETUP_FILE = ~/.marlow/setup_complete.json` — marker file
-- `is_first_run()` — `not SETUP_FILE.exists()`
-- `run_setup_wizard()` — synchronous, called from `main()` before event loop
-- 8 steps: Python, monitors, microphone, OCR engines, TTS, Whisper download, config, summary
-- Each step: `{"status": "ok"|"warning"|"skip", "detail": "..."}`
-- Never raises — catches all errors per step
-- Saves results + timestamp to `setup_complete.json`
-- `run_diagnostics()` — async MCP tool, same checks + system info + safety status
-
-### Installer Script (install.py)
-- Standalone root-level script for non-technical users
-- Bilingual EN/ES output via `p(en, es)` and `header(en, es)` helpers
-- 4 steps: check Python >= 3.10, pip install -e ., run setup wizard, detect MCP clients
-- MCP client detection: searches `%APPDATA%` for known config files (Claude Desktop, Cursor)
-- Adds `{"marlow": {"command": "marlow"}}` to `mcpServers` — never overwrites existing entries
-
-### Integration Tests (tests/test_integration.py)
-17 tests across 7 scenarios testing complete tool chains (not isolated functions):
-1. **Background Mode Flow** — setup → open Notepad → move to agent screen → type → verify on agent screen → restore focus → cleanup
-2. **Audio Pipeline** — capture audio (system/mic) → verify WAV → speak TTS; separate transcription test (whisper, skips if model not cached)
-3. **Kill Switch Stops Scheduler** — schedule_task → activate kill switch → verify 0 successful runs → verify skip entries
-4. **Memory Persistence** — save → recall → verify value → delete → verify gone; also list keys
-5. **Focus Under Stress** — 5 consecutive tool actions (get_ui_tree, screenshot, click, type_text, clipboard) with focus save/restore after each
-6. **Security Chain** — safe echo OK → format C: BLOCKED → scheduled del /f BLOCKED → app_script import/eval/dunder BLOCKED → full chain test
-7. **Watcher + Scheduler** — watch_folder → create file → verify event → schedule_task → verify history → combined chain
-
-All tests have try/finally cleanup. Audio tests use `asyncio.wait_for()` timeouts (15s capture, 30s TTS, 90s transcription) to prevent hangs.
-
-## PRINCIPIOS DE SEGURIDAD (NO NEGOCIABLES)
-
-1. **TODA accion pasa por SafetyEngine** antes de ejecutarse
-2. **Kill switch** (Ctrl+Shift+Escape) desde Phase 1
-3. **Modo confirmacion = "all"** por default; modo "block" bloquea todo sin excepcion
-4. **Apps bloqueadas:** banking, PayPal, password managers, authenticators
-5. **Comandos bloqueados:** format, del /f, rm -rf, shutdown, reg delete, etc.
-6. **Sanitizacion automatica:** credit cards, SSN, emails, passwords redactados
-7. **CERO telemetria:** Nunca. Jamas. Nada sale de la maquina.
-8. **Logs encriptados:** AES-256 para audit trail
-9. **Rate limiter:** Maximo 30 acciones/minuto, thread-safe con Lock
-10. **Focus guard:** NUNCA robar foco de la ventana activa del usuario
-11. **Scraper:** URLs internas/privadas bloqueadas, response size limitado
-12. **Extensions:** Permisos declarados en manifest, sandboxed por ExtensionSandbox
-13. **Scheduler:** schedule_task y watch_folder son sensitive tools (requieren confirmacion)
-14. **Scheduler:** Comandos programados pasan por blocked commands check + kill switch check
-15. **app_script:** Validacion AST (no regex) bloquea imports, eval, exec, dunder access
-16. **clipboard:** Input via stdin (no f-string interpolation en PowerShell)
-17. **registry:** Validacion regex de nombres de paquetes antes de pip install
-18. **window_title:** re.escape() en todas las busquedas por titulo (10+ ubicaciones)
-
-## ESTILO DE CODIGO
-
-- Python 3.10+, type hints, docstrings en ingles con comentario en espanol (`/ Comentario`)
-- async/await para todas las herramientas MCP
-- Blocking ops en `loop.run_in_executor(None, func)` para no bloquear event loop
-- Error handling que devuelve dicts descriptivos, nunca crashes
-- Cada tool retorna dict con "success" o "error" key
-- `ctypes.windll.user32` para Win32 API directa (MoveWindow, SetForegroundWindow, etc.)
-- UIAWrapper del backend "uia" — NO tiene `move_window()` ni `set_edit_text()` nativos
-
-## BUGS CRITICOS RESUELTOS
-
-1. `wrapper_object()` no existe en UIAWrapper — eliminado en ui_tree/mouse/keyboard
-2. MCP Server startup (mcp v1.26.0) — async with stdio_server()
-3. UIAWrapper no tiene `move_window()` — ctypes.windll.user32.MoveWindow
-4. type_text falla en Notepad Win11 — _find_editable_element + SetValue
-5. type_text sobrescribe contenido — _ensure_safe_notepad_tab
-6. Herramientas roban foco — focus guard try/finally + preserve_focus()
-7. Audio deps no se instalaban — movidas a main deps
-8. Transcripcion timeout — 300s timeout + download_whisper_model tool
-
-## AUDITORIA v0.4.1 — 21 problemas resueltos
-
-### Criticos (6)
-1. Sandbox bypass en app_script.py — AST-based validation reemplaza regex
-2. PowerShell injection en clipboard — input via stdin, no f-string
-3. Scheduled tasks ignoran kill switch — callback check antes de cada ejecucion
-4. Modo "block" agregado a safety.py — rechaza todas las acciones
-5. watchdog import lazy — _ensure_watchdog() con try/except
-6. Regex injection via window_title — re.escape() en 10+ ubicaciones
-
-### Importantes (7)
-7. Rate limiter thread-safe — threading.Lock()
-8. clipboard() podia retornar None — todos los paths retornan dict
-9. Substring matching causa falsos positivos — whole-word match
-10. ctypes.c_double incorrecto para LPARAM — ctypes.wintypes.LPARAM
-11. asyncio.get_event_loop() deprecated — get_running_loop()
-12. preserve_focus() redundante — removido de tools (server.py ya lo maneja)
-13. registry.py acepta strings arbitrarios — regex validation de package names
-
-### Menores (8)
-14. Imports no usados removidos (voice.py, safety.py, sanitizer.py, server.py)
-15. Type hints agregados a funciones con params object (8+ funciones)
-16. Version hardcodeada en scraper.py — usa __version__ dinamico
-17. Window-finding extraido a core/uia_utils.py (10 call sites actualizados)
-18. Element search compartido via find_element_by_name() en uia_utils.py
-19. MD5 reemplazado con uuid4 en visual_diff.py
-20. preserve_focus() removido de escalation.py _click_element
-21. (15 verificado: Optional ya importado en keyboard.py — no era issue)
-
-## ISSUES MENORES CONOCIDOS
-
-- `list_windows`: minimized detection inconsistente (rect.left==-32000 vs width=0)
-- Sanitizer regex para passwords es agresivo
-- `open_application` via Start-Process puede fallar; subprocess.Popen funciona
-
-## ARQUITECTURA DE INPUT (tiers de interaccion)
-
-Orden de preferencia para interactuar con aplicaciones. Siempre intentar el tier mas bajo primero.
-
-| Tier | Metodo | Roba foco | Requiere visibilidad | Notas |
-|------|--------|-----------|---------------------|-------|
-| 0 | CDP (Electron) / COM invisible (Office) | No | No | Ideal: API directa a la app |
-| 1 | UIA Patterns (invoke, SetValue) | No* | No | *SetValue roba foco en algunos controles |
-| 2 | SendMessage/PostMessage | No | No | Futuro: mensajes Win32 directos al HWND |
-| 3 | click_input + focus restore | Si | Si | Actual fallback con focus guard |
-| 4 | pyautogui | Si | Si | Ultimo recurso: simula hardware |
-
-## ARQUITECTURA DE VISION (tiers de percepcion)
-
-Orden de preferencia para "ver" lo que hay en pantalla.
-
-| Tier | Metodo | Tokens | Velocidad | Notas |
-|------|--------|--------|-----------|-------|
-| 0 | CDP DOM/screenshot (Electron) | 0 | ~5ms | Futuro: acceso directo al DOM |
-| 1 | UIA tree + Windows OCR con bboxes | 0 | ~10-200ms | Estructura + texto visual con posiciones |
-| 2 | mss/PrintWindow screenshots | 0 | ~50ms | Captura sin foco (PrintWindow futuro) |
-| 3 | Set-of-Mark + LLM | ~1,500 | ~1-3s | Futuro: elementos numerados + vision LLM |
-
-## KEY DECISIONS
-
-- **Discord:** CDP deshabilitado por default (viola ToS de Discord)
-- **Shadow Mode:** OFF por default (requiere activacion explicita del usuario)
-- **pyvda:** Para Virtual Desktops, con fallback silencioso si no esta instalado
-- **Spotify:** Usar Web API, no CDP (Spotify tiene API oficial publica)
-
-## PRINCIPIO DE GPU
-
-**Auto-detect, transparente, graceful fallback.**
-
-- Sin GPU todo funciona bien. Con GPU todo funciona mejor.
-- Dependencias GPU son siempre opcionales (`[project.optional-dependencies]`).
-- Auto-deteccion al inicio: `torch.cuda.is_available()` / `onnxruntime.get_available_providers()`.
-- Cada componente que puede usar GPU tiene fallback CPU transparente.
-- El usuario nunca necesita configurar nada — Marlow detecta y usa lo mejor disponible.
-- Aplica a: ASR (faster-whisper/Moonshine), VAD (Silero), Vision (OmniParser futuro).
+| Tier | Metodo | Tokens | Velocidad |
+|------|--------|--------|-----------|
+| 0 | CDP DOM/screenshot | 0 | ~5ms |
+| 1 | UIA tree + Windows OCR | 0 | ~10-200ms |
+| 2 | mss/PrintWindow | 0 | ~50ms |
+| 3 | Set-of-Mark + LLM | ~1,500 | ~1-3s |
 
 ## ARQUITECTURA DE AUDIO
 
-### Activacion de voz
-| Modo | Metodo | Estado |
+| Componente | Implementado | Futuro |
+|------------|-------------|--------|
+| Activacion | Ctrl+Shift+M hotkey | Wake word "Hey Marlow" (Fase 6) |
+| ASR | faster-whisper CPU int8 | Moonshine streaming (F6), GPU auto (F5) |
+| TTS | edge-tts → pyttsx3 | Piper TTS offline (Fase 5) |
+| VAD | RMS threshold 500 | Silero VAD neuronal (Fase 5) |
+
+## ROADMAP RESUMIDO
+
+Ver **ROADMAP.md** para detalle completo.
+
+| Fase | Nombre | Estado |
 |------|--------|--------|
-| Hotkey | Ctrl+Shift+M graba, Ctrl+Shift+N para | Implementado (voice_hotkey.py) |
-| Wake Word | "Hey Marlow" via OpenWakeWord — siempre escuchando | Fase 6 |
-| Multi-turn | Conversacion continua sin re-activar | Fase 6 |
+| 1.1-1.5 | Vision Enhancement (OCR, fuzzy search, framework detect, auto depth, COM invisible) | COMPLETA |
+| 2.1-2.4 | App Intelligence (CDP, UIA events, dialogs, cascade, auto-restart) | COMPLETA |
+| 3.1-3.4 | Understanding (Set-of-Mark, context awareness, knowledge base, teach mode) | PENDIENTE |
+| 4.1-4.5 | Shadow Mode (virtual desktops, SendMessage, PrintWindow, toast, systray) | PENDIENTE |
+| 5.1-5.4 | Voice Core (Silero VAD, Piper TTS, GPU auto, audio calibration) | PENDIENTE |
+| 6.1-6.5 | Natural Conversation (Moonshine, wake word, barge-in, multi-turn) | PENDIENTE |
+| 7.1-7.6 | Advanced (sensor fusion, OmniParser, YAMNet, NVDA, meeting transcription) | PENDIENTE |
 
-### ASR — Automatic Speech Recognition
-| Motor | Caso de uso | Estado |
-|-------|-------------|--------|
-| Moonshine v2 streaming | Comandos cortos (<10s), baja latencia | Fase 6 |
-| faster-whisper (CPU int8) | Audio largo, transcripcion, dictado | Implementado |
-| faster-whisper (GPU auto) | Mismo pero acelerado si hay GPU | Fase 5 |
+## KEY DECISIONS
 
-### TTS — Text-to-Speech (cadena de fallback)
-| Prioridad | Motor | Requiere | Estado |
-|-----------|-------|----------|--------|
-| 1 | edge-tts (voces neurales Microsoft) | Internet | Implementado |
-| 2 | Piper TTS (ONNX offline, alta calidad) | Modelo descargado | Fase 5 |
-| 3 | pyttsx3 (SAPI5 nativo Windows) | Nada | Implementado |
+- **Discord:** CDP disabled (violates ToS)
+- **Shadow Mode:** OFF by default (explicit activation)
+- **Spotify:** Web API, not CDP (official public API)
+- **GPU:** Auto-detect, transparent, graceful CPU fallback, optional deps only
 
-### VAD — Voice Activity Detection
-| Motor | Metodo | Estado |
-|-------|--------|--------|
-| RMS threshold | Energia de audio > 500 | Implementado (voice_hotkey.py) |
-| Silero VAD | Red neuronal ONNX, preciso | Fase 5 (reemplaza RMS) |
+## ESTILO DE CODIGO
 
-## ROADMAP v4 (7 fases)
+- Python 3.10+, type hints, docstrings EN con comentario ES (`/ Comentario`)
+- async/await para tools MCP, blocking ops en `run_in_executor`
+- Error handling retorna dicts, nunca crashes. Cada tool: `"success"` o `"error"` key
+- `ctypes.windll.user32` para Win32 API directa
+- UIAWrapper (backend "uia"): NO tiene `wrapper_object()`, `move_window()`, ni `set_edit_text()`
 
-### Fase 1: Vision Enhancement
-- 1.1 **Windows OCR** reemplaza Tesseract como motor OCR default ✓ COMPLETADO v0.11.0
-- 1.2 **Multi-property fuzzy search** en UIA tree (name + automation_id + help_text + class_name, Levenshtein) ✓ COMPLETADO v0.12.0
-- 1.3 **Deteccion de apps Electron** (DLL analysis + exe path + cmdline, 8 frameworks) ✓ COMPLETADO v0.13.0
-- 1.4 **Profundidad adaptativa** de UIA tree (auto depth per framework: WinUI=15, Chromium=8, Electron=5) ✓ COMPLETADO v0.14.0
-- 1.5 **COM invisible por default** en app_script.py (visible=False, no mostrar ventana de Office) ✓ COMPLETADO v0.14.0
+## BUGS RESUELTOS
 
-### Fase 2: App Intelligence
-- 2.1 **CDP para apps Electron** (12 tools: discover, connect, click, type, screenshot, evaluate, DOM) ✓ COMPLETADO v0.15.0
-- 2.2 **UIA event handlers** via comtypes (reaccionar a cambios en tiempo real, no polling) ✓ COMPLETADO v0.18.0
-- 2.3 **Auto-handling de dialogos** (detectar y responder a popups conocidos automaticamente) ✓ COMPLETADO v0.18.0
-- 2.4 **CDP auto-restart** (ensure + restart_confirmed + knowledge base, confirmacion del usuario) ✓ COMPLETADO v0.16.0
+1. `wrapper_object()` no existe en UIAWrapper — eliminado
+2. MCP startup: `async with stdio_server()` (v1.26.0)
+3. `move_window()` → `ctypes.windll.user32.MoveWindow()`
+4. Notepad Win11: `_find_editable_element()` + `SetValue()`
+5. Tab overwrite: `_ensure_safe_notepad_tab()`
+6. Focus steal: try/finally guard + `preserve_focus()`
+7. Audio deps: moved to main dependencies
+8. Transcription timeout: 300s + `download_whisper_model`
 
-### Fase 3: Understanding
-- 3.1 **Set-of-Mark prompting** — numerar elementos en screenshot para que LLM los identifique
-- 3.2 **Context awareness** — entender que app esta activa y adaptar estrategia
-- 3.3 **App Knowledge Base** — base de datos de como interactuar con cada app conocida
-- 3.4 **Teach Marlow mode** — el usuario muestra una accion, Marlow la aprende como workflow
+## AUDITORIA v0.4.1
 
-### Fase 4: Shadow Mode
-- 4.1 **Virtual Desktops** con pyvda — crear desktop invisible para operar sin que el usuario vea
-- 4.2 **SendMessage tier** — interactuar sin foco ni visibilidad via mensajes Win32
-- 4.3 **PrintWindow** — capturar screenshots de ventanas sin que esten visibles
-- 4.4 **Toast notifications** — notificar al usuario de resultados sin interrumpir
-- 4.5 **System tray** — icono persistente con estado de Marlow
+**21 fixes.** Criticos: AST validation app_script, clipboard stdin, scheduler kill switch, modo "block", lazy watchdog, re.escape() window_title. Importantes: thread-safe rate limiter, clipboard null safety, whole-word match, LPARAM type, get_running_loop(), shared uia_utils. Menores: unused imports, type hints, dynamic version, uuid4.
 
-### Fase 5: Voice Core
-- 5.1 **Silero VAD** reemplaza RMS threshold (red neuronal ONNX, deteccion precisa de voz)
-- 5.2 **Piper TTS** offline como segundo fallback (ONNX, alta calidad, sin internet)
-- 5.3 **GPU auto-detect** para ASR (faster-whisper usa GPU si disponible, CPU si no)
-- 5.4 **Audio calibracion** — detectar ruido ambiente y ajustar threshold automaticamente
+## ISSUES CONOCIDOS
 
-### Fase 6: Natural Conversation
-- 6.1 **Moonshine v2 streaming** — ASR streaming para comandos cortos con baja latencia
-- 6.2 **OpenWakeWord "Hey Marlow"** — wake word siempre escuchando, activa sin hotkey
-- 6.3 **Barge-in** — interrumpir a Marlow mientras habla con nuevo comando de voz
-- 6.4 **Multi-turn voice** — conversacion continua sin re-activar por cada frase
-- 6.5 **Soundboard** — sonidos de feedback (beeps, confirmacion, error) configurables
-
-### Fase 7: Advanced
-- 7.1 **Sensor fusion** — combinar UIA + OCR + vision + audio para entendimiento completo
-- 7.2 **OmniParser** — modelo de vision para entender UIs complejas (GPU opcional)
-- 7.3 **YAMNet** — clasificacion de sonidos del sistema (alertas, notificaciones, errores)
-- 7.4 **NVDA integration** — usar motor de accesibilidad NVDA como fuente adicional de info
-- 7.5 **Meeting transcription** — transcribir reuniones en tiempo real (system audio + mic)
-- 7.6 **Dictado** — modo dictado continuo que escribe todo lo que el usuario dice
+- `list_windows`: minimized detection inconsistente
+- Sanitizer password regex agresivo
+- `open_application` via Start-Process puede fallar; Popen funciona
