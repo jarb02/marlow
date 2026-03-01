@@ -200,6 +200,12 @@ _TOOLS_CATALOG = [
                 "params": ["query", "window_title", "control_type"],
             },
             {
+                "name": "cascade_find",
+                "description_en": "Multi-step recovery when smart_find fails (wait, dialog check, fuzzy, OCR, screenshot)",
+                "description_es": "Recuperacion multi-paso cuando smart_find falla (esperar, dialogos, fuzzy, OCR, screenshot)",
+                "params": ["target", "window_title", "timeout"],
+            },
+            {
                 "name": "detect_app_framework",
                 "description_en": "Detect UI framework of a window (Electron, WPF, WinUI, etc.)",
                 "description_es": "Detectar framework UI de una ventana (Electron, WPF, WinUI, etc.)",
