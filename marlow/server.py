@@ -1808,6 +1808,23 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
+        Tool(
+            name="get_inspiration",
+            description=(
+                "Get ideas and tips for what Marlow can do. Returns random "
+                "examples like voice control, workflow recording, CDP automation, "
+                "background mode, and more. Great for new users."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of tips to return (1-15, default 3)",
+                    },
+                },
+            },
+        ),
     ]
 
 
@@ -2273,6 +2290,9 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         ),
         # Diagnostics
         "run_diagnostics": lambda args: setup_wizard.run_diagnostics(),
+        "get_inspiration": lambda args: help_mod.get_inspiration(
+            count=args.get("count", 3),
+        ),
     }
 
     handler = tool_map.get(name)

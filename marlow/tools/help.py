@@ -5,6 +5,8 @@ Provides tools for MCP clients to discover all available tools
 and query the current system state.
 """
 
+import random
+
 from marlow import __version__
 
 # ─────────────────────────────────────────────────────────────
@@ -622,6 +624,12 @@ _TOOLS_CATALOG = [
                 "description_es": "Ejecutar diagnosticos del sistema para troubleshooting",
                 "params": [],
             },
+            {
+                "name": "get_inspiration",
+                "description_en": "Get ideas for what Marlow can do (random tips and examples)",
+                "description_es": "Obtener ideas de lo que Marlow puede hacer (tips y ejemplos aleatorios)",
+                "params": ["count"],
+            },
         ],
     },
 ]
@@ -689,4 +697,107 @@ async def get_version(
             "background_mode": background_mode,
             "voice_hotkey_active": voice_hotkey_active,
         },
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# Inspiration Tips
+# ─────────────────────────────────────────────────────────────
+
+_INSPIRATION_TIPS = [
+    {
+        "title": "Voice Control",
+        "tip": "Press Ctrl+Shift+M to talk to Marlow by voice. Ask 'What can you do?' to get started.",
+        "tools": ["listen_for_command", "speak", "speak_and_listen"],
+    },
+    {
+        "title": "Background Mode",
+        "tip": "If you have two monitors, Marlow can work on the second screen while you use the first. Try 'setup background mode'.",
+        "tools": ["setup_background_mode", "move_to_agent_screen"],
+    },
+    {
+        "title": "Automate Electron Apps",
+        "tip": "Marlow can control VS Code, Discord, Slack, and Figma invisibly via Chrome DevTools Protocol. No mouse or keyboard needed.",
+        "tools": ["cdp_ensure", "cdp_click", "cdp_type", "cdp_evaluate"],
+    },
+    {
+        "title": "Record & Replay Workflows",
+        "tip": "Record a sequence of actions and replay it later. Great for repetitive tasks like daily reports or data entry.",
+        "tools": ["workflow_record", "workflow_stop", "workflow_run"],
+    },
+    {
+        "title": "COM Automation",
+        "tip": "Script Excel, Word, PowerPoint, Photoshop, and other Office/Adobe apps directly. Runs invisibly by default.",
+        "tools": ["run_app_script"],
+    },
+    {
+        "title": "Smart Find",
+        "tip": "Can't find a button? smart_find escalates from UI Automation to OCR to screenshot analysis automatically.",
+        "tools": ["smart_find", "find_elements"],
+    },
+    {
+        "title": "Watch Folders",
+        "tip": "Monitor a folder for new files and react automatically. Useful for download folders, inboxes, or build outputs.",
+        "tools": ["watch_folder", "get_watch_events"],
+    },
+    {
+        "title": "Schedule Tasks",
+        "tip": "Run commands on a recurring schedule. Check disk usage every hour, pull git repos, or generate reports.",
+        "tools": ["schedule_task", "get_task_history"],
+    },
+    {
+        "title": "Visual Diff",
+        "tip": "Capture a 'before' screenshot, make changes, then compare. Marlow tells you exactly what changed and by how much.",
+        "tools": ["visual_diff", "visual_diff_compare"],
+    },
+    {
+        "title": "Persistent Memory",
+        "tip": "Marlow remembers things across sessions. Save project paths, preferences, or notes and recall them later.",
+        "tools": ["memory_save", "memory_recall"],
+    },
+    {
+        "title": "Web Scraping",
+        "tip": "Extract text, links, or tables from any public URL. Great for monitoring prices, docs, or changelogs.",
+        "tools": ["scrape_url"],
+    },
+    {
+        "title": "Wait for Anything",
+        "tip": "Wait for a window to open, a button to appear, or text to show up on screen before continuing. No more guessing with sleep timers.",
+        "tools": ["wait_for_element", "wait_for_text", "wait_for_window", "wait_for_idle"],
+    },
+    {
+        "title": "Audio Transcription",
+        "tip": "Record system audio or microphone, then transcribe it locally with Whisper. Meeting notes, lecture summaries, or audio logs.",
+        "tools": ["capture_system_audio", "capture_mic_audio", "transcribe_audio"],
+    },
+    {
+        "title": "Clipboard History",
+        "tip": "Start clipboard monitoring to keep a history of everything you copy. Search through past clips to find what you need.",
+        "tools": ["clipboard_history"],
+    },
+    {
+        "title": "Pattern Detection",
+        "tip": "Marlow watches for repeating action patterns and suggests automating them. The more you use it, the smarter it gets.",
+        "tools": ["get_suggestions", "accept_suggestion"],
+    },
+]
+
+
+async def get_inspiration(count: int = 3) -> dict:
+    """
+    Return random tips and ideas for what Marlow can do.
+
+    / Retorna tips e ideas aleatorias de lo que Marlow puede hacer.
+    """
+    count = max(1, min(count, len(_INSPIRATION_TIPS)))
+
+    # Always include voice control tip first
+    voice_tip = _INSPIRATION_TIPS[0]
+    others = random.sample(_INSPIRATION_TIPS[1:], min(count - 1, len(_INSPIRATION_TIPS) - 1))
+    selected = [voice_tip] + others
+
+    return {
+        "success": True,
+        "total_tools": _TOTAL_TOOLS,
+        "tips": selected,
     }

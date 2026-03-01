@@ -74,7 +74,7 @@ pip install marlow-mcp[audio,ocr]
 
 ## Features
 
-### 87 MCP Tools
+### 88 MCP Tools
 
 | Category | Tools | Description |
 |----------|-------|-------------|
@@ -103,7 +103,7 @@ pip install marlow-mcp[audio,ocr]
 | **Smart Wait** | `wait_for_element`, `wait_for_text`, `wait_for_window`, `wait_for_idle` | Intelligent polling with timeout |
 | **CDP** | `cdp_discover`, `cdp_connect`, `cdp_disconnect`, `cdp_list`, `cdp_send`, `cdp_click`, `cdp_type`, `cdp_key_combo`, `cdp_screenshot`, `cdp_evaluate`, `cdp_get_dom`, `cdp_click_selector`, `cdp_ensure`, `cdp_restart_confirmed`, `cdp_get_knowledge_base` | Chrome DevTools Protocol for Electron/CEF apps — 100% invisible |
 | **Focus** | `restore_user_focus` | Manually restore focus if lost |
-| **Help** | `get_capabilities`, `get_version` | Tool catalog and version info |
+| **Help** | `get_capabilities`, `get_version`, `get_inspiration` | Tool catalog, version info, and tips to get started |
 
 ### Background Mode (Silent Methods)
 
@@ -164,7 +164,7 @@ If silent methods don't work for an app, Marlow falls back to real input automat
 | Feature | Windows-MCP | MCPControl | sbroenne | **Marlow** |
 |---------|------------|-----------|---------|-----------|
 | Desktop control | Yes | Yes | Yes | Yes |
-| Tools | ~10 | ~8 | ~12 | **87** |
+| Tools | ~10 | ~8 | ~12 | **88** |
 | Silent/background methods | No | No | No | **Yes** |
 | CDP (Electron apps) | No | No | No | **Yes** |
 | Kill switch | No | No | No | **Yes** |
@@ -254,7 +254,7 @@ pip install marlow-mcp[audio]
 
 > **Control por voz:** Presiona `Ctrl+Shift+M` para hablar con Marlow. Pregunta *"Que puedes hacer?"* para empezar.
 
-### 87 Herramientas MCP
+### 88 Herramientas MCP
 
 Vision, captura, mouse, teclado, ventanas, sistema, seguridad, OCR, background dual-monitor, audio, voz, COM automation, visual diff, memoria persistente, clipboard, scraper, extensiones, watcher, scheduler, patrones adaptativos, workflows, auto-mejora, esperas inteligentes, CDP para apps Electron, y mas.
 
