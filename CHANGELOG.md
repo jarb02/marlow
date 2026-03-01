@@ -7,6 +7,35 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.19.0] - 2026-03-01
+
+Cascade Recovery — multi-step fallback pipeline when smart_find fails.
+94 total MCP tools (+1 new). When UIA and OCR can't find an element,
+cascade_find tries 5 progressively harder strategies: wait & retry,
+dialog check, wide fuzzy search (threshold 0.4), OCR text search,
+and screenshot for LLM vision. Integrated into smart_find automatically
+via `cascade_recovery` config option (enabled by default).
+
+### Added
+
+#### New Core Module (1)
+- **`marlow/core/cascade_recovery.py`** — `cascade_find()` async function implements a 5-step recovery pipeline with timeout control (5-30s). Step 1: wait 1.5s and retry UIA search (app may be loading). Step 2: scan for blocking dialogs via `handle_dialog(report)`. Step 3: wide fuzzy search with threshold 0.4 (vs normal 0.6) and max_depth 8. Step 4: OCR text search with bounding boxes for click targeting. Step 5: screenshot for LLM vision fallback. Each step records results in Error Journal. Returns standardized result with `{found, method, element_info, attempts}`.
+
+#### New Tools (1 total)
+| Tool | Description |
+|------|-------------|
+| `cascade_find` | Multi-step recovery pipeline (wait, dialog check, fuzzy, OCR, screenshot) |
+
+### Changed
+
+- **`marlow/core/escalation.py`** — When `cascade_recovery` config is enabled (default), smart_find delegates to `cascade_find()` instead of going directly to screenshot when UIA and OCR fail. Cascade results are nested in smart_find's response with `cascade_attempts` field. Added `_is_cascade_enabled()` helper that reads from config.
+- **`marlow/core/config.py`** — Added `cascade_recovery: bool = True` to `AutomationConfig`.
+- **`marlow/server.py`** — Import cascade_recovery, 1 new Tool definition + 1 dispatch entry. Image handling extended to support `cascade_find` screenshot results. Total: 94 tools.
+- **`marlow/tools/help.py`** — Added `cascade_find` to Intelligence category.
+- **`marlow/__init__.py`** — Version bumped from `0.18.0` to `0.19.0`.
+
+---
+
 ## [0.18.0] - 2026-03-01
 
 Auto-Handling de Dialogos + UIA Event Handlers. 93 total MCP tools (+6 new).

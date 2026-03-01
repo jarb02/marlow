@@ -68,9 +68,10 @@ from marlow.tools import wait
 # Voice Overlay
 from marlow.core import voice_overlay
 
-# UIA Event Handlers + Dialog Handler
+# UIA Event Handlers + Dialog Handler + Cascade Recovery
 from marlow.core import uia_events
 from marlow.core import dialog_handler
+from marlow.core import cascade_recovery
 
 # Setup Wizard
 from marlow.core import setup_wizard
@@ -490,6 +491,36 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["query"],
+            },
+        ),
+
+        # ── Phase 2: Cascade Recovery ──
+        Tool(
+            name="cascade_find",
+            description=(
+                "Multi-step recovery pipeline for finding UI elements when smart_find fails. "
+                "Tries 5 progressively harder strategies within a timeout: "
+                "1) Wait & retry (app loading), 2) Check blocking dialogs, "
+                "3) Wide fuzzy search (low thresholds), 4) OCR text search, "
+                "5) Screenshot for LLM vision. Each step records in Error Journal."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Text/name of the element to find.",
+                    },
+                    "window_title": {
+                        "type": "string",
+                        "description": "Window to search in. If omitted, uses active window.",
+                    },
+                    "timeout": {
+                        "type": "number",
+                        "description": "Maximum seconds for recovery (5-30, default 10).",
+                    },
+                },
+                "required": ["target"],
             },
         ),
 
@@ -2016,8 +2047,8 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent | Ima
             ),
         ]
 
-    # ── Handle smart_find with screenshot fallback (return image + context) ──
-    if name == "smart_find" and result.get("requires_vision") and "image_base64" in result:
+    # ── Handle smart_find / cascade_find with screenshot fallback (return image + context) ──
+    if name in ("smart_find", "cascade_find") and result.get("requires_vision") and "image_base64" in result:
         import json
         image_data = result.pop("image_base64")
         return [
@@ -2118,6 +2149,11 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
             query=args["query"],
             window_title=args.get("window_title"),
             control_type=args.get("control_type"),
+        ),
+        "cascade_find": lambda args: cascade_recovery.cascade_find(
+            target=args["target"],
+            window_title=args.get("window_title"),
+            timeout=args.get("timeout", 10),
         ),
         "detect_app_framework": lambda args: app_detector.detect_app_framework(
             window_title=args.get("window_title"),

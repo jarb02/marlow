@@ -120,7 +120,84 @@ async def smart_find(
             result["clicked"] = click_res
         return result
 
-    # ── Step 3: Screenshot fallback (~1,500 tokens) ──
+    # ── Step 3: Cascade recovery OR screenshot fallback ──
+    # / Paso 3: Recuperacion en cascada O screenshot como fallback
+    cascade_enabled = _is_cascade_enabled()
+
+    if cascade_enabled:
+        # Delegate to cascade_find which tries: wait+retry, dialog check,
+        # wide fuzzy, OCR, and finally screenshot
+        # / Delegar a cascade_find que intenta: esperar+reintentar, check dialogos,
+        #   fuzzy amplio, OCR, y finalmente screenshot
+        step_start = time.perf_counter()
+        from marlow.core.cascade_recovery import cascade_find
+        cascade_result = await cascade_find(target, window_title)
+        elapsed = round((time.perf_counter() - step_start) * 1000, 1)
+
+        methods_tried.append({
+            "method": "cascade_recovery",
+            "success": cascade_result.get("found", False),
+            "time_ms": elapsed,
+            "steps_tried": cascade_result.get("steps_tried", 0),
+            "cascade_method": cascade_result.get("method"),
+        })
+
+        if cascade_result.get("found"):
+            result = {
+                "success": True,
+                "found": True,
+                "method": f"cascade:{cascade_result['method']}",
+                "element": cascade_result.get("element_info"),
+                "methods_tried": methods_tried,
+                "tokens_cost": 0,
+                "cascade_attempts": cascade_result.get("attempts"),
+            }
+            if cascade_result.get("partial_matches"):
+                result["partial_matches"] = cascade_result["partial_matches"]
+            if cascade_result.get("hint"):
+                result["hint"] = cascade_result["hint"]
+            if cascade_result.get("click_coords"):
+                result["click_coords"] = cascade_result["click_coords"]
+            return result
+
+        # Cascade didn't find it — check if it got a screenshot
+        if cascade_result.get("requires_vision") and cascade_result.get("image_base64"):
+            result = {
+                "success": True,
+                "found": False,
+                "method": "screenshot",
+                "requires_vision": True,
+                "image_base64": cascade_result["image_base64"],
+                "image_width": cascade_result.get("image_width"),
+                "image_height": cascade_result.get("image_height"),
+                "hint": cascade_result.get("hint",
+                    f"UIA, OCR, and cascade recovery couldn't find '{target}'. "
+                    f"Screenshot provided."),
+                "methods_tried": methods_tried,
+                "tokens_cost": 1500,
+                "cascade_attempts": cascade_result.get("attempts"),
+            }
+            fw_hint = _get_framework_hint(window_title)
+            if fw_hint:
+                result["framework_hint"] = fw_hint
+            if cascade_result.get("dialog_info"):
+                result["dialog_info"] = cascade_result["dialog_info"]
+            return result
+
+        # Cascade exhausted without screenshot
+        result = {
+            "success": True,
+            "found": False,
+            "method": "cascade_exhausted",
+            "hint": f"All methods failed to find '{target}'.",
+            "methods_tried": methods_tried,
+            "cascade_attempts": cascade_result.get("attempts"),
+        }
+        if cascade_result.get("dialog_info"):
+            result["dialog_info"] = cascade_result["dialog_info"]
+        return result
+
+    # ── Fallback: original screenshot path (cascade disabled) ──
     step_start = time.perf_counter()
     screenshot_result = await _try_screenshot(window_title)
     elapsed = round((time.perf_counter() - step_start) * 1000, 1)
@@ -368,6 +445,20 @@ async def _try_screenshot(window_title: Optional[str]) -> dict:
         return await take_screenshot(window_title=window_title, quality=85)
     except Exception as e:
         return {"error": str(e)}
+
+
+def _is_cascade_enabled() -> bool:
+    """
+    Check if cascade recovery is enabled in config.
+
+    / Verifica si la recuperacion en cascada esta habilitada en config.
+    """
+    try:
+        from marlow.core.config import MarlowConfig
+        config = MarlowConfig.load()
+        return getattr(config.automation, "cascade_recovery", True)
+    except Exception:
+        return True  # Default enabled
 
 
 def _get_framework_hint(window_title: Optional[str]) -> Optional[str]:

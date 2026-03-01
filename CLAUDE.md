@@ -5,7 +5,7 @@
 
 **Nombre:** Marlow
 **Tagline:** "AI that works beside you, not instead of you"
-**Version:** 0.18.0
+**Version:** 0.19.0
 **Licencia:** MIT
 **Lenguaje:** Python 3.10+ (desarrollado en 3.14)
 **PyPI package:** marlow-mcp
@@ -45,7 +45,8 @@ Marlow va hacia un sistema de **vision por capas** y **Shadow Mode** (operar inv
 - **CDP Manager: COMPLETA** — 12 tools (CDP discover/connect/input/read/evaluate/DOM)
 - **CDP Auto-Restart: COMPLETA** — 3 tools (cdp_ensure, cdp_restart_confirmed, cdp_get_knowledge_base)
 - **UIA Events + Dialog Handler: COMPLETA** — 5 tools (start/stop/get_ui_events, handle_dialog, get_dialog_info)
-- **Total: 93 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
+- **Cascade Recovery: COMPLETA** — 1 tool (cascade_find) + integrado en smart_find
+- **Total: 94 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
 - **Plataforma probada:** Windows 11 Home 10.0.26200, dual monitor
 
 ## ESTRUCTURA DEL PROYECTO
@@ -77,7 +78,8 @@ marlow/
 │   │   ├── app_detector.py       # Framework detection via DLL analysis + detect_app_framework tool
 │   │   ├── cdp_manager.py        # CDP Manager: WebSocket connections to Electron/CEF apps (12 tools)
 │   │   ├── uia_events.py        # UIA Event Handlers: real-time UI monitoring via COM events (3 tools)
-│   │   └── dialog_handler.py    # Dialog Handler: auto-detect and handle system/app dialogs (2 tools)
+│   │   ├── dialog_handler.py    # Dialog Handler: auto-detect and handle system/app dialogs (2 tools)
+│   │   └── cascade_recovery.py  # Cascade Recovery: 5-step fallback when smart_find fails (1 tool)
 │   ├── tools/
 │   │   ├── __init__.py
 │   │   ├── ui_tree.py             # get_ui_tree — Accessibility Tree (0 tokens)
@@ -151,7 +153,7 @@ websocket-client>=1.7.0  # CDP WebSocket connections (Chrome DevTools Protocol)
 ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 ```
 
-## HERRAMIENTAS MCP (93 tools)
+## HERRAMIENTAS MCP (94 tools)
 
 ### Phase 1: Core (14 tools)
 | Tool | Funcion | Modulo | Estado |
@@ -178,6 +180,7 @@ ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 | list_ocr_languages | Listar idiomas OCR disponibles por motor | tools/ocr.py | OK |
 | smart_find | Buscar UI: UIA fuzzy->OCR->screenshot (escalamiento) | core/escalation.py | OK |
 | find_elements | Busqueda fuzzy multi-propiedad (top 5 candidatos rankeados) | core/escalation.py | OK |
+| cascade_find | Recuperacion multi-paso: wait, dialogos, fuzzy amplio, OCR, screenshot | core/cascade_recovery.py | OK |
 | detect_app_framework | Detectar framework UI (Electron, WPF, WinUI, etc.) via DLLs | core/app_detector.py | OK |
 | setup_background_mode | Configurar dual monitor / offscreen | tools/background.py | OK |
 | move_to_agent_screen | Mover ventana al monitor del agente | tools/background.py | OK |
@@ -526,6 +529,20 @@ El nuevo Notepad de Windows 11 (tabulado, clase `RichEditD2DPT`) necesita manejo
 - `stop()` sets stop event, joins thread (5s timeout), calls `RemoveAllEventHandlers()`
 - Handler instances stored in list to prevent garbage collection
 - 3 MCP tools: `start_ui_monitor`, `stop_ui_monitor`, `get_ui_events`
+
+### Cascade Recovery (core/cascade_recovery.py)
+- `cascade_find(target, window_title, timeout)` — 5-step recovery pipeline
+- Step 1 (wait_retry): sleep 1.5s, retry UIA search with score>0.8 (app may be loading)
+- Step 2 (dialog_check): call `handle_dialog(report)` to detect blocking dialogs
+- Step 3 (fuzzy_wide): walk UIA tree with threshold 0.4 (vs normal 0.6), max_depth 8, top 5 candidates
+- Step 4 (ocr): call `ocr_region()`, search words for target text, return bounding box + click coords
+- Step 5 (screenshot): call `take_screenshot()`, return base64 for LLM vision
+- Timeout clamped 5-30s, each step checks remaining time before proceeding
+- Each step records result in Error Journal (`record_success`/`record_failure`)
+- Returns `{found, method, element_info, attempts, elapsed_seconds, steps_tried}`
+- Integrated in `escalation.py`: when UIA+OCR fail, `smart_find` delegates to cascade if `cascade_recovery=True` (default)
+- Config: `AutomationConfig.cascade_recovery: bool = True`
+- 1 MCP tool: `cascade_find`
 
 ### Dialog Handler (core/dialog_handler.py)
 - `_scan_dialog_elements(window)` walks UIA tree (max depth 8) extracting buttons, text, controls

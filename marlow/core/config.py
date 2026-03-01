@@ -99,6 +99,10 @@ class AutomationConfig:
     # When True, open_application and manage_window auto-redirect to agent screen
     agent_screen_only: bool = True
 
+    # Cascade recovery: when smart_find fails, try progressively harder strategies
+    # (wait+retry, dialog check, wide fuzzy, OCR, screenshot)
+    cascade_recovery: bool = True
+
 
 @dataclass
 class MarlowConfig:
