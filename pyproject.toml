@@ -62,6 +62,7 @@ dependencies = [
     "winrt-Windows.Globalization>=3.0.0",
     "winrt-Windows.Foundation>=3.0.0",
     "winrt-Windows.Foundation.Collections>=3.0.0",
+    "websocket-client>=1.7.0",
 ]
 
 [project.optional-dependencies]

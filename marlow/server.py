@@ -42,6 +42,7 @@ from marlow.tools import ocr, background, audio, voice, app_script
 from marlow.core import escalation
 from marlow.core import focus
 from marlow.core import app_detector
+from marlow.core import cdp_manager
 
 # Phase 3 Tools
 from marlow.tools import visual_diff, memory, clipboard_ext, scraper
@@ -504,6 +505,251 @@ async def list_tools() -> list[Tool]:
                         "description": "Window to analyze. If omitted, scans all visible windows.",
                     },
                 },
+            },
+        ),
+
+        # ── Phase 2.1: CDP (Chrome DevTools Protocol) ──
+        Tool(
+            name="cdp_discover",
+            description=(
+                "Scan localhost ports for apps with CDP (Chrome DevTools Protocol) enabled. "
+                "Finds Electron apps, Chrome with --remote-debugging-port, etc. "
+                "Returns list of targets with port, title, URL, and WebSocket URL."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "port_start": {
+                        "type": "integer",
+                        "description": "Start of port range to scan (default: 9222).",
+                        "default": 9222,
+                    },
+                    "port_end": {
+                        "type": "integer",
+                        "description": "End of port range to scan (default: 9250).",
+                        "default": 9250,
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="cdp_connect",
+            description=(
+                "Connect to a CDP endpoint on a given port. Establishes WebSocket "
+                "connection to the first debuggable page target."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "integer",
+                        "description": "Port number of the CDP endpoint.",
+                    },
+                },
+                "required": ["port"],
+            },
+        ),
+        Tool(
+            name="cdp_disconnect",
+            description="Disconnect from a CDP endpoint.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "integer",
+                        "description": "Port number to disconnect from.",
+                    },
+                },
+                "required": ["port"],
+            },
+        ),
+        Tool(
+            name="cdp_list_connections",
+            description="List all active CDP connections.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="cdp_send",
+            description=(
+                "Send a raw CDP command. For advanced use when specific CDP methods "
+                "are needed beyond the convenience tools."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "integer",
+                        "description": "CDP port.",
+                    },
+                    "method": {
+                        "type": "string",
+                        "description": "CDP method (e.g., 'Network.enable', 'CSS.getComputedStyleForNode').",
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "Optional parameters for the CDP method.",
+                    },
+                },
+                "required": ["port", "method"],
+            },
+        ),
+        Tool(
+            name="cdp_click",
+            description=(
+                "Click at page coordinates via CDP. 100% invisible — no focus steal, "
+                "no mouse movement. Coordinates are relative to page viewport."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "integer",
+                        "description": "CDP port.",
+                    },
+                    "x": {
+                        "type": "integer",
+                        "description": "X coordinate in page viewport.",
+                    },
+                    "y": {
+                        "type": "integer",
+                        "description": "Y coordinate in page viewport.",
+                    },
+                },
+                "required": ["port", "x", "y"],
+            },
+        ),
+        Tool(
+            name="cdp_type_text",
+            description=(
+                "Type text via CDP. 100% invisible — no focus steal, no keyboard events. "
+                "Focus the target input first with cdp_click or cdp_click_selector."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "integer",
+                        "description": "CDP port.",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Text to type.",
+                    },
+                },
+                "required": ["port", "text"],
+            },
+        ),
+        Tool(
+            name="cdp_key_combo",
+            description=(
+                "Press a key combination via CDP (e.g., Ctrl+A, Enter, Escape). "
+                "100% invisible."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "integer",
+                        "description": "CDP port.",
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "Key name (e.g., 'a', 'Enter', 'Tab', 'Escape').",
+                    },
+                    "modifiers": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Modifier keys: 'ctrl', 'alt', 'shift', 'meta'.",
+                    },
+                },
+                "required": ["port", "key"],
+            },
+        ),
+        Tool(
+            name="cdp_screenshot",
+            description=(
+                "Take screenshot via CDP. Works even if window is behind others or minimized. "
+                "Returns base64 image."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "integer",
+                        "description": "CDP port.",
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["png", "jpeg"],
+                        "description": "Image format (default: png).",
+                        "default": "png",
+                    },
+                },
+                "required": ["port"],
+            },
+        ),
+        Tool(
+            name="cdp_evaluate",
+            description=(
+                "Evaluate JavaScript expression in the page context via CDP. "
+                "Returns the result value and type."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "integer",
+                        "description": "CDP port.",
+                    },
+                    "expression": {
+                        "type": "string",
+                        "description": "JavaScript expression to evaluate.",
+                    },
+                },
+                "required": ["port", "expression"],
+            },
+        ),
+        Tool(
+            name="cdp_get_dom",
+            description=(
+                "Get the DOM tree of the page via CDP. Returns structured node tree "
+                "with tag names, attributes, and children."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "integer",
+                        "description": "CDP port.",
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "Tree depth (-1 = full tree, default).",
+                        "default": -1,
+                    },
+                },
+                "required": ["port"],
+            },
+        ),
+        Tool(
+            name="cdp_click_selector",
+            description=(
+                "Click an element by CSS selector via CDP. Executes "
+                "document.querySelector(selector).click() in the page."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "integer",
+                        "description": "CDP port.",
+                    },
+                    "css_selector": {
+                        "type": "string",
+                        "description": "CSS selector (e.g., '#submit-btn', '.nav-link').",
+                    },
+                },
+                "required": ["port", "css_selector"],
             },
         ),
 
@@ -1712,6 +1958,53 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         ),
         "detect_app_framework": lambda args: app_detector.detect_app_framework(
             window_title=args.get("window_title"),
+        ),
+        # Phase 2.1: CDP
+        "cdp_discover": lambda args: cdp_manager.cdp_discover(
+            port_start=args.get("port_start", 9222),
+            port_end=args.get("port_end", 9250),
+        ),
+        "cdp_connect": lambda args: cdp_manager.cdp_connect(
+            port=args["port"],
+        ),
+        "cdp_disconnect": lambda args: cdp_manager.cdp_disconnect(
+            port=args["port"],
+        ),
+        "cdp_list_connections": lambda args: cdp_manager.cdp_list_connections(),
+        "cdp_send": lambda args: cdp_manager.cdp_send(
+            port=args["port"],
+            method=args["method"],
+            params=args.get("params"),
+        ),
+        "cdp_click": lambda args: cdp_manager.cdp_click(
+            port=args["port"],
+            x=args["x"],
+            y=args["y"],
+        ),
+        "cdp_type_text": lambda args: cdp_manager.cdp_type_text(
+            port=args["port"],
+            text=args["text"],
+        ),
+        "cdp_key_combo": lambda args: cdp_manager.cdp_key_combo(
+            port=args["port"],
+            key=args["key"],
+            modifiers=args.get("modifiers"),
+        ),
+        "cdp_screenshot": lambda args: cdp_manager.cdp_screenshot(
+            port=args["port"],
+            format=args.get("format", "png"),
+        ),
+        "cdp_evaluate": lambda args: cdp_manager.cdp_evaluate(
+            port=args["port"],
+            expression=args["expression"],
+        ),
+        "cdp_get_dom": lambda args: cdp_manager.cdp_get_dom(
+            port=args["port"],
+            depth=args.get("depth", -1),
+        ),
+        "cdp_click_selector": lambda args: cdp_manager.cdp_click_selector(
+            port=args["port"],
+            css_selector=args["css_selector"],
         ),
         # Phase 2: Background Mode
         "setup_background_mode": lambda args: background.setup_background_mode(

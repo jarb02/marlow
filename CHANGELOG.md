@@ -7,6 +7,42 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.15.0] - 2026-02-28
+
+CDP Manager for Electron/CEF apps. 84 total MCP tools (+12 new).
+Chrome DevTools Protocol enables 100% invisible automation — click, type,
+screenshot, DOM, and JS evaluation without stealing focus or moving the mouse.
+
+### Added
+
+#### New Core Module (1)
+- **`marlow/core/cdp_manager.py`** — CDPManager singleton manages WebSocket connections to CDP endpoints. Discovery via HTTP `/json` endpoint. Connection management with auto-cleanup on disconnect. Input functions (cdp_click, cdp_type, cdp_key_combo) are 100% invisible. Reading functions (cdp_screenshot, cdp_evaluate, cdp_get_dom) work even when window is hidden. Convenience: cdp_click_selector for CSS selector clicks.
+
+#### New Tools (12 total)
+| Tool | Description |
+|------|-------------|
+| `cdp_discover` | Scan localhost ports for apps with CDP enabled |
+| `cdp_connect` | Connect to a CDP endpoint on a given port |
+| `cdp_disconnect` | Disconnect from a CDP endpoint |
+| `cdp_list_connections` | List all active CDP connections |
+| `cdp_send` | Send a raw CDP command (advanced) |
+| `cdp_click` | Click at page coordinates via CDP (invisible) |
+| `cdp_type_text` | Type text via CDP (invisible) |
+| `cdp_key_combo` | Press key combination via CDP (invisible) |
+| `cdp_screenshot` | Take screenshot via CDP (works even if window is hidden) |
+| `cdp_evaluate` | Evaluate JavaScript in page context via CDP |
+| `cdp_get_dom` | Get DOM tree of the page via CDP |
+| `cdp_click_selector` | Click element by CSS selector via CDP |
+
+### Changed
+
+- **`marlow/server.py`** — Import cdp_manager, 12 new tool definitions + 12 dispatch entries. Total: 84 tools.
+- **`marlow/tools/help.py`** — Added "CDP" category with 12 tools.
+- **`pyproject.toml`** — Added `websocket-client>=1.7.0` dependency.
+- **`marlow/__init__.py`** — Version bumped from `0.14.0` to `0.15.0`.
+
+---
+
 ## [0.14.0] - 2026-02-28
 
 Adaptive UIA tree depth + COM invisible mode. 72 total MCP tools (no new tools).
