@@ -581,6 +581,41 @@ _TOOLS_CATALOG = [
         ],
     },
     {
+        "name": "Monitor",
+        "tools": [
+            {
+                "name": "start_ui_monitor",
+                "description_en": "Start real-time UI event monitoring (window open/close, focus changes)",
+                "description_es": "Iniciar monitoreo de eventos UI en tiempo real (ventanas, foco)",
+                "params": [],
+            },
+            {
+                "name": "stop_ui_monitor",
+                "description_en": "Stop the UI event monitor",
+                "description_es": "Detener el monitor de eventos UI",
+                "params": [],
+            },
+            {
+                "name": "get_ui_events",
+                "description_en": "Get recent UI events (window opens/closes, focus changes)",
+                "description_es": "Obtener eventos UI recientes (ventanas, cambios de foco)",
+                "params": ["event_type", "limit", "since"],
+            },
+            {
+                "name": "handle_dialog",
+                "description_en": "Detect and handle active dialogs (error, save, update, confirmation)",
+                "description_es": "Detectar y manejar dialogos activos (error, guardar, actualizar, confirmacion)",
+                "params": ["action", "window_title"],
+            },
+            {
+                "name": "get_dialog_info",
+                "description_en": "Get complete info about a dialog (buttons, text, type)",
+                "description_es": "Obtener info completa de un dialogo (botones, texto, tipo)",
+                "params": ["window_title"],
+            },
+        ],
+    },
+    {
         "name": "Security",
         "tools": [
             {

@@ -5,7 +5,7 @@
 
 **Nombre:** Marlow
 **Tagline:** "AI that works beside you, not instead of you"
-**Version:** 0.16.0
+**Version:** 0.18.0
 **Licencia:** MIT
 **Lenguaje:** Python 3.10+ (desarrollado en 3.14)
 **PyPI package:** marlow-mcp
@@ -44,7 +44,8 @@ Marlow va hacia un sistema de **vision por capas** y **Shadow Mode** (operar inv
 - **Integration Tests:** 17 tests (7 scenarios) — tool chains completos
 - **CDP Manager: COMPLETA** — 12 tools (CDP discover/connect/input/read/evaluate/DOM)
 - **CDP Auto-Restart: COMPLETA** — 3 tools (cdp_ensure, cdp_restart_confirmed, cdp_get_knowledge_base)
-- **Total: 87 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
+- **UIA Events + Dialog Handler: COMPLETA** — 5 tools (start/stop/get_ui_events, handle_dialog, get_dialog_info)
+- **Total: 93 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
 - **Plataforma probada:** Windows 11 Home 10.0.26200, dual monitor
 
 ## ESTRUCTURA DEL PROYECTO
@@ -74,7 +75,9 @@ marlow/
 │   │   ├── error_journal.py       # ErrorJournal: diario de errores/soluciones por tool+app + 2 tools
 │   │   ├── setup_wizard.py        # Setup wizard (8 steps) + run_diagnostics MCP tool
 │   │   ├── app_detector.py       # Framework detection via DLL analysis + detect_app_framework tool
-│   │   └── cdp_manager.py        # CDP Manager: WebSocket connections to Electron/CEF apps (12 tools)
+│   │   ├── cdp_manager.py        # CDP Manager: WebSocket connections to Electron/CEF apps (12 tools)
+│   │   ├── uia_events.py        # UIA Event Handlers: real-time UI monitoring via COM events (3 tools)
+│   │   └── dialog_handler.py    # Dialog Handler: auto-detect and handle system/app dialogs (2 tools)
 │   ├── tools/
 │   │   ├── __init__.py
 │   │   ├── ui_tree.py             # get_ui_tree — Accessibility Tree (0 tokens)
@@ -148,7 +151,7 @@ websocket-client>=1.7.0  # CDP WebSocket connections (Chrome DevTools Protocol)
 ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 ```
 
-## HERRAMIENTAS MCP (87 tools)
+## HERRAMIENTAS MCP (93 tools)
 
 ### Phase 1: Core (14 tools)
 | Tool | Funcion | Modulo | Estado |
@@ -259,6 +262,15 @@ ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 |------|---------|--------|--------|
 | set_agent_screen_only | Activar/desactivar auto-redirect al monitor del agente | tools/background.py | OK |
 | toggle_voice_overlay | Mostrar/ocultar ventana flotante de voice control | core/voice_overlay.py | OK |
+
+### Monitor — UIA Events + Dialog Handler (5 tools)
+| Tool | Funcion | Modulo | Estado |
+|------|---------|--------|--------|
+| start_ui_monitor | Iniciar monitoreo de eventos UI en tiempo real (COM events) | core/uia_events.py | OK |
+| stop_ui_monitor | Detener monitoreo de eventos UI | core/uia_events.py | OK |
+| get_ui_events | Obtener eventos UI recientes (ventanas, foco) | core/uia_events.py | OK |
+| handle_dialog | Detectar y manejar dialogos activos (auto/report/dismiss) | core/dialog_handler.py | OK |
+| get_dialog_info | Info completa de un dialogo (botones, texto, tipo) | core/dialog_handler.py | OK |
 
 ### Diagnostics (1 tool)
 | Tool | Funcion | Modulo | Estado |
@@ -499,6 +511,38 @@ El nuevo Notepad de Windows 11 (tabulado, clase `RichEditD2DPT`) necesita manejo
 - **Dependencia:** `websocket-client>=1.7.0` (sync, wrapped en `run_in_executor` para async)
 - 15 MCP tool functions expuestas como wrappers del singleton
 
+### UIA Event Handlers (core/uia_events.py)
+- `UIAEventManager` singleton via `get_manager()` (double-checked locking, same as cdp_manager)
+- **STA daemon thread** with `CoInitialize()` + Win32 message pump (`PeekMessageW` loop, 50ms cycle)
+- `_load_com_types()` lazy-loads UIA COM type library via `comtypes.client.GetModule("UIAutomationCore.dll")`
+- 3 COM handler classes via `comtypes.COMObject`:
+  - `WindowEventHandler` — implements `IUIAutomationEventHandler`, handles WindowOpened (20016) + WindowClosed (20017)
+  - `FocusEventHandler` — implements `IUIAutomationFocusChangedEventHandler`
+  - `StructureEventHandler` — implements `IUIAutomationStructureChangedEventHandler`
+- Events stored in thread-safe buffer (max 500), empty events filtered out
+- Filterable by event_type and ISO timestamp, newest first
+- Graceful degradation: returns clear error if COM types unavailable
+- `start()` waits up to 10s for daemon thread to signal ready
+- `stop()` sets stop event, joins thread (5s timeout), calls `RemoveAllEventHandlers()`
+- Handler instances stored in list to prevent garbage collection
+- 3 MCP tools: `start_ui_monitor`, `stop_ui_monitor`, `get_ui_events`
+
+### Dialog Handler (core/dialog_handler.py)
+- `_scan_dialog_elements(window)` walks UIA tree (max depth 8) extracting buttons, text, controls
+- `_classify_dialog(scan)` matches against keyword patterns:
+  - `not_responding` > `error` > `save` > `update` > `confirmation` > `info` > `unknown`
+  - Returns `{dialog_type, confidence, suggested_action, detail}`
+- `handle_dialog(action, window_title)` — 3 actions:
+  - `report` — scan and return info (no click)
+  - `dismiss` — click best dismiss button (Cancel > No > Close > OK priority)
+  - `auto` — info dialogs: click OK; update: click Later/postpone; error/save/confirm: report
+- `get_dialog_info(window_title)` — returns buttons, texts, type, confidence, suggested_action
+- `_scan_for_dialogs()` auto-scans all windows, filters by class `#32770` (Win32 dialog) to avoid false positives
+- `_click_button()` uses UIA invoke (silent), fallback to click_input
+- Known button sets: dismiss (cancel, no, close...), accept (ok, yes, save...), postpone (later, skip...)
+- Known text patterns: error keywords, warning, update, not_responding, save
+- 2 MCP tools: `handle_dialog`, `get_dialog_info`
+
 ### Setup Wizard (core/setup_wizard.py)
 - `SETUP_FILE = ~/.marlow/setup_complete.json` — marker file
 - `is_first_run()` — `not SETUP_FILE.exists()`
@@ -686,8 +730,8 @@ Orden de preferencia para "ver" lo que hay en pantalla.
 
 ### Fase 2: App Intelligence
 - 2.1 **CDP para apps Electron** (12 tools: discover, connect, click, type, screenshot, evaluate, DOM) ✓ COMPLETADO v0.15.0
-- 2.2 **UIA event handlers** via comtypes (reaccionar a cambios en tiempo real, no polling)
-- 2.3 **Auto-handling de dialogos** (detectar y responder a popups conocidos automaticamente)
+- 2.2 **UIA event handlers** via comtypes (reaccionar a cambios en tiempo real, no polling) ✓ COMPLETADO v0.18.0
+- 2.3 **Auto-handling de dialogos** (detectar y responder a popups conocidos automaticamente) ✓ COMPLETADO v0.18.0
 - 2.4 **CDP auto-restart** (ensure + restart_confirmed + knowledge base, confirmacion del usuario) ✓ COMPLETADO v0.16.0
 
 ### Fase 3: Understanding
