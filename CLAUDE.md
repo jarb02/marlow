@@ -5,7 +5,7 @@
 
 **Nombre:** Marlow
 **Tagline:** "AI that works beside you, not instead of you"
-**Version:** 0.14.0
+**Version:** 0.15.0
 **Licencia:** MIT
 **Lenguaje:** Python 3.10+ (desarrollado en 3.14)
 **PyPI package:** marlow-mcp
@@ -42,7 +42,8 @@ Marlow va hacia un sistema de **vision por capas** y **Shadow Mode** (operar inv
 - **UX: COMPLETA** — 2 tools (agent_screen_only + voice overlay) + auto-setup background + Ctrl+Shift+N
 - **First-Use Experience: COMPLETA** — 1 tool (run_diagnostics) + setup wizard + install.py
 - **Integration Tests:** 17 tests (7 scenarios) — tool chains completos
-- **Total: 72 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
+- **CDP Manager: COMPLETA** — 12 tools (CDP discover/connect/input/read/evaluate/DOM)
+- **Total: 84 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
 - **Plataforma probada:** Windows 11 Home 10.0.26200, dual monitor
 
 ## ESTRUCTURA DEL PROYECTO
@@ -71,7 +72,8 @@ marlow/
 │   │   ├── workflows.py           # WorkflowManager: grabar, guardar, reproducir secuencias + 5 tools
 │   │   ├── error_journal.py       # ErrorJournal: diario de errores/soluciones por tool+app + 2 tools
 │   │   ├── setup_wizard.py        # Setup wizard (8 steps) + run_diagnostics MCP tool
-│   │   └── app_detector.py       # Framework detection via DLL analysis + detect_app_framework tool
+│   │   ├── app_detector.py       # Framework detection via DLL analysis + detect_app_framework tool
+│   │   └── cdp_manager.py        # CDP Manager: WebSocket connections to Electron/CEF apps (12 tools)
 │   ├── tools/
 │   │   ├── __init__.py
 │   │   ├── ui_tree.py             # get_ui_tree — Accessibility Tree (0 tokens)
@@ -138,13 +140,14 @@ winrt-Windows.Storage.Streams>=3.0.0   # Streams para bitmap loading
 winrt-Windows.Globalization>=3.0.0     # Soporte de idiomas para OCR
 winrt-Windows.Foundation>=3.0.0        # winrt base types
 winrt-Windows.Foundation.Collections>=3.0.0  # winrt collections
+websocket-client>=1.7.0  # CDP WebSocket connections (Chrome DevTools Protocol)
 
 # Opcionales
 [project.optional-dependencies]
 ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 ```
 
-## HERRAMIENTAS MCP (72 tools)
+## HERRAMIENTAS MCP (84 tools)
 
 ### Phase 1: Core (14 tools)
 | Tool | Funcion | Modulo | Estado |
@@ -260,6 +263,22 @@ ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 | Tool | Funcion | Modulo | Estado |
 |------|---------|--------|--------|
 | run_diagnostics | Diagnosticos del sistema para troubleshooting | core/setup_wizard.py | OK |
+
+### CDP — Chrome DevTools Protocol (12 tools)
+| Tool | Funcion | Modulo | Estado |
+|------|---------|--------|--------|
+| cdp_discover | Escanear puertos localhost buscando CDP activo | core/cdp_manager.py | OK |
+| cdp_connect | Conectar a endpoint CDP via WebSocket | core/cdp_manager.py | OK |
+| cdp_disconnect | Desconectar de endpoint CDP | core/cdp_manager.py | OK |
+| cdp_list_connections | Listar conexiones CDP activas | core/cdp_manager.py | OK |
+| cdp_send | Enviar comando CDP crudo (avanzado) | core/cdp_manager.py | OK |
+| cdp_click | Click en coordenadas de pagina via CDP (invisible) | core/cdp_manager.py | OK |
+| cdp_type_text | Escribir texto via CDP (invisible) | core/cdp_manager.py | OK |
+| cdp_key_combo | Combinacion de teclas via CDP (invisible) | core/cdp_manager.py | OK |
+| cdp_screenshot | Screenshot via CDP (funciona oculta) | core/cdp_manager.py | OK |
+| cdp_evaluate | Evaluar JavaScript en contexto de pagina | core/cdp_manager.py | OK |
+| cdp_get_dom | Obtener arbol DOM via CDP | core/cdp_manager.py | OK |
+| cdp_click_selector | Click en elemento por selector CSS via CDP | core/cdp_manager.py | OK |
 
 ## ARQUITECTURA CLAVE
 
@@ -449,6 +468,24 @@ El nuevo Notepad de Windows 11 (tabulado, clase `RichEditD2DPT`) necesita manejo
 - `visible=True` para mostrar la ventana (override)
 - No afecta Outlook/Photoshop que tipicamente requieren UI visible
 
+### CDP Manager (core/cdp_manager.py)
+- `CDPManager` singleton (`get_manager()`) — maneja conexiones WebSocket a endpoints CDP
+- **Descubrimiento:** `discover_cdp_ports(port_range)` escanea puertos via HTTP GET `/json`, async parallel probes con timeout 2s
+- **Conexion:** `connect(port)` establece WebSocket (`websocket-client`) al primer target tipo "page"
+- **Comandos:** `send_command(port, method, params)` envia JSON con auto-increment msg_id, espera respuesta matching, timeout 10s
+- **Input invisible** (no roban foco, no mueven mouse):
+  - `cdp_click(port, x, y)` — Input.dispatchMouseEvent (mousePressed + mouseReleased)
+  - `cdp_type(port, text)` — Input.insertText (unicode-safe)
+  - `cdp_key_combo(port, key, modifiers)` — Input.dispatchKeyEvent (keyDown + keyUp) con bitmask modifiers
+- **Lectura:**
+  - `cdp_screenshot(port, format)` — Page.captureScreenshot, retorna base64 (funciona oculta)
+  - `cdp_evaluate(port, expression)` — Runtime.evaluate con returnByValue
+  - `cdp_get_dom(port, depth)` — DOM.getDocument, retorna arbol de nodos
+- **Conveniencia:** `cdp_click_selector(port, css_selector)` — document.querySelector().click() via Runtime.evaluate
+- **Limpieza:** `_cleanup_connection(port)` remueve conexiones muertas automaticamente en send/recv errors
+- **Dependencia:** `websocket-client>=1.7.0` (sync, wrapped en `run_in_executor` para async)
+- 12 MCP tool functions expuestas como wrappers del singleton
+
 ### Setup Wizard (core/setup_wizard.py)
 - `SETUP_FILE = ~/.marlow/setup_complete.json` — marker file
 - `is_first_run()` — `not SETUP_FILE.exists()`
@@ -635,7 +672,7 @@ Orden de preferencia para "ver" lo que hay en pantalla.
 - 1.5 **COM invisible por default** en app_script.py (visible=False, no mostrar ventana de Office) ✓ COMPLETADO v0.14.0
 
 ### Fase 2: App Intelligence
-- 2.1 **CDP para apps Electron** (VS Code, Slack, Notion) — debug protocol via puerto remoto
+- 2.1 **CDP para apps Electron** (12 tools: discover, connect, click, type, screenshot, evaluate, DOM) ✓ COMPLETADO v0.15.0
 - 2.2 **UIA event handlers** via comtypes (reaccionar a cambios en tiempo real, no polling)
 - 2.3 **Auto-handling de dialogos** (detectar y responder a popups conocidos automaticamente)
 

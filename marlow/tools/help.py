@@ -230,6 +230,83 @@ _TOOLS_CATALOG = [
         ],
     },
     {
+        "name": "CDP",
+        "tools": [
+            {
+                "name": "cdp_discover",
+                "description_en": "Scan localhost ports for apps with CDP enabled",
+                "description_es": "Escanear puertos localhost buscando apps con CDP habilitado",
+                "params": ["port_start", "port_end"],
+            },
+            {
+                "name": "cdp_connect",
+                "description_en": "Connect to a CDP endpoint on a given port",
+                "description_es": "Conectar a un endpoint CDP en un puerto dado",
+                "params": ["port"],
+            },
+            {
+                "name": "cdp_disconnect",
+                "description_en": "Disconnect from a CDP endpoint",
+                "description_es": "Desconectar de un endpoint CDP",
+                "params": ["port"],
+            },
+            {
+                "name": "cdp_list_connections",
+                "description_en": "List all active CDP connections",
+                "description_es": "Listar todas las conexiones CDP activas",
+                "params": [],
+            },
+            {
+                "name": "cdp_send",
+                "description_en": "Send a raw CDP command (advanced)",
+                "description_es": "Enviar un comando CDP crudo (avanzado)",
+                "params": ["port", "method", "params"],
+            },
+            {
+                "name": "cdp_click",
+                "description_en": "Click at page coordinates via CDP (invisible)",
+                "description_es": "Click en coordenadas de pagina via CDP (invisible)",
+                "params": ["port", "x", "y"],
+            },
+            {
+                "name": "cdp_type_text",
+                "description_en": "Type text via CDP (invisible)",
+                "description_es": "Escribir texto via CDP (invisible)",
+                "params": ["port", "text"],
+            },
+            {
+                "name": "cdp_key_combo",
+                "description_en": "Press key combination via CDP (invisible)",
+                "description_es": "Combinacion de teclas via CDP (invisible)",
+                "params": ["port", "key", "modifiers"],
+            },
+            {
+                "name": "cdp_screenshot",
+                "description_en": "Take screenshot via CDP (works even if window is hidden)",
+                "description_es": "Screenshot via CDP (funciona aunque ventana este oculta)",
+                "params": ["port", "format"],
+            },
+            {
+                "name": "cdp_evaluate",
+                "description_en": "Evaluate JavaScript expression in page context via CDP",
+                "description_es": "Evaluar expresion JavaScript en contexto de pagina via CDP",
+                "params": ["port", "expression"],
+            },
+            {
+                "name": "cdp_get_dom",
+                "description_en": "Get DOM tree of the page via CDP",
+                "description_es": "Obtener arbol DOM de la pagina via CDP",
+                "params": ["port", "depth"],
+            },
+            {
+                "name": "cdp_click_selector",
+                "description_en": "Click element by CSS selector via CDP (invisible)",
+                "description_es": "Click en elemento por selector CSS via CDP (invisible)",
+                "params": ["port", "css_selector"],
+            },
+        ],
+    },
+    {
         "name": "Memory",
         "tools": [
             {
