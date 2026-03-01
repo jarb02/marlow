@@ -53,6 +53,8 @@ Add to your MCP client config file:
 
 Restart your MCP client. Done.
 
+> **Voice Control:** Press `Ctrl+Shift+M` to talk to Marlow. Ask *"What can you do?"* to get started. No typing needed.
+
 ### Optional extras
 
 ```bash
@@ -249,6 +251,8 @@ pip install marlow-mcp
 # Voice features (captura de audio, transcripcion Whisper)
 pip install marlow-mcp[audio]
 ```
+
+> **Control por voz:** Presiona `Ctrl+Shift+M` para hablar con Marlow. Pregunta *"Que puedes hacer?"* para empezar.
 
 ### 87 Herramientas MCP
 
