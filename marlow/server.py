@@ -72,6 +72,7 @@ from marlow.core import voice_overlay
 from marlow.core import uia_events
 from marlow.core import dialog_handler
 from marlow.core import cascade_recovery
+from marlow.core import som
 
 # Setup Wizard
 from marlow.core import setup_wizard
@@ -521,6 +522,60 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["target"],
+            },
+        ),
+
+        # ── Phase 3.1: Set-of-Mark Prompting ──
+        Tool(
+            name="get_annotated_screenshot",
+            description=(
+                "Take a screenshot with numbered labels [1], [2], [3]... drawn on each "
+                "interactive UI element. Returns the annotated image + element map. "
+                "Use this to visually identify elements, then som_click(index) to interact. "
+                "Cost: ~1,500 tokens (screenshot). Preferred over raw screenshot when you "
+                "need to identify clickable elements."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "window_title": {
+                        "type": "string",
+                        "description": "Window to annotate. If omitted, uses active window.",
+                    },
+                    "interactive_only": {
+                        "type": "boolean",
+                        "description": (
+                            "If true (default), only label interactive elements "
+                            "(buttons, inputs, links, menu items, etc.)."
+                        ),
+                        "default": True,
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="som_click",
+            description=(
+                "Click a UI element by its Set-of-Mark index number from "
+                "get_annotated_screenshot. Example: after seeing [3] on 'Save' button, "
+                "call som_click(index=3) to click it."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "index": {
+                        "type": "integer",
+                        "description": "The [N] label number from the annotated screenshot.",
+                    },
+                    "window_title": {
+                        "type": "string",
+                        "description": (
+                            "If provided, re-annotates this window first to get fresh "
+                            "positions. Otherwise uses the last annotation."
+                        ),
+                    },
+                },
+                "required": ["index"],
             },
         ),
 
@@ -2047,6 +2102,22 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent | Ima
             ),
         ]
 
+    # ── Handle SoM annotated screenshot (return annotated PNG + element map) ──
+    if name == "get_annotated_screenshot" and "image_base64" in result:
+        import json
+        image_data = result.pop("image_base64")
+        return [
+            ImageContent(
+                type="image",
+                data=image_data,
+                mimeType="image/png",
+            ),
+            TextContent(
+                type="text",
+                text=json.dumps(result, indent=2, ensure_ascii=False, default=str),
+            ),
+        ]
+
     # ── Handle smart_find / cascade_find with screenshot fallback (return image + context) ──
     if name in ("smart_find", "cascade_find") and result.get("requires_vision") and "image_base64" in result:
         import json
@@ -2154,6 +2225,15 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
             target=args["target"],
             window_title=args.get("window_title"),
             timeout=args.get("timeout", 10),
+        ),
+        # SoM (Set-of-Mark)
+        "get_annotated_screenshot": lambda args: som.get_annotated_screenshot(
+            window_title=args.get("window_title"),
+            interactive_only=args.get("interactive_only", True),
+        ),
+        "som_click": lambda args: som.som_click(
+            index=args["index"],
+            window_title=args.get("window_title"),
         ),
         "detect_app_framework": lambda args: app_detector.detect_app_framework(
             window_title=args.get("window_title"),

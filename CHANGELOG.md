@@ -7,6 +7,26 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.20.0] - 2026-03-01
+
+Set-of-Mark (SoM) Prompting — Phase 3.1. 96 total MCP tools (+2 new).
+Annotates screenshots with numbered labels [1], [2], [3]... on each
+interactive UI element, allowing the LLM to identify and click elements
+by number instead of guessing coordinates.
+
+### Added
+
+#### New Core Module (1)
+- **`marlow/core/som.py`** — `annotate_screenshot()` walks the UIA tree (depth 8), collects elements with valid bounding boxes, filters by interactive control types (Button, Edit, ComboBox, etc.), takes a window screenshot, and draws numbered orange labels using PIL alpha compositing. Returns annotated PNG (base64) + element map with index/name/type/bbox. `click_by_index()` clicks element center by SoM index. Max 100 elements per annotation.
+
+#### New Tools (2 total)
+| Tool | Description |
+|------|-------------|
+| `get_annotated_screenshot` | Screenshot with numbered labels on interactive elements (Set-of-Mark) |
+| `som_click` | Click element by its [N] index from annotated screenshot |
+
+---
+
 ## [0.19.0] - 2026-03-01
 
 Cascade Recovery — multi-step fallback pipeline when smart_find fails.

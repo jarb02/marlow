@@ -3,7 +3,7 @@
 
 ## IDENTIDAD
 
-**Marlow** v0.19.0 — "AI that works beside you, not instead of you"
+**Marlow** v0.20.0 — "AI that works beside you, not instead of you"
 Python 3.10+ (dev 3.14) | MIT | PyPI: marlow-mcp | MCP SDK v1.26.0
 
 MCP Server para Windows: automatizacion de escritorio con seguridad desde commit #1, metodos silenciosos (no roba mouse/teclado), proteccion de foco, persistencia entre sesiones, extensiones sandboxed, cero telemetria.
@@ -14,7 +14,7 @@ MCP Server para Windows: automatizacion de escritorio con seguridad desde commit
 **Capas:** UIA tree (estructura) → OCR con bboxes (texto) → CDP (Electron) → Computer Vision (ultimo recurso).
 **Shadow Mode (futuro):** Virtual Desktops invisibles + SendMessage + PrintWindow + COM invisible.
 
-## ESTADO (94 tools, 142 tests)
+## ESTADO (96 tools, 142 tests)
 
 | Fase | Tools | Estado |
 |------|-------|--------|
@@ -29,6 +29,7 @@ MCP Server para Windows: automatizacion de escritorio con seguridad desde commit
 | CDP (Chrome DevTools Protocol) | 15 | COMPLETA |
 | UIA Events + Dialog Handler | 5 | COMPLETA |
 | Cascade Recovery | 1 | COMPLETA |
+| Set-of-Mark (SoM) Prompting | 2 | COMPLETA |
 
 Plataforma: Windows 11 Home 10.0.26200, dual monitor
 
@@ -49,6 +50,7 @@ marlow/
 │   ├── uia_events.py          # COM event handlers (window/focus/structure changes)
 │   ├── dialog_handler.py      # Dialog detection/classification/auto-handling
 │   ├── app_detector.py        # Framework detection via DLL analysis
+│   ├── som.py                 # Set-of-Mark: numbered labels on screenshots
 │   ├── cdp_manager.py         # CDP WebSocket connections (Electron/CEF)
 │   ├── adaptive.py            # Pattern detection
 │   ├── workflows.py           # Record/replay workflows
@@ -80,11 +82,11 @@ marlow/
 └── tests/                     # 125 unit + 17 integration tests
 ```
 
-## HERRAMIENTAS MCP (94 tools)
+## HERRAMIENTAS MCP (96 tools)
 
 **Core (14):** get_ui_tree, take_screenshot, click, type_text, press_key, hotkey, list_windows, focus_window, manage_window, run_command, open_application, clipboard, system_info, kill_switch
 
-**Advanced (17):** ocr_region, list_ocr_languages, smart_find, find_elements, cascade_find, detect_app_framework, setup_background_mode, move_to_agent_screen, move_to_user_screen, get_agent_screen_state, capture_system_audio, capture_mic_audio, transcribe_audio, download_whisper_model, listen_for_command, run_app_script, restore_user_focus
+**Advanced (19):** ocr_region, list_ocr_languages, smart_find, find_elements, cascade_find, get_annotated_screenshot, som_click, detect_app_framework, setup_background_mode, move_to_agent_screen, move_to_user_screen, get_agent_screen_state, capture_system_audio, capture_mic_audio, transcribe_audio, download_whisper_model, listen_for_command, run_app_script, restore_user_focus
 
 **Intelligence + Extensions (12):** visual_diff, visual_diff_compare, memory_save, memory_recall, memory_delete, memory_list, clipboard_history, scrape_url, extensions_list, extensions_install, extensions_uninstall, extensions_audit
 
@@ -133,6 +135,9 @@ STA daemon thread with `CoInitialize()` + Win32 message pump. 3 COM handlers via
 
 ### Dialog Handler (dialog_handler.py)
 Scans UIA tree for buttons/text, classifies: not_responding > error > save > update > confirmation > info. Actions: report/dismiss/auto. Filters by `#32770` class to avoid false positives.
+
+### Set-of-Mark (som.py)
+Walks UIA tree (depth 8), collects interactive elements with valid bboxes, draws numbered [1],[2],[3]... labels on screenshot using PIL alpha compositing. Returns annotated PNG + element map. `som_click(index)` clicks element center by number. Max 100 elements. Orange labels with semi-transparent background.
 
 ### Cascade Recovery (cascade_recovery.py)
 5-step pipeline: (1) wait 1.5s + retry UIA, (2) check blocking dialogs, (3) wide fuzzy threshold 0.4, (4) OCR search, (5) screenshot for LLM. Timeout 5-30s. Enabled via `config.automation.cascade_recovery=True`.
@@ -211,7 +216,7 @@ Ver **ROADMAP.md** para detalle completo.
 |------|--------|--------|
 | 1.1-1.5 | Vision Enhancement (OCR, fuzzy search, framework detect, auto depth, COM invisible) | COMPLETA |
 | 2.1-2.4 | App Intelligence (CDP, UIA events, dialogs, cascade, auto-restart) | COMPLETA |
-| 3.1-3.4 | Understanding (Set-of-Mark, context awareness, knowledge base, teach mode) | PENDIENTE |
+| 3.1-3.4 | Understanding (Set-of-Mark, context awareness, knowledge base, teach mode) | 3.1 COMPLETA |
 | 4.1-4.5 | Shadow Mode (virtual desktops, SendMessage, PrintWindow, toast, systray) | PENDIENTE |
 | 5.1-5.4 | Voice Core (Silero VAD, Piper TTS, GPU auto, audio calibration) | PENDIENTE |
 | 6.1-6.5 | Natural Conversation (Moonshine, wake word, barge-in, multi-turn) | PENDIENTE |
