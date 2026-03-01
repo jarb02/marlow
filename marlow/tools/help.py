@@ -206,6 +206,18 @@ _TOOLS_CATALOG = [
                 "params": ["target", "window_title", "timeout"],
             },
             {
+                "name": "get_annotated_screenshot",
+                "description_en": "Screenshot with numbered labels on each interactive element (Set-of-Mark)",
+                "description_es": "Screenshot con labels numerados en cada elemento interactivo (Set-of-Mark)",
+                "params": ["window_title", "interactive_only"],
+            },
+            {
+                "name": "som_click",
+                "description_en": "Click element by its Set-of-Mark index number from annotated screenshot",
+                "description_es": "Click en elemento por su indice Set-of-Mark del screenshot anotado",
+                "params": ["index", "window_title"],
+            },
+            {
                 "name": "detect_app_framework",
                 "description_en": "Detect UI framework of a window (Electron, WPF, WinUI, etc.)",
                 "description_es": "Detectar framework UI de una ventana (Electron, WPF, WinUI, etc.)",
