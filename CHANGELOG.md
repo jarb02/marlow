@@ -7,6 +7,66 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.18.0] - 2026-03-01
+
+Auto-Handling de Dialogos + UIA Event Handlers. 93 total MCP tools (+6 new).
+Real-time UI monitoring via Windows UI Automation COM events detects window
+opens/closes and focus changes without polling. Dialog handler scans UIA trees
+of dialog windows, classifies them (error/save/update/confirmation), and takes
+configurable actions (report, dismiss, auto-handle).
+
+### Added
+
+#### New Core Modules (2)
+
+- **`marlow/core/uia_events.py`** — `UIAEventManager` singleton manages COM event handlers in a dedicated STA daemon thread. `_load_com_types()` lazy-loads UIA COM type library via `comtypes.client.GetModule("UIAutomationCore.dll")`. Three COM handler classes (`WindowEventHandler`, `FocusEventHandler`, `StructureEventHandler`) implement UIA event handler interfaces via `comtypes.COMObject`. Daemon thread runs `CoInitialize()` + `PeekMessageW` pump loop with 50ms sleep between cycles. Events stored in thread-safe buffer (max 500), filtered to skip empty events. Filterable by event type and ISO timestamp.
+
+- **`marlow/core/dialog_handler.py`** — Dialog detection and handling via UIA tree scanning. `_scan_dialog_elements()` walks UIA tree extracting buttons, static text, and control metadata. `_classify_dialog()` classifies by matching against known keyword patterns: error, warning, save, update, not_responding, confirmation, info. `handle_dialog()` supports 3 actions: `report` (return info), `dismiss` (click Cancel/Close/No), `auto` (dismiss OK-only/postpone updates, report errors/saves for user decision). Auto-scan targets `#32770` (standard Win32 dialog) class windows only to avoid false positives.
+
+#### New Tools (5 total)
+| Tool | Description |
+|------|-------------|
+| `start_ui_monitor` | Start real-time UI event monitoring (window open/close, focus changes) |
+| `stop_ui_monitor` | Stop the UI event monitor |
+| `get_ui_events` | Get recent UI events with optional filtering by type and timestamp |
+| `handle_dialog` | Detect and handle active dialogs (auto/report/dismiss) |
+| `get_dialog_info` | Get complete info about a dialog (buttons, text, type) |
+
+### Changed
+
+- **`marlow/server.py`** — Import uia_events + dialog_handler, 5 new Tool definitions + 5 dispatch entries. Total: 93 tools.
+- **`marlow/tools/help.py`** — Added "Monitor" category with 5 tools.
+- **`marlow/__init__.py`** — Version bumped from `0.16.0` to `0.18.0`.
+
+---
+
+## [0.17.0] - 2026-03-01
+
+UIA Event Handlers — real-time UI monitoring via Windows UI Automation COM events.
+90 total MCP tools (+3 new). Detects window opens/closes and focus changes without
+polling, using comtypes COM event handlers in a dedicated STA daemon thread with
+Win32 message pump. Graceful degradation if COM type library fails to load.
+
+### Added
+
+#### New Core Module (1)
+- **`marlow/core/uia_events.py`** — `UIAEventManager` singleton manages COM event handlers in a dedicated STA daemon thread. `_load_com_types()` lazy-loads UIA COM type library via `comtypes.client.GetModule("UIAutomationCore.dll")`. Three COM handler classes (`WindowEventHandler`, `FocusEventHandler`, `StructureEventHandler`) implement `IUIAutomationEventHandler`, `IUIAutomationFocusChangedEventHandler`, and `IUIAutomationStructureChangedEventHandler` respectively. Daemon thread runs `CoInitialize()` + `PeekMessageW` pump loop with 50ms sleep between cycles. Events stored in thread-safe buffer (max 500). Filterable by event type and ISO timestamp. Graceful error if COM types unavailable.
+
+#### New Tools (3 total)
+| Tool | Description |
+|------|-------------|
+| `start_ui_monitor` | Start real-time UI event monitoring (window open/close, focus changes) |
+| `stop_ui_monitor` | Stop the UI event monitor |
+| `get_ui_events` | Get recent UI events with optional filtering by type and timestamp |
+
+### Changed
+
+- **`marlow/server.py`** — Import uia_events, 3 new Tool definitions + 3 dispatch entries. Total: 90 tools.
+- **`marlow/tools/help.py`** — Added "Monitor" category with 3 tools.
+- **`marlow/__init__.py`** — Version bumped from `0.16.0` to `0.17.0`.
+
+---
+
 ## [0.16.0] - 2026-02-28
 
 CDP Auto-Restart for Electron apps. 87 total MCP tools (+3 new).

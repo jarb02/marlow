@@ -68,6 +68,10 @@ from marlow.tools import wait
 # Voice Overlay
 from marlow.core import voice_overlay
 
+# UIA Event Handlers + Dialog Handler
+from marlow.core import uia_events
+from marlow.core import dialog_handler
+
 # Setup Wizard
 from marlow.core import setup_wizard
 
@@ -1798,6 +1802,94 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}},
         ),
 
+        # ── Monitor (UIA Events) ──
+        Tool(
+            name="start_ui_monitor",
+            description=(
+                "Start real-time UI event monitoring. Detects window opens/closes "
+                "and focus changes without polling, using Windows UI Automation COM events. "
+                "Events accumulate in a buffer — retrieve them with get_ui_events."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="stop_ui_monitor",
+            description=(
+                "Stop the real-time UI event monitor. "
+                "Events already captured are discarded."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="get_ui_events",
+            description=(
+                "Get recent UI events from the monitor. Returns window opens/closes "
+                "and focus changes with timestamps, process names, and element info. "
+                "Requires start_ui_monitor to be running."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "event_type": {
+                        "type": "string",
+                        "description": "Filter by event type: window_opened, window_closed, focus_changed",
+                        "enum": ["window_opened", "window_closed", "focus_changed"],
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max events to return (default 20, max 500)",
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": "ISO timestamp — only return events after this time",
+                    },
+                },
+            },
+        ),
+
+        # ── Dialog Handler ──
+        Tool(
+            name="handle_dialog",
+            description=(
+                "Detect and handle active dialogs (error, save, update, confirmation). "
+                "Actions: 'report' (scan and return info), 'dismiss' (click Cancel/Close), "
+                "'auto' (handle automatically: dismiss OK-only/updates, report errors/saves). "
+                "If window_title given, scans that window; otherwise scans all windows."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "How to handle: report (default), dismiss, or auto",
+                        "enum": ["report", "dismiss", "auto"],
+                    },
+                    "window_title": {
+                        "type": "string",
+                        "description": "Specific dialog window to handle (optional — scans all if omitted)",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_dialog_info",
+            description=(
+                "Get complete info about a dialog window: title, message text, "
+                "available buttons, inferred dialog type (error/save/update/confirmation), "
+                "and suggested action. Use this to understand what a dialog is asking."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "window_title": {
+                        "type": "string",
+                        "description": "Title of the dialog window to inspect",
+                    },
+                },
+                "required": ["window_title"],
+            },
+        ),
+
         # ── Diagnostics ──
         Tool(
             name="run_diagnostics",
@@ -2278,6 +2370,22 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         # Voice Overlay
         "toggle_voice_overlay": lambda args: voice_overlay.toggle_voice_overlay(
             visible=args["visible"],
+        ),
+        # Monitor (UIA Events)
+        "start_ui_monitor": lambda args: uia_events.start_ui_monitor(),
+        "stop_ui_monitor": lambda args: uia_events.stop_ui_monitor(),
+        "get_ui_events": lambda args: uia_events.get_ui_events(
+            event_type=args.get("event_type"),
+            limit=args.get("limit", 20),
+            since=args.get("since"),
+        ),
+        # Dialog Handler
+        "handle_dialog": lambda args: dialog_handler.handle_dialog(
+            action=args.get("action", "report"),
+            window_title=args.get("window_title"),
+        ),
+        "get_dialog_info": lambda args: dialog_handler.get_dialog_info(
+            window_title=args["window_title"],
         ),
         # Help / Capabilities
         "get_capabilities": lambda args: help_mod.get_capabilities(
