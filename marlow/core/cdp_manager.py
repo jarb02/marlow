@@ -8,20 +8,67 @@ stealing focus or requiring the window to be visible.
 Discovery: scans localhost ports for CDP endpoints.
 Connection: WebSocket to the target page's devtools endpoint.
 Commands: Input.dispatch*, Page.captureScreenshot, Runtime.evaluate, DOM.getDocument.
+Auto-restart: relaunch Electron apps with --remote-debugging-port (requires user confirmation).
 
 / Manager de CDP para apps Electron/CEF.
 / Automatizacion 100% invisible via WebSocket.
+/ Auto-restart: relanza apps Electron con debugging (requiere confirmacion del usuario).
 """
 
 import asyncio
 import json
 import logging
+import os
+import subprocess
+import time
 import threading
+from pathlib import Path
 from typing import Optional
 
+import psutil
 import websocket  # websocket-client (sync)
 
+from marlow.core.config import CONFIG_DIR
+
 logger = logging.getLogger("marlow.core.cdp_manager")
+
+# ── Default CDP ports for known Electron apps ──
+# / Puertos CDP por defecto para apps Electron conocidas
+# Discord EXCLUDED — ToS risk
+DEFAULT_CDP_PORTS: dict[str, int] = {
+    "code": 9229,       # VS Code
+    "slack": 9230,      # Slack
+    "notion": 9232,     # Notion
+    "figma": 9233,      # Figma
+    "obsidian": 9234,   # Obsidian
+    "chrome": 9222,     # Chrome
+    "msedge": 9223,     # Edge
+    "spotify": 9235,    # Spotify
+    "teams": 9236,      # Microsoft Teams
+    "postman": 9237,    # Postman
+}
+
+# ── CDP Knowledge Base (persisted JSON) ──
+_CDP_KB_FILE = CONFIG_DIR / "cdp_knowledge.json"
+
+
+def _load_cdp_kb() -> dict:
+    """Load CDP knowledge base from disk."""
+    try:
+        if _CDP_KB_FILE.exists():
+            return json.loads(_CDP_KB_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_cdp_kb(kb: dict) -> None:
+    """Save CDP knowledge base to disk."""
+    try:
+        _CDP_KB_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _CDP_KB_FILE.write_text(json.dumps(kb, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.debug(f"Failed to save CDP knowledge base: {e}")
 
 # ── Singleton ──
 
@@ -336,6 +383,320 @@ class CDPManager:
             except Exception:
                 pass
             logger.warning(f"CDP connection on port {port} lost, cleaned up")
+
+    # ─────────────────────────────────────────────────────────
+    # Auto-restart (ensure CDP for Electron apps)
+    # ─────────────────────────────────────────────────────────
+
+    async def ensure_cdp(
+        self, app_name: str, preferred_port: Optional[int] = None
+    ) -> dict:
+        """
+        Ensure CDP is available for an app. Tries in order:
+        1. Existing connection for this app
+        2. Scan ports for already-running CDP
+        3. Return action_required for LLM to confirm restart
+
+        Never restarts without user confirmation — returns a plan instead.
+
+        / Asegurar que CDP este disponible para una app.
+        / Nunca reinicia sin confirmacion del usuario.
+        """
+        app_lower = app_name.lower().strip()
+
+        # Resolve port
+        port = preferred_port or self._resolve_port(app_lower)
+
+        # Step 1: Already connected?
+        with self._lock:
+            if port in self._connections:
+                return {
+                    "success": True,
+                    "already_connected": True,
+                    "port": port,
+                    **self._connections[port]["info"],
+                }
+
+        # Step 2: CDP already running on the preferred port?
+        loop = asyncio.get_running_loop()
+        probe = await loop.run_in_executor(None, self._probe_port, port)
+        if probe:
+            conn = await self.connect(port)
+            if conn.get("success"):
+                return conn
+
+        # Step 3: Scan broader range for the app
+        scan = await self.discover_cdp_ports((9222, 9250))
+        for target in scan.get("targets", []):
+            # Match by app name in title
+            if app_lower in target.get("title", "").lower():
+                conn = await self.connect(target["port"])
+                if conn.get("success"):
+                    return conn
+
+        # Step 4: Find the process and propose restart
+        proc_info = await loop.run_in_executor(
+            None, self._find_app_process, app_lower
+        )
+        if not proc_info:
+            return {
+                "error": f"App '{app_name}' not found running",
+                "hint": f"Start the app first, then call cdp_ensure again.",
+            }
+
+        # Build restart command
+        exe_path = proc_info["exe"]
+        original_args = proc_info["cmdline"][1:]  # skip exe itself
+        restart_cmd = self._build_restart_command(
+            exe_path, original_args, port
+        )
+
+        return {
+            "success": True,
+            "action_required": "restart",
+            "app": proc_info["name"],
+            "pid": proc_info["pid"],
+            "port": port,
+            "exe": exe_path,
+            "reason": f"CDP not enabled on '{proc_info['name']}'. Restart needed with --remote-debugging-port={port}.",
+            "restart_command": restart_cmd,
+            "hint": "Ask the user for confirmation, then call cdp_restart_confirmed(app_name, port).",
+        }
+
+    async def restart_confirmed(
+        self, app_name: str, port: Optional[int] = None
+    ) -> dict:
+        """
+        Execute the restart after user confirmation.
+
+        Closes the app cleanly, relaunches with CDP flag, waits for port,
+        and auto-connects.
+
+        / Ejecuta el restart despues de confirmacion del usuario.
+        / Cierra la app, relanza con flag CDP, espera puerto, conecta.
+        """
+        app_lower = app_name.lower().strip()
+        port = port or self._resolve_port(app_lower)
+
+        loop = asyncio.get_running_loop()
+
+        # Find process
+        proc_info = await loop.run_in_executor(
+            None, self._find_app_process, app_lower
+        )
+        if not proc_info:
+            return {
+                "error": f"App '{app_name}' not found running",
+                "hint": "The app may have already been closed.",
+            }
+
+        exe_path = proc_info["exe"]
+        original_args = proc_info["cmdline"][1:]
+        pid = proc_info["pid"]
+
+        # Close app cleanly via WM_CLOSE, fallback to terminate
+        close_result = await loop.run_in_executor(
+            None, self._close_app_cleanly, pid
+        )
+        if not close_result.get("closed"):
+            return {
+                "error": f"Failed to close {app_name}: {close_result.get('detail', 'unknown')}",
+            }
+
+        # Relaunch with CDP
+        restart_cmd = self._build_restart_command(
+            exe_path, original_args, port
+        )
+        try:
+            env = os.environ.copy()
+            env["ELECTRON_EXTRA_LAUNCH_ARGS"] = f"--remote-debugging-port={port}"
+            subprocess.Popen(
+                restart_cmd,
+                env=env,
+                creationflags=subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        except Exception as e:
+            return {"error": f"Failed to relaunch: {e}"}
+
+        logger.info(f"Relaunched {app_name} with CDP on port {port}")
+
+        # Wait for CDP port to respond (up to 15s)
+        connected = False
+        for _ in range(30):
+            await asyncio.sleep(0.5)
+            probe = await loop.run_in_executor(None, self._probe_port, port)
+            if probe:
+                conn = await self.connect(port)
+                if conn.get("success"):
+                    # Save to knowledge base
+                    self._save_to_kb(app_lower, port, exe_path)
+                    return {
+                        "success": True,
+                        "restarted": True,
+                        "app": app_name,
+                        "port": port,
+                        **conn,
+                    }
+                connected = True
+                break
+
+        if not connected:
+            return {
+                "error": f"App relaunched but CDP did not respond on port {port} within 15s",
+                "hint": "The app may need more time to start, or may not support CDP.",
+            }
+
+        return {"error": "Unexpected state after restart"}
+
+    def _resolve_port(self, app_lower: str) -> int:
+        """
+        Resolve the CDP port for an app.
+        Checks knowledge base first, then defaults table.
+
+        / Resuelve el puerto CDP para una app.
+        """
+        # Check knowledge base
+        kb = _load_cdp_kb()
+        if app_lower in kb:
+            return kb[app_lower].get("port", DEFAULT_CDP_PORTS.get(app_lower, 9222))
+
+        # Check defaults
+        for key, port in DEFAULT_CDP_PORTS.items():
+            if key in app_lower or app_lower in key:
+                return port
+
+        # Fallback: hash-based port in safe range
+        return 9222 + (hash(app_lower) % 28)
+
+    def _find_app_process(self, app_lower: str) -> Optional[dict]:
+        """
+        Find a running process by app name.
+
+        Returns {pid, name, exe, cmdline} or None.
+        / Busca un proceso corriendo por nombre de app.
+        """
+        if not app_lower:
+            return None
+
+        for proc in psutil.process_iter(["pid", "name", "exe", "cmdline"]):
+            try:
+                pname = (proc.info["name"] or "").lower()
+                exe = proc.info["exe"] or ""
+
+                if not pname and not exe:
+                    continue
+
+                # Match by process name (e.g., "code" matches "Code.exe")
+                name_no_ext = pname.replace(".exe", "")
+                if name_no_ext and (
+                    app_lower in name_no_ext or name_no_ext in app_lower
+                ):
+                    return {
+                        "pid": proc.info["pid"],
+                        "name": proc.info["name"],
+                        "exe": exe,
+                        "cmdline": proc.info["cmdline"] or [exe],
+                    }
+
+                # Also match by exe path (e.g., "slack" in "C:\...\Slack\slack.exe")
+                if exe and app_lower in exe.lower():
+                    return {
+                        "pid": proc.info["pid"],
+                        "name": proc.info["name"],
+                        "exe": exe,
+                        "cmdline": proc.info["cmdline"] or [exe],
+                    }
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                continue
+
+        return None
+
+    def _close_app_cleanly(self, pid: int) -> dict:
+        """
+        Close an app cleanly: WM_CLOSE first, then terminate after 3s.
+
+        / Cierra una app limpiamente: WM_CLOSE primero, terminate si no cierra.
+        """
+        import ctypes
+        from ctypes import wintypes
+
+        WM_CLOSE = 0x0010
+
+        try:
+            proc = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            return {"closed": True, "detail": "Process already gone"}
+
+        # Send WM_CLOSE to all windows of this process
+        def _enum_callback(hwnd, _):
+            tid = wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(
+                hwnd, ctypes.byref(tid)
+            )
+            if tid.value == pid:
+                ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+            return True
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(
+            ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p
+        )
+        try:
+            ctypes.windll.user32.EnumWindows(
+                WNDENUMPROC(_enum_callback), 0
+            )
+        except Exception:
+            pass
+
+        # Wait up to 3 seconds for clean exit
+        try:
+            proc.wait(timeout=3)
+            return {"closed": True, "detail": "Clean exit via WM_CLOSE"}
+        except psutil.TimeoutExpired:
+            pass
+
+        # Terminate forcefully
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+            return {"closed": True, "detail": "Terminated after WM_CLOSE timeout"}
+        except Exception as e:
+            return {"closed": False, "detail": str(e)}
+
+    def _build_restart_command(
+        self, exe_path: str, original_args: list[str], port: int
+    ) -> list[str]:
+        """
+        Build restart command with CDP flag.
+
+        Filters out any existing --remote-debugging-port arg.
+        / Construye comando de restart con flag CDP.
+        """
+        cmd = [exe_path]
+        for arg in original_args:
+            if arg.startswith("--remote-debugging-port"):
+                continue
+            if arg.startswith("--remote-allow-origins"):
+                continue
+            cmd.append(arg)
+        cmd.append(f"--remote-debugging-port={port}")
+        cmd.append("--remote-allow-origins=*")
+        return cmd
+
+    def _save_to_kb(self, app_lower: str, port: int, exe_path: str) -> None:
+        """
+        Save successful CDP restart info to knowledge base.
+
+        / Guarda info de restart exitoso en knowledge base.
+        """
+        kb = _load_cdp_kb()
+        kb[app_lower] = {
+            "port": port,
+            "exe": exe_path,
+            "last_restart": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        _save_cdp_kb(kb)
+        logger.info(f"CDP knowledge base updated: {app_lower} -> port {port}")
 
     # ─────────────────────────────────────────────────────────
     # Input functions (100% invisible, no focus required)
@@ -740,3 +1101,58 @@ async def cdp_click_selector(port: int, css_selector: str) -> dict:
     """
     mgr = get_manager()
     return await mgr.cdp_click_selector(port, css_selector)
+
+
+async def cdp_ensure(
+    app_name: str,
+    preferred_port: Optional[int] = None,
+) -> dict:
+    """
+    Ensure CDP is available for an Electron app.
+
+    Checks existing connections, scans ports, then proposes restart
+    if needed (never restarts without user confirmation).
+
+    If restart is needed, returns action_required="restart" with details.
+    The LLM should ask the user for confirmation, then call
+    cdp_restart_confirmed(app_name, port).
+
+    / Asegurar CDP disponible para app Electron.
+    / Si necesita restart, retorna plan para confirmacion del usuario.
+    """
+    mgr = get_manager()
+    return await mgr.ensure_cdp(app_name, preferred_port)
+
+
+async def cdp_restart_confirmed(
+    app_name: str,
+    port: Optional[int] = None,
+) -> dict:
+    """
+    Execute CDP restart after user confirmation.
+
+    Closes the app, relaunches with --remote-debugging-port,
+    waits for CDP to respond, and auto-connects.
+
+    ONLY call this after the user has explicitly confirmed the restart.
+
+    / Ejecuta restart CDP despues de confirmacion del usuario.
+    / Cierra la app, relanza con debugging, conecta automaticamente.
+    """
+    mgr = get_manager()
+    return await mgr.restart_confirmed(app_name, port)
+
+
+async def cdp_get_knowledge_base() -> dict:
+    """
+    Get the CDP knowledge base (apps that needed restart and their ports).
+
+    / Obtiene la knowledge base CDP (apps con restart y sus puertos).
+    """
+    kb = _load_cdp_kb()
+    return {
+        "success": True,
+        "entries": kb,
+        "count": len(kb),
+        "default_ports": DEFAULT_CDP_PORTS,
+    }

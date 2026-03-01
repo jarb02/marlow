@@ -304,6 +304,24 @@ _TOOLS_CATALOG = [
                 "description_es": "Click en elemento por selector CSS via CDP (invisible)",
                 "params": ["port", "css_selector"],
             },
+            {
+                "name": "cdp_ensure",
+                "description_en": "Ensure CDP is available for an Electron app (proposes restart if needed)",
+                "description_es": "Asegurar CDP disponible para app Electron (propone restart si necesario)",
+                "params": ["app_name", "preferred_port"],
+            },
+            {
+                "name": "cdp_restart_confirmed",
+                "description_en": "Restart app with CDP after user confirmation",
+                "description_es": "Reiniciar app con CDP despues de confirmacion del usuario",
+                "params": ["app_name", "port"],
+            },
+            {
+                "name": "cdp_get_knowledge_base",
+                "description_en": "Get CDP knowledge base (apps, ports, restart history)",
+                "description_es": "Obtener knowledge base CDP (apps, puertos, historial de restarts)",
+                "params": [],
+            },
         ],
     },
     {

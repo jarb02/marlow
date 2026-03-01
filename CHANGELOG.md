@@ -7,6 +7,31 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.16.0] - 2026-02-28
+
+CDP Auto-Restart for Electron apps. 87 total MCP tools (+3 new).
+`cdp_ensure` checks if CDP is available and proposes restart if needed
+(never auto-restarts — requires user confirmation). Knowledge base
+persists which apps needed restart and what port worked.
+
+### Added
+
+#### New Tools (3 total)
+| Tool | Description |
+|------|-------------|
+| `cdp_ensure` | Ensure CDP is available for an Electron app (proposes restart if needed) |
+| `cdp_restart_confirmed` | Restart app with CDP after user confirmation |
+| `cdp_get_knowledge_base` | Get CDP knowledge base (apps, ports, restart history) |
+
+### Changed
+
+- **`marlow/core/cdp_manager.py`** — Added `DEFAULT_CDP_PORTS` table (10 known apps), `_CDP_KB_FILE` for persistent knowledge base, `CDPManager.ensure_cdp()` (3-step: check existing, scan ports, propose restart), `CDPManager.restart_confirmed()` (WM_CLOSE + relaunch + wait + connect), `_find_app_process()`, `_close_app_cleanly()`, `_build_restart_command()`, `_resolve_port()`, `_save_to_kb()`. Sets both `--remote-debugging-port` and `ELECTRON_EXTRA_LAUNCH_ARGS` env var. Filters existing debug flags on restart.
+- **`marlow/server.py`** — Added 3 new tool definitions + 3 dispatch entries. Total: 87 tools.
+- **`marlow/tools/help.py`** — Added 3 tools to CDP category.
+- **`marlow/__init__.py`** — Version bumped from `0.15.0` to `0.16.0`.
+
+---
+
 ## [0.15.0] - 2026-02-28
 
 CDP Manager for Electron/CEF apps. 84 total MCP tools (+12 new).
