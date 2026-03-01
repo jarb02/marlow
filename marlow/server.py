@@ -753,6 +753,60 @@ async def list_tools() -> list[Tool]:
             },
         ),
 
+        Tool(
+            name="cdp_ensure",
+            description=(
+                "Ensure CDP is available for an Electron app. Checks existing "
+                "connections, scans ports, and if needed proposes a restart plan "
+                "for user confirmation. NEVER restarts automatically — returns "
+                "action_required='restart' so you can ask the user first."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "app_name": {
+                        "type": "string",
+                        "description": "App name (e.g., 'code', 'slack', 'notion', 'chrome').",
+                    },
+                    "preferred_port": {
+                        "type": "integer",
+                        "description": "Preferred CDP port. If omitted, uses known defaults.",
+                    },
+                },
+                "required": ["app_name"],
+            },
+        ),
+        Tool(
+            name="cdp_restart_confirmed",
+            description=(
+                "Execute CDP restart AFTER user confirmation. Closes the app, "
+                "relaunches with --remote-debugging-port, waits for CDP, and "
+                "auto-connects. Only call after the user explicitly agreed."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "app_name": {
+                        "type": "string",
+                        "description": "App name to restart.",
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "CDP port to use. If omitted, uses default for app.",
+                    },
+                },
+                "required": ["app_name"],
+            },
+        ),
+        Tool(
+            name="cdp_get_knowledge_base",
+            description=(
+                "Get the CDP knowledge base: which apps needed restart, what ports "
+                "worked, and default port assignments for known Electron apps."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+
         # ── Phase 2: Background Mode ──
         Tool(
             name="setup_background_mode",
@@ -2006,6 +2060,15 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
             port=args["port"],
             css_selector=args["css_selector"],
         ),
+        "cdp_ensure": lambda args: cdp_manager.cdp_ensure(
+            app_name=args["app_name"],
+            preferred_port=args.get("preferred_port"),
+        ),
+        "cdp_restart_confirmed": lambda args: cdp_manager.cdp_restart_confirmed(
+            app_name=args["app_name"],
+            port=args.get("port"),
+        ),
+        "cdp_get_knowledge_base": lambda args: cdp_manager.cdp_get_knowledge_base(),
         # Phase 2: Background Mode
         "setup_background_mode": lambda args: background.setup_background_mode(
             preferred_mode=args.get("preferred_mode"),

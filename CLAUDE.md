@@ -5,7 +5,7 @@
 
 **Nombre:** Marlow
 **Tagline:** "AI that works beside you, not instead of you"
-**Version:** 0.15.0
+**Version:** 0.16.0
 **Licencia:** MIT
 **Lenguaje:** Python 3.10+ (desarrollado en 3.14)
 **PyPI package:** marlow-mcp
@@ -43,7 +43,8 @@ Marlow va hacia un sistema de **vision por capas** y **Shadow Mode** (operar inv
 - **First-Use Experience: COMPLETA** — 1 tool (run_diagnostics) + setup wizard + install.py
 - **Integration Tests:** 17 tests (7 scenarios) — tool chains completos
 - **CDP Manager: COMPLETA** — 12 tools (CDP discover/connect/input/read/evaluate/DOM)
-- **Total: 84 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
+- **CDP Auto-Restart: COMPLETA** — 3 tools (cdp_ensure, cdp_restart_confirmed, cdp_get_knowledge_base)
+- **Total: 87 herramientas MCP registradas, 142 tests (125 unit + 17 integration)**
 - **Plataforma probada:** Windows 11 Home 10.0.26200, dual monitor
 
 ## ESTRUCTURA DEL PROYECTO
@@ -147,7 +148,7 @@ websocket-client>=1.7.0  # CDP WebSocket connections (Chrome DevTools Protocol)
 ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 ```
 
-## HERRAMIENTAS MCP (84 tools)
+## HERRAMIENTAS MCP (87 tools)
 
 ### Phase 1: Core (14 tools)
 | Tool | Funcion | Modulo | Estado |
@@ -279,6 +280,9 @@ ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requiere binary instalado)
 | cdp_evaluate | Evaluar JavaScript en contexto de pagina | core/cdp_manager.py | OK |
 | cdp_get_dom | Obtener arbol DOM via CDP | core/cdp_manager.py | OK |
 | cdp_click_selector | Click en elemento por selector CSS via CDP | core/cdp_manager.py | OK |
+| cdp_ensure | Asegurar CDP disponible para app Electron (propone restart) | core/cdp_manager.py | OK |
+| cdp_restart_confirmed | Reiniciar app con CDP despues de confirmacion | core/cdp_manager.py | OK |
+| cdp_get_knowledge_base | Knowledge base CDP (apps, puertos, historial) | core/cdp_manager.py | OK |
 
 ## ARQUITECTURA CLAVE
 
@@ -483,8 +487,17 @@ El nuevo Notepad de Windows 11 (tabulado, clase `RichEditD2DPT`) necesita manejo
   - `cdp_get_dom(port, depth)` — DOM.getDocument, retorna arbol de nodos
 - **Conveniencia:** `cdp_click_selector(port, css_selector)` — document.querySelector().click() via Runtime.evaluate
 - **Limpieza:** `_cleanup_connection(port)` remueve conexiones muertas automaticamente en send/recv errors
+- **Auto-restart** (requiere confirmacion del usuario):
+  - `ensure_cdp(app_name)` — 3 pasos: check conexion existente, scan puertos, proponer restart
+  - Retorna `{action_required: "restart", ...}` si necesita reinicio — nunca auto-reinicia
+  - `restart_confirmed(app_name, port)` — cierra app (WM_CLOSE + 3s + terminate), relanza con `--remote-debugging-port` y `ELECTRON_EXTRA_LAUNCH_ARGS`, espera 15s, auto-conecta
+  - `_find_app_process()` busca por nombre de proceso y exe path via psutil
+  - `_close_app_cleanly()` — WM_CLOSE via `PostMessageW` + `EnumWindows`, fallback terminate
+  - `_build_restart_command()` — filtra flags de debugging existentes, agrega `--remote-allow-origins=*`
+- **Default ports:** `DEFAULT_CDP_PORTS` — 10 apps conocidas (code=9229, slack=9230, notion=9232, etc.)
+- **Knowledge Base:** `~/.marlow/cdp_knowledge.json` — persiste apps que necesitaron restart y su puerto
 - **Dependencia:** `websocket-client>=1.7.0` (sync, wrapped en `run_in_executor` para async)
-- 12 MCP tool functions expuestas como wrappers del singleton
+- 15 MCP tool functions expuestas como wrappers del singleton
 
 ### Setup Wizard (core/setup_wizard.py)
 - `SETUP_FILE = ~/.marlow/setup_complete.json` — marker file
@@ -675,6 +688,7 @@ Orden de preferencia para "ver" lo que hay en pantalla.
 - 2.1 **CDP para apps Electron** (12 tools: discover, connect, click, type, screenshot, evaluate, DOM) ✓ COMPLETADO v0.15.0
 - 2.2 **UIA event handlers** via comtypes (reaccionar a cambios en tiempo real, no polling)
 - 2.3 **Auto-handling de dialogos** (detectar y responder a popups conocidos automaticamente)
+- 2.4 **CDP auto-restart** (ensure + restart_confirmed + knowledge base, confirmacion del usuario) ✓ COMPLETADO v0.16.0
 
 ### Fase 3: Understanding
 - 3.1 **Set-of-Mark prompting** — numerar elementos en screenshot para que LLM los identifique
