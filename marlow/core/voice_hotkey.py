@@ -22,7 +22,6 @@ import logging
 import ctypes
 import threading
 import winsound
-import numpy as np
 from typing import Optional, Callable
 from pathlib import Path
 
@@ -268,7 +267,7 @@ def _record_and_transcribe():
         _recording = False
 
 
-def _record_with_vad() -> Optional[np.ndarray]:
+def _record_with_vad():
     """
     Record audio in 0.5s chunks with voice activity detection.
     Stops after 2s of continuous silence AFTER speech is detected.
@@ -281,8 +280,9 @@ def _record_with_vad() -> Optional[np.ndarray]:
     """
     try:
         import sounddevice as sd
+        import numpy as np  # noqa: F811 — lazy import (audio optional dep)
     except ImportError:
-        logger.error("sounddevice not installed")
+        logger.error("sounddevice/numpy not installed. Run: pip install marlow-mcp[audio]")
         return None
 
     chunk_samples = int(CHUNK_DURATION * SAMPLE_RATE)
@@ -335,7 +335,7 @@ def _record_with_vad() -> Optional[np.ndarray]:
     return np.concatenate(chunks)
 
 
-def _compute_rms_from_array(audio_array: np.ndarray) -> float:
+def _compute_rms_from_array(audio_array) -> float:
     """
     Compute RMS (root mean square) of a numpy int16 audio array.
     Adapted from voice._compute_rms but works directly on arrays
@@ -343,6 +343,8 @@ def _compute_rms_from_array(audio_array: np.ndarray) -> float:
 
     / Calcula RMS de un array numpy int16 de audio.
     """
+    import numpy as np
+
     if len(audio_array) == 0:
         return 0.0
     samples = audio_array.astype(np.float64)
@@ -350,7 +352,7 @@ def _compute_rms_from_array(audio_array: np.ndarray) -> float:
     return float(rms)
 
 
-def _save_chunks_to_wav(audio_data: np.ndarray) -> Optional[Path]:
+def _save_chunks_to_wav(audio_data) -> Optional[Path]:
     """
     Save numpy int16 audio array to WAV file in AUDIO_DIR.
 
