@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "marlow-mcp"
-version = "0.16.0"
+version = "0.20.0"
 description = "AI that works beside you, not instead of you. Windows desktop automation MCP server with background mode, security-first design, and zero telemetry."
 readme = "README.md"
 license = "MIT"
@@ -60,6 +60,7 @@ dependencies = [
     "winrt-Windows.Foundation>=3.0.0",
     "winrt-Windows.Foundation.Collections>=3.0.0",
     "websocket-client>=1.7.0",
+    "aiosqlite>=0.20.0",
 ]
 
 [project.optional-dependencies]
