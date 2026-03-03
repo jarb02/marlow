@@ -43,11 +43,25 @@ class AutonomousMarlow:
         Per-tool execution timeout in seconds. Default 30.
     * **auto_confirm** (bool):
         If True, auto-approve plans requiring confirmation. Default True.
+    * **llm_provider** (str or None):
+        LLM provider name (``"anthropic"``, ``"openai"``, ``"gemini"``,
+        ``"ollama"``).  When set, enables LLM-backed plan generation
+        for goals that don't match any template.
+    * **llm_model** (str):
+        Override the provider's default model name.
     """
 
-    def __init__(self, timeout: float = 30.0, auto_confirm: bool = True):
+    def __init__(
+        self,
+        timeout: float = 30.0,
+        auto_confirm: bool = True,
+        llm_provider: str = None,
+        llm_model: str = "",
+    ):
         self._timeout = timeout
         self._auto_confirm = auto_confirm
+        self._llm_provider_name = llm_provider
+        self._llm_model = llm_model
 
         # Components (initialized in setup())
         self._executor: Optional[SmartExecutor] = None
@@ -77,9 +91,32 @@ class AutonomousMarlow:
             available_tools=self._executor.available_tools,
         )
 
-        # 4. Create GoalEngine
+        # 4. Optionally create LLM-backed plan generator
+        plan_generator = None
+        if self._llm_provider_name:
+            try:
+                from .cognition.providers import create_provider
+                from .cognition.planner import LLMPlanner
+
+                provider = create_provider(
+                    self._llm_provider_name,
+                    model=self._llm_model,
+                )
+                plan_generator = LLMPlanner(
+                    provider=provider,
+                    tool_filter=self._tool_filter,
+                )
+                logger.info(
+                    "LLM planner enabled: %s (model=%s)",
+                    self._llm_provider_name,
+                    provider._config.model,
+                )
+            except Exception as e:
+                logger.warning("Failed to init LLM planner: %s", e)
+
+        # 5. Create GoalEngine
         self._engine = GoalEngine(
-            plan_generator=None,  # No LLM yet — template planner only
+            plan_generator=plan_generator,
             tool_executor=self._executor.execute,
             success_checker=checker,
             plan_validator=validator,
@@ -131,8 +168,15 @@ class AutonomousMarlow:
                 context=context,
                 pre_built_plan=plan,
             )
+        elif self._engine._plan_generator:
+            # No template match — use LLM planner
+            logger.info("No template match; using LLM planner")
+            result = await self._engine.execute_goal(
+                goal_text=goal_text,
+                context=context,
+            )
         else:
-            # No template match — would need LLM planner (Tier 4+)
+            # No template match and no LLM planner
             logger.warning(f"No template match for: {goal_text}")
             result = GoalResult(
                 goal_id="no_plan",
