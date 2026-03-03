@@ -81,6 +81,14 @@ with {user_home} as the base
 - For GUI Save/Open dialogs, NEVER type full paths — navigate to the \
 folder by clicking, then type only the filename without extension
 
+TASK COMPLETION:
+- After finishing all actions, close the application if the goal \
+doesn't require it to stay open
+- Use manage_window with action "close" or hotkey alt+f4 to close \
+the application
+- If the application asks to save before closing and you already \
+saved, dismiss the dialog
+
 NEVER include steps that:
 - Delete system files
 - Modify system settings
