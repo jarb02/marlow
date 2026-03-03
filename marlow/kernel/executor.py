@@ -13,13 +13,38 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
+from .constants import TOOL_RISK_MAP
 from .tool_wrapper import wrap_tool_call, wrap_tool_call_async
 from .types import ToolResult
 
 logger = logging.getLogger("marlow.executor")
+
+
+def _raw_to_result(
+    tool_name: str, raw, duration_ms: float,
+) -> ToolResult:
+    """Normalize a raw tool return value into a ToolResult."""
+    risk = TOOL_RISK_MAP.get(tool_name, "dangerous")
+    if isinstance(raw, dict) and raw.get("error"):
+        return ToolResult(
+            success=False,
+            data=raw,
+            error=str(raw["error"]),
+            duration_ms=duration_ms,
+            tool_name=tool_name,
+            risk_level=risk,
+        )
+    return ToolResult(
+        success=True,
+        data=raw,
+        duration_ms=duration_ms,
+        tool_name=tool_name,
+        risk_level=risk,
+    )
 
 
 class SmartExecutor:
@@ -63,7 +88,14 @@ class SmartExecutor:
         self._tools.update(tools)
 
     async def execute(self, tool_name: str, params: dict) -> ToolResult:
-        """Execute a tool with proper async handling and timeout."""
+        """Execute a tool with proper async handling and timeout.
+
+        Handles three cases:
+        1. Native ``async def`` — detected by ``iscoroutinefunction``.
+        2. Sync wrapper returning a coroutine (lambda around async) —
+           detected by calling ``func()`` then checking ``iscoroutine``.
+        3. Truly sync function — result already computed after call.
+        """
         func = self._tools.get(tool_name)
         if not func:
             return ToolResult.fail(
@@ -72,21 +104,28 @@ class SmartExecutor:
 
         try:
             if inspect.iscoroutinefunction(func):
-                # Async tool
+                # Case 1: native async
                 result = await asyncio.wait_for(
                     wrap_tool_call_async(tool_name, func, **params),
                     timeout=self._timeout,
                 )
             else:
-                # Sync tool — run in thread pool
-                loop = asyncio.get_running_loop()
-                result = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        self._executor,
-                        lambda: wrap_tool_call(tool_name, func, **params),
-                    ),
-                    timeout=self._timeout,
-                )
+                # Case 2 or 3: call it and inspect the return value.
+                start = time.perf_counter()
+                maybe_coro = func(**params)
+
+                if inspect.iscoroutine(maybe_coro):
+                    # Case 2: lambda wrapping async — await the coroutine
+                    raw = await asyncio.wait_for(
+                        maybe_coro, timeout=self._timeout,
+                    )
+                else:
+                    # Case 3: truly sync — already have the result
+                    raw = maybe_coro
+
+                duration_ms = (time.perf_counter() - start) * 1000
+                result = _raw_to_result(tool_name, raw, duration_ms)
+
             return result
 
         except asyncio.TimeoutError:

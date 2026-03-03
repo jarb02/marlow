@@ -7,6 +7,7 @@ ToolResult for scoring and audit.
 Does NOT modify any tool implementation — it wraps at the call site.
 """
 
+import inspect
 import time
 from typing import Any, Callable
 
@@ -46,6 +47,22 @@ def wrap_tool_call(tool_name: str, func: Callable, *args, **kwargs) -> ToolResul
     try:
         raw = func(*args, **kwargs)
         duration_ms = (time.perf_counter() - start) * 1000
+
+        # Safety net: if a lambda wrapping an async function slips
+        # through to the sync path, close the coroutine to prevent
+        # "coroutine was never awaited" warnings and return an error.
+        if inspect.iscoroutine(raw):
+            raw.close()
+            return ToolResult(
+                success=False,
+                error=(
+                    f"Tool '{tool_name}' returned a coroutine in sync "
+                    f"context — use SmartExecutor.execute() instead"
+                ),
+                duration_ms=duration_ms,
+                tool_name=tool_name,
+                risk_level=risk,
+            )
 
         if isinstance(raw, dict) and raw.get("error"):
             return ToolResult(
