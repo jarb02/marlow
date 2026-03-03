@@ -178,7 +178,7 @@ class AnthropicProvider(LLMProvider):
     Env: ``ANTHROPIC_API_KEY``
     """
 
-    DEFAULT_MODEL = "sonnet-4-20250514"
+    DEFAULT_MODEL = "claude-sonnet-4-20250514"
     API_URL = "https://api.anthropic.com/v1/messages"
 
     def __init__(self, config: ProviderConfig = None):

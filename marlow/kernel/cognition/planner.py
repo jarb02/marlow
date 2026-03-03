@@ -16,6 +16,7 @@ expected by :class:`~marlow.kernel.goal_engine.GoalEngine`.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 from ..goal_engine import Plan
@@ -77,9 +78,11 @@ class LLMPlanner:
         tools_prompt = self._tool_filter.format_for_prompt(relevant_tools)
 
         # 2. Build system prompt
+        user_home = os.path.expanduser("~").replace("\\", "\\\\")
         system = PLAN_SYSTEM.format(
             available_tools=tools_prompt,
             app_knowledge="(none)",
+            user_home=user_home,
         )
 
         # 3. Build user prompt
@@ -99,7 +102,7 @@ class LLMPlanner:
                 open_windows=context.get("open_windows", "unknown"),
             )
         else:
-            additional = ""
+            additional = f"User home directory: {os.path.expanduser('~')}\n"
             if context.get("app_framework"):
                 additional += f"App framework: {context['app_framework']}\n"
 

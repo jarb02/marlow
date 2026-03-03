@@ -27,6 +27,31 @@ from .types import ToolResult
 
 logger = logging.getLogger("marlow.integration")
 
+# Tools that need the target window focused before execution
+_INPUT_TOOLS = frozenset({
+    "type_text", "press_key", "hotkey", "click", "som_click",
+})
+
+# Post-launch settle time (seconds)
+_APP_LAUNCH_DELAY = 2.0
+
+# Window titles that indicate an active dialog (case-insensitive substrings)
+_DIALOG_TITLE_HINTS = (
+    "save as", "save file", "open", "print", "browse",
+    "dialog", "upload", "download", "export", "import",
+)
+
+
+async def _safe_hotkey(keyboard_mod, **kw):
+    """Hotkey wrapper: normalizes keys and rejects empty calls."""
+    keys = kw.get("keys")
+    if not keys:
+        return {"error": "No keys specified"}
+    # LLM may send "ctrl+s" (string) instead of ["ctrl", "s"] (list)
+    if isinstance(keys, str):
+        keys = keys.split("+")
+    return await keyboard_mod.hotkey(*keys)
+
 
 class AutonomousMarlow:
     """End-to-end autonomous desktop agent.
@@ -114,10 +139,10 @@ class AutonomousMarlow:
             except Exception as e:
                 logger.warning("Failed to init LLM planner: %s", e)
 
-        # 5. Create GoalEngine
+        # 5. Create GoalEngine (with orchestration wrapper)
         self._engine = GoalEngine(
             plan_generator=plan_generator,
-            tool_executor=self._executor.execute,
+            tool_executor=self._execute_tool,
             success_checker=checker,
             plan_validator=validator,
             confirmation_handler=self._confirm if self._auto_confirm else None,
@@ -309,9 +334,7 @@ class AutonomousMarlow:
                 key=kw.get("key", ""),
                 times=kw.get("times", 1),
             )
-            tools["hotkey"] = lambda **kw: keyboard.hotkey(
-                *kw.get("keys", []),
-            )
+            tools["hotkey"] = lambda **kw: _safe_hotkey(keyboard, **kw)
         except ImportError:
             logger.warning("keyboard not available")
 
@@ -833,6 +856,142 @@ class AutonomousMarlow:
             logger.warning("setup_wizard not available")
 
         return tools
+
+    # ── Orchestration ──
+
+    async def _execute_tool(
+        self, tool_name: str, params: dict,
+    ) -> ToolResult:
+        """Execute a tool with focus management and post-launch wait.
+
+        This wraps ``SmartExecutor.execute`` to add:
+        1. Auto-focus the target app before input tools
+        2. Post-launch delay after ``open_application``
+        """
+        # Pre-execution: focus target window for input tools
+        if tool_name in _INPUT_TOOLS:
+            await self._ensure_focus(tool_name, params)
+
+        # Execute
+        result = await self._executor.execute(tool_name, params)
+
+        # Post-execution: wait after launching an app
+        if (
+            tool_name == "open_application"
+            and result.success
+        ):
+            logger.info(
+                "Waiting %.1fs for app to launch...", _APP_LAUNCH_DELAY,
+            )
+            await asyncio.sleep(_APP_LAUNCH_DELAY)
+
+        return result
+
+    async def _ensure_focus(
+        self, tool_name: str, params: dict,
+    ) -> None:
+        """Focus the expected target window before input tools.
+
+        Skips focusing when a dialog is likely active (e.g. after
+        Ctrl+S opens Save As) — re-focusing the parent app would
+        steal focus from the dialog.
+
+        Resolves window_title from:
+        1. ``params["window_title"]`` (explicit)
+        2. Current plan step's ``expected_app``
+        3. Plan context's ``target_app`` / ``target_window``
+
+        If ``focus_window`` fails with the raw value (e.g. ``"notepad.exe"``),
+        falls back to listing windows and matching the app name against
+        real window titles.
+        """
+        # Already has an explicit target — tool handles it
+        if params.get("window_title") or params.get("element_name"):
+            return
+
+        # Skip if a dialog window is currently open
+        dialog_title = await self._detect_active_dialog()
+        if dialog_title:
+            logger.info(
+                "Dialog detected ('%s'), skipping focus before %s",
+                dialog_title, tool_name,
+            )
+            return
+
+        # Find the target from plan context
+        target = None
+        if self._engine and self._engine.plan:
+            step_idx = self._engine.current_step
+            steps = self._engine.plan.steps
+            if 0 <= step_idx < len(steps):
+                target = steps[step_idx].expected_app
+            if not target:
+                target = (
+                    self._engine.plan.context.get("target_window")
+                    or self._engine.plan.context.get("target_app")
+                )
+
+        if not target:
+            return
+
+        try:
+            # Attempt 1: try the value as-is (works for real titles)
+            focus_result = await self._executor.execute(
+                "focus_window", {"window_title": target},
+            )
+            if focus_result.success:
+                logger.info("Focused '%s' before %s", target, tool_name)
+                return
+
+            # Attempt 2: strip ".exe" and search open windows
+            app_stem = target.rsplit(".", 1)[0].lower()
+            list_result = await self._executor.execute(
+                "list_windows", {"include_minimized": False},
+            )
+            if not list_result.success:
+                return
+
+            windows = list_result.data.get("windows", [])
+            for w in windows:
+                title = w.get("title", "")
+                if app_stem in title.lower():
+                    focus_result = await self._executor.execute(
+                        "focus_window", {"window_title": title},
+                    )
+                    if focus_result.success:
+                        logger.info(
+                            "Focused '%s' (matched '%s') before %s",
+                            title, target, tool_name,
+                        )
+                        return
+
+            logger.warning(
+                "Could not find window for '%s'", target,
+            )
+        except Exception as e:
+            logger.warning("Focus attempt failed: %s", e)
+
+    async def _detect_active_dialog(self) -> str:
+        """Check open windows for an active dialog.
+
+        Returns the dialog title if found, empty string otherwise.
+        """
+        try:
+            list_result = await self._executor.execute(
+                "list_windows", {"include_minimized": False},
+            )
+            if not list_result.success:
+                return ""
+
+            for w in list_result.data.get("windows", []):
+                title = w.get("title", "")
+                title_lower = title.lower()
+                for hint in _DIALOG_TITLE_HINTS:
+                    if hint in title_lower:
+                        return title
+        except Exception:
+            pass
+        return ""
 
     # ── Callbacks ──
 

@@ -63,11 +63,16 @@ class TemplatePlanner:
             if m:
                 method = getattr(self, method_name, None)
                 if method:
-                    return method(m, context or {})
+                    result = method(m, context or {})
+                    if result is not None:
+                        return result
         return None
 
-    def _plan_open_app(self, match, context) -> Plan:
+    def _plan_open_app(self, match, context) -> Optional[Plan]:
         app = match.group(1).strip()
+        # Too many words → not a simple app name, defer to LLM
+        if len(app.split()) > 4:
+            return None
         return Plan(
             goal_id="",
             goal_text=match.string,

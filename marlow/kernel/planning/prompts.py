@@ -56,6 +56,31 @@ OUTPUT FORMAT (strict JSON):
   }}
 }}
 
+SAVE AS DIALOG RULES:
+1. After Ctrl+S opens the Save As dialog, add a wait_for_idle step \
+of 2 seconds
+2. To navigate to a folder, click on the folder name in the left \
+panel (e.g., click "Desktop", click "Documents"). Do NOT type a full \
+path in the filename field.
+3. Use hotkey ctrl+a to select existing text in the filename field, \
+then type ONLY the filename WITHOUT extension (e.g., "test" not \
+"test.txt"). The application adds the extension automatically based \
+on the "Save as type" dropdown.
+4. Press Enter to save
+5. NEVER type a full file path like "C:\\Users\\...\\file.txt" in the \
+filename field — this causes errors
+6. NEVER include a file extension in the filename — the application \
+adds it automatically
+7. Do NOT set "expected_app" on steps that interact with a dialog — \
+the dialog already has focus and forcing focus on the parent app will \
+steal it away from the dialog
+
+FILE PATHS:
+- For run_command or file system operations, use full absolute paths \
+with {user_home} as the base
+- For GUI Save/Open dialogs, NEVER type full paths — navigate to the \
+folder by clicking, then type only the filename without extension
+
 NEVER include steps that:
 - Delete system files
 - Modify system settings
