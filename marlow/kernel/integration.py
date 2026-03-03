@@ -862,11 +862,13 @@ class AutonomousMarlow:
     async def _execute_tool(
         self, tool_name: str, params: dict,
     ) -> ToolResult:
-        """Execute a tool with focus management and post-launch wait.
+        """Execute a tool with focus management, post-launch wait, and
+        active verification.
 
         This wraps ``SmartExecutor.execute`` to add:
         1. Auto-focus the target app before input tools
         2. Post-launch delay after ``open_application``
+        3. Post-action check for unexpected dialogs (Tier 7A)
         """
         # Pre-execution: focus target window for input tools
         if tool_name in _INPUT_TOOLS:
@@ -884,6 +886,17 @@ class AutonomousMarlow:
                 "Waiting %.1fs for app to launch...", _APP_LAUNCH_DELAY,
             )
             await asyncio.sleep(_APP_LAUNCH_DELAY)
+
+        # Post-action: active verification (Tier 7A)
+        post_check = await self._post_action_check(tool_name, params, result)
+        if post_check.get("error_dialog"):
+            logger.warning(
+                "Dialog detected after %s: %s",
+                tool_name, post_check.get("dialog_title", ""),
+            )
+            handled = await self._handle_unexpected_dialog(post_check)
+            if handled.get("retry"):
+                result = await self._executor.execute(tool_name, params)
 
         return result
 
@@ -992,6 +1005,128 @@ class AutonomousMarlow:
         except Exception:
             pass
         return ""
+
+    # ── Active Verification (Tier 7A) ──
+
+    # Tools that don't change desktop state — no need to verify after them
+    _READ_ONLY_TOOLS = frozenset({
+        "list_windows", "take_screenshot", "system_info", "get_dialog_info",
+        "ocr_region", "get_ui_tree", "get_annotated_screenshot", "find_elements",
+        "get_ui_events", "get_agent_screen_state", "memory_recall", "memory_list",
+        "clipboard_history", "get_suggestions", "workflow_list", "get_error_journal",
+        "list_watchers", "get_watch_events", "list_scheduled_tasks", "get_task_history",
+        "cdp_list_connections", "cdp_get_dom", "cdp_get_knowledge_base",
+        "get_voice_hotkey_status", "detect_app_framework", "run_diagnostics",
+    })
+
+    async def _post_action_check(
+        self, tool_name: str, params: dict, result: ToolResult,
+    ) -> dict:
+        """Look at the screen after every action to see what happened.
+
+        Returns dict with findings.  Skips checks for read-only tools
+        (they don't change state).
+        """
+        check: dict = {
+            "error_dialog": False,
+            "dialog_title": "",
+            "dialog_message": "",
+            "dialog_buttons": [],
+        }
+
+        if tool_name in self._READ_ONLY_TOOLS:
+            return check
+
+        # Small wait for UI to settle
+        await asyncio.sleep(0.3)
+
+        # Check: did an error/confirmation dialog appear?
+        try:
+            dialog_title = await self._detect_active_dialog()
+            if not dialog_title:
+                return check
+
+            # Get full dialog info using the detected title
+            dialog_result = await self._executor.execute(
+                "get_dialog_info", {"window_title": dialog_title},
+            )
+            if dialog_result.success and isinstance(dialog_result.data, dict):
+                data = dialog_result.data
+                check["error_dialog"] = True
+                check["dialog_title"] = data.get("window_title", dialog_title)
+                # Combine all text lines into a single message
+                texts = data.get("texts", [])
+                check["dialog_message"] = " ".join(
+                    t.get("text", "") if isinstance(t, dict) else str(t)
+                    for t in texts
+                ).strip()
+                check["dialog_buttons"] = data.get("button_names", [])
+                check["dialog_type"] = data.get("dialog_type", "")
+                check["suggested_action"] = data.get("suggested_action", "")
+        except Exception:
+            pass
+
+        return check
+
+    async def _handle_unexpected_dialog(self, dialog_info: dict) -> dict:
+        """Handle an unexpected dialog that appeared after an action.
+
+        Returns ``{"retry": bool, "action_taken": str}``.
+        """
+        title = dialog_info.get("dialog_title", "").lower()
+        message = dialog_info.get("dialog_message", "").lower()
+        buttons = dialog_info.get("dialog_buttons", [])
+
+        # Case 1: "File already exists, replace?" → Accept
+        if any(
+            w in message
+            for w in ("already exists", "replace", "overwrite", "reemplazar")
+        ):
+            logger.info("Handling 'file exists' dialog — clicking Yes/Replace")
+            try:
+                await self._executor.execute(
+                    "handle_dialog", {"action": "accept"},
+                )
+                return {"retry": False, "action_taken": "accepted_replace"}
+            except Exception:
+                await self._executor.execute(
+                    "press_key", {"key": "enter"},
+                )
+                return {"retry": False, "action_taken": "pressed_enter"}
+
+        # Case 2: "Path does not exist" → Dismiss and let replan handle it
+        if any(
+            w in message
+            for w in ("path does not exist", "not found", "cannot find", "no existe")
+        ):
+            logger.warning("Path error dialog: %s", message)
+            await self._executor.execute("press_key", {"key": "enter"})
+            return {"retry": False, "action_taken": "dismissed_path_error"}
+
+        # Case 3: Error / warning dialog → Dismiss
+        if any(w in title for w in ("error", "warning", "alert")):
+            logger.warning("Error dialog: %s — %s", title, message)
+            await self._executor.execute("press_key", {"key": "enter"})
+            return {"retry": False, "action_taken": "dismissed_error"}
+
+        # Case 4: Confirmation dialog → Accept (safe default)
+        if any(
+            w in message
+            for w in (
+                "are you sure", "do you want", "would you like",
+                "¿desea", "¿está seguro",
+            )
+        ):
+            logger.info("Confirmation dialog: %s — accepting", message[:80])
+            await self._executor.execute("press_key", {"key": "enter"})
+            return {"retry": False, "action_taken": "accepted_confirmation"}
+
+        # Case 5: Unknown dialog → Try to dismiss with Escape
+        logger.warning(
+            "Unknown dialog: %s — %s. Pressing Escape.", title, message[:80],
+        )
+        await self._executor.execute("press_key", {"key": "escape"})
+        return {"retry": False, "action_taken": "escaped_unknown"}
 
     # ── Callbacks ──
 
