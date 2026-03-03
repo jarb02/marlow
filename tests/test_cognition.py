@@ -111,7 +111,7 @@ class TestAnthropicProvider:
         assert call_args[0][0] == "POST"
         body = call_args[1]["json"]
         assert body["system"] == "You are helpful."
-        assert body["model"] == "sonnet-4-20250514"
+        assert body["model"] == "claude-sonnet-4-20250514"
         headers = call_args[1]["headers"]
         assert headers["x-api-key"] == "test-key-123"
         assert headers["anthropic-version"] == "2023-06-01"

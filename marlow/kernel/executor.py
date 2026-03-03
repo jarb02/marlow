@@ -38,6 +38,8 @@ def _raw_to_result(
             tool_name=tool_name,
             risk_level=risk,
         )
+    if raw is None:
+        logger.warning("Tool '%s' returned None — treating as success", tool_name)
     return ToolResult(
         success=True,
         data=raw,
