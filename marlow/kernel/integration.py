@@ -35,10 +35,18 @@ _INPUT_TOOLS = frozenset({
 # Post-launch settle time (seconds)
 _APP_LAUNCH_DELAY = 2.0
 
-# Window titles that indicate an active dialog (case-insensitive substrings)
+# Window titles that indicate an active dialog (case-insensitive).
+# These must be specific enough to avoid matching normal windows like
+# "Downloads - File Explorer".
 _DIALOG_TITLE_HINTS = (
-    "save as", "save file", "open", "print", "browse",
-    "dialog", "upload", "download", "export", "import",
+    "save as", "save file", "open file", "print", "browse for folder",
+    "replace", "confirm", "are you sure", "error", "warning",
+)
+
+# Windows whose titles contain any of these are NEVER dialogs,
+# even if a hint substring happens to match.
+_NOT_DIALOG_HINTS = (
+    "file explorer", "explorer", "windows explorer",
 )
 
 
@@ -985,9 +993,13 @@ class AutonomousMarlow:
             logger.warning("Focus attempt failed: %s", e)
 
     async def _detect_active_dialog(self) -> str:
-        """Check open windows for an active dialog.
+        """Check open windows for an active dialog by title heuristics.
 
+        Used by ``_ensure_focus`` to avoid stealing focus from a dialog.
         Returns the dialog title if found, empty string otherwise.
+
+        Applies an exclusion list so normal app windows (e.g.
+        "Downloads - File Explorer") are never mistaken for dialogs.
         """
         try:
             list_result = await self._executor.execute(
@@ -999,6 +1011,11 @@ class AutonomousMarlow:
             for w in list_result.data.get("windows", []):
                 title = w.get("title", "")
                 title_lower = title.lower()
+
+                # Exclusion: never treat these as dialogs
+                if any(exc in title_lower for exc in _NOT_DIALOG_HINTS):
+                    continue
+
                 for hint in _DIALOG_TITLE_HINTS:
                     if hint in title_lower:
                         return title
@@ -1024,6 +1041,10 @@ class AutonomousMarlow:
     ) -> dict:
         """Look at the screen after every action to see what happened.
 
+        Uses ``handle_dialog(action="report")`` which detects real modal
+        dialogs via the ``#32770`` window class — no false positives
+        from normal windows like File Explorer.
+
         Returns dict with findings.  Skips checks for read-only tools
         (they don't change state).
         """
@@ -1040,29 +1061,27 @@ class AutonomousMarlow:
         # Small wait for UI to settle
         await asyncio.sleep(0.3)
 
-        # Check: did an error/confirmation dialog appear?
+        # Use handle_dialog(report) — it scans for real #32770 dialogs
         try:
-            dialog_title = await self._detect_active_dialog()
-            if not dialog_title:
+            report = await self._executor.execute(
+                "handle_dialog", {"action": "report"},
+            )
+            if not report.success:
                 return check
 
-            # Get full dialog info using the detected title
-            dialog_result = await self._executor.execute(
-                "get_dialog_info", {"window_title": dialog_title},
-            )
-            if dialog_result.success and isinstance(dialog_result.data, dict):
-                data = dialog_result.data
-                check["error_dialog"] = True
-                check["dialog_title"] = data.get("window_title", dialog_title)
-                # Combine all text lines into a single message
-                texts = data.get("texts", [])
-                check["dialog_message"] = " ".join(
-                    t.get("text", "") if isinstance(t, dict) else str(t)
-                    for t in texts
-                ).strip()
-                check["dialog_buttons"] = data.get("button_names", [])
-                check["dialog_type"] = data.get("dialog_type", "")
-                check["suggested_action"] = data.get("suggested_action", "")
+            data = report.data if isinstance(report.data, dict) else {}
+            dialogs = data.get("dialogs", [])
+            if not dialogs:
+                return check
+
+            # Take the first (most relevant) dialog
+            dlg = dialogs[0]
+            check["error_dialog"] = True
+            check["dialog_title"] = dlg.get("title", "")
+            check["dialog_message"] = dlg.get("detail", "")
+            check["dialog_buttons"] = dlg.get("button_names", [])
+            check["dialog_type"] = dlg.get("dialog_type", "")
+            check["suggested_action"] = dlg.get("suggested_action", "")
         except Exception:
             pass
 
