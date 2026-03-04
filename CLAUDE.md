@@ -120,12 +120,13 @@ marlow/
 │   ├── blackboard.py          # Blackboard — centralized key-value, namespaces, TTL, listeners
 │   ├── plan_granularity.py    # Adaptive granularity — 4 levels based on per-app reliability
 │   ├── sensor_fusion.py       # SensorFusion — unified element detection, BoundingBox, IoU merge
+│   ├── vision_pipeline.py     # VisionPipeline — 4 monitor levels, proactive checks per tool
 │   ├── desktop_weather.py     # DesktopWeather — ring buffer trends, 4 climate levels
 │   ├── planning/              # prompts.py, parser.py, template_planner.py, tool_filter.py
 │   │   └── goap.py            # GOAP — A* planner, 16 actions, plan_from_goal_text
 │   └── cognition/             # LLM providers (Anthropic, OpenAI, Gemini, Ollama) + LLMPlanner
 ├── extensions/                # Plugin system (manifest + sandbox)
-└── tests/                     # 858 tests (unit + integration)
+└── tests/                     # 878 tests (unit + integration)
 ```
 
 ## HERRAMIENTAS MCP (96 tools)
@@ -281,7 +282,7 @@ Walks UIA tree (depth 8), collects interactive elements with valid bboxes, draws
 | Phase 5 | Planificar Mejor (GOAP, DesktopWeather, 3-tier planning) | COMPLETA |
 | Phase 6 | Seguridad: expanded validation, injection defense, dual safety review | COMPLETA |
 | Phase 7 | Aprendizaje: Blackboard, adaptive plan granularity | COMPLETA |
-| Phase 8 | AI Vision (OmniParser, VLM, CDP for Electron, Sensor Fusion) | PENDIENTE |
+| Phase 8 | AI Vision: Sensor Fusion, Vision Pipeline, proactive monitor | COMPLETA |
 | Phase D | Training Node (running in parallel on Lenovo IdeaPad) | EN PROGRESO |
 
 ### Kernel Tiers Completados
