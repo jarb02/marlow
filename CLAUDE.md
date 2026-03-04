@@ -117,12 +117,13 @@ marlow/
 │   ├── security/              # 6 security layers
 │   │   ├── injection_detector.py  # Prompt injection defense — 21 patterns, spotlighting
 │   │   └── plan_reviewer.py       # Dual safety review — rule-based, blocks critical plans
+│   ├── blackboard.py          # Blackboard — centralized key-value, namespaces, TTL, listeners
 │   ├── desktop_weather.py     # DesktopWeather — ring buffer trends, 4 climate levels
 │   ├── planning/              # prompts.py, parser.py, template_planner.py, tool_filter.py
 │   │   └── goap.py            # GOAP — A* planner, 16 actions, plan_from_goal_text
 │   └── cognition/             # LLM providers (Anthropic, OpenAI, Gemini, Ollama) + LLMPlanner
 ├── extensions/                # Plugin system (manifest + sandbox)
-└── tests/                     # 780 tests (unit + integration)
+└── tests/                     # 808 tests (unit + integration)
 ```
 
 ## HERRAMIENTAS MCP (96 tools)
