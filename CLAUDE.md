@@ -119,12 +119,13 @@ marlow/
 │   │   └── plan_reviewer.py       # Dual safety review — rule-based, blocks critical plans
 │   ├── blackboard.py          # Blackboard — centralized key-value, namespaces, TTL, listeners
 │   ├── plan_granularity.py    # Adaptive granularity — 4 levels based on per-app reliability
+│   ├── sensor_fusion.py       # SensorFusion — unified element detection, BoundingBox, IoU merge
 │   ├── desktop_weather.py     # DesktopWeather — ring buffer trends, 4 climate levels
 │   ├── planning/              # prompts.py, parser.py, template_planner.py, tool_filter.py
 │   │   └── goap.py            # GOAP — A* planner, 16 actions, plan_from_goal_text
 │   └── cognition/             # LLM providers (Anthropic, OpenAI, Gemini, Ollama) + LLMPlanner
 ├── extensions/                # Plugin system (manifest + sandbox)
-└── tests/                     # 830 tests (unit + integration)
+└── tests/                     # 858 tests (unit + integration)
 ```
 
 ## HERRAMIENTAS MCP (96 tools)
