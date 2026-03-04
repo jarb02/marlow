@@ -61,17 +61,16 @@ dependencies = [
     "winrt-Windows.Foundation.Collections>=3.0.0",
     "websocket-client>=1.7.0",
     "aiosqlite>=0.20.0",
-]
-
-[project.optional-dependencies]
-audio = [
-    "PyAudioWPatch>=0.2.12.6",
+    "numpy>=1.24.0",
     "sounddevice>=0.4.6",
     "soundfile>=0.12.1",
+    "PyAudioWPatch>=0.2.12.6",
     "faster-whisper>=1.0.0",
     "silero-vad>=5.0",
     "piper-tts>=1.0.0",
 ]
+
+[project.optional-dependencies]
 ocr = ["pytesseract>=0.3.10"]  # Tesseract fallback (requires binary install)
 
 [project.urls]
