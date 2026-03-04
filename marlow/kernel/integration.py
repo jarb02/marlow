@@ -39,6 +39,7 @@ from .events import (
 from .interrupt_manager import InterruptManager
 from .planning.goap import GOAPPlanner
 from .scoring.pre_scorer import PreActionScorer
+from .security.plan_reviewer import PlanReviewer
 from .window_tracker import WindowTracker
 
 logger = logging.getLogger("marlow.integration")
@@ -187,6 +188,7 @@ class AutonomousMarlow:
         self._event_bus = EventBus()
         self._goap = GOAPPlanner()
         self._weather = DesktopWeather()
+        self._plan_reviewer = PlanReviewer()
         self._ready = False
 
     @property
@@ -321,6 +323,37 @@ class AutonomousMarlow:
                     "GOAP planner: %d-step plan for '%s' (%s)",
                     len(steps), goal_text,
                     ", ".join(s.tool_name for s in steps),
+                )
+
+        # Dual safety review for high-risk plans
+        if plan and self._plan_reviewer.needs_review(plan.steps):
+            review = self._plan_reviewer.review_plan(goal_text, plan.steps)
+            if review.should_block:
+                logger.warning(
+                    "Plan REJECTED by safety review: %s", review.concerns,
+                )
+                result = GoalResult(
+                    goal_id="rejected",
+                    goal_text=goal_text,
+                    success=False,
+                    errors=[
+                        f"Plan rejected by safety review: "
+                        f"{', '.join(review.concerns)}"
+                    ],
+                )
+                try:
+                    await self._event_bus.publish(GoalFailed(
+                        goal_text=goal_text, source="plan_reviewer",
+                        correlation_id=_corr_id,
+                        error="Plan rejected by safety review",
+                    ))
+                except Exception:
+                    pass
+                return result
+            elif review.verdict.value == "flagged":
+                logger.warning(
+                    "Plan FLAGGED: %s — proceeding with caution",
+                    review.concerns,
                 )
 
         if plan:
