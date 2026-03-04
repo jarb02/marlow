@@ -16,7 +16,7 @@ Primer tarea autonoma de escritorio completada. Kernel con 4 LLM providers.
 **Capas:** UIA tree (estructura) → OCR con bboxes (texto) → CDP (Electron) → Computer Vision (ultimo recurso).
 **Shadow Mode (futuro):** Virtual Desktops invisibles + SendMessage + PrintWindow + COM invisible.
 
-## ESTADO (96 tools, 620 tests)
+## ESTADO (96 tools, 659 tests)
 
 | Capa | Tools/Modulos | Estado |
 |------|---------------|--------|
@@ -36,6 +36,7 @@ Primer tarea autonoma de escritorio completada. Kernel con 4 LLM providers.
 | Phase 1: Ver Mejor (Perception) | WindowTracker, DialogType, AppAwareness | COMPLETA |
 | Phase 2: Escuchar y Hablar (Audio) | AdaptiveVAD, PiperTTS, GPUDetect | COMPLETA |
 | Phase 3: Reaccionar (Game AI-A) | PreActionScorer, InterruptManager, AdaptiveWaits | COMPLETA |
+| Phase 4: EventBus | typed events, pub/sub, wildcards, circuit breakers | COMPLETA |
 
 Plataforma: Windows 11 Home 10.0.26200, dual monitor
 Laptop Training Node: Lenovo IdeaPad i5/16GB, Ollama qwen2.5:7b judge
@@ -109,13 +110,15 @@ marlow/
 │   ├── db/                    # SQLite: state.db (10 tables), logs.db (3 tables)
 │   ├── interrupt_manager.py   # InterruptManager — P0-P4 priority stack, suspend/resume
 │   ├── adaptive_waits.py      # AdaptiveWaits — EMA per app, replaces hardcoded sleeps
+│   ├── events.py              # 17 typed events (frozen dataclasses), 5 categories
+│   ├── event_bus.py           # EventBus — pub/sub, wildcards, circuit breakers
 │   ├── scoring/               # ActionScorer, PreActionScorer, ReliabilityTracker, NegativeChecker
 │   │   └── pre_scorer.py      # PreActionScorer — Utility AI, pre-action evaluation
 │   ├── security/              # 6 security layers
 │   ├── planning/              # prompts.py, parser.py, template_planner.py, tool_filter.py
 │   └── cognition/             # LLM providers (Anthropic, OpenAI, Gemini, Ollama) + LLMPlanner
 ├── extensions/                # Plugin system (manifest + sandbox)
-└── tests/                     # 620 tests (unit + integration)
+└── tests/                     # 659 tests (unit + integration)
 ```
 
 ## HERRAMIENTAS MCP (96 tools)
@@ -267,7 +270,7 @@ Walks UIA tree (depth 8), collects interactive elements with valid bboxes, draws
 | Phase 1 | Ver Mejor (Perception): WindowTracker, DialogType, AppAwareness | COMPLETA |
 | Phase 2 | Escuchar y Hablar: Silero VAD, Piper TTS, GPU detect, voz Jorge | COMPLETA |
 | Phase 3 | Reaccionar (Game AI-A: PreActionScorer, InterruptManager, AdaptiveWaits) | COMPLETA |
-| Phase 4 | EventBus (janus, typed events, 6 priority levels) | PENDIENTE |
+| Phase 4 | EventBus (typed events, pub/sub, wildcards, circuit breakers) | COMPLETA |
 | Phase 5 | Planificar Mejor (GOAP, DesktopWeather, Selector nodes) | PENDIENTE |
 | Phase 6 | Seguridad (OWASP defenses, sandboxing, dual LLM review) | PENDIENTE |
 | Phase 7 | Aprendizaje (Blackboard, Shadow Mode, Training Node integration) | PENDIENTE |

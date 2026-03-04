@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time as _time
 from enum import Enum
 from typing import Optional
 
@@ -27,6 +28,13 @@ from .success_checker import SuccessChecker
 from .types import ToolResult
 from .adaptive_waits import AdaptiveWaits
 from .app_awareness import AppAwareness
+from .event_bus import EventBus
+from .events import (
+    GoalStarted, GoalCompleted, GoalFailed,
+    ActionStarting, ActionCompleted, ActionFailed,
+    DialogDetected, DialogHandled, WindowChanged, FocusLost,
+    InterruptReceived,
+)
 from .interrupt_manager import InterruptManager
 from .scoring.pre_scorer import PreActionScorer
 from .window_tracker import WindowTracker
@@ -174,7 +182,13 @@ class AutonomousMarlow:
         self._adaptive_waits = AdaptiveWaits()
         self._pre_scorer = PreActionScorer()
         self._interrupt_manager = InterruptManager()
+        self._event_bus = EventBus()
         self._ready = False
+
+    @property
+    def event_bus(self) -> EventBus:
+        """Access the kernel event bus for pub/sub."""
+        return self._event_bus
 
     def setup(self) -> dict:
         """Initialize all components and register real tools.
@@ -260,6 +274,15 @@ class AutonomousMarlow:
             raise RuntimeError("Call setup() before execute()")
 
         logger.info(f"Goal: {goal_text}")
+        _corr_id = goal_text[:50]
+
+        try:
+            await self._event_bus.publish(GoalStarted(
+                goal_text=goal_text, source="integration",
+                correlation_id=_corr_id,
+            ))
+        except Exception:
+            pass
 
         # Try template planner first (no LLM needed)
         plan = self._planner.match(goal_text, context)
@@ -296,6 +319,25 @@ class AutonomousMarlow:
             f"steps={result.steps_completed}/{result.steps_total}, "
             f"score={result.avg_score}, errors={result.errors}",
         )
+
+        # Publish goal outcome
+        try:
+            if result.success:
+                await self._event_bus.publish(GoalCompleted(
+                    goal_text=goal_text, source="integration",
+                    correlation_id=_corr_id,
+                    success=True,
+                    steps_executed=result.steps_completed,
+                ))
+            else:
+                await self._event_bus.publish(GoalFailed(
+                    goal_text=goal_text, source="integration",
+                    correlation_id=_corr_id,
+                    error="; ".join(result.errors) if result.errors else "unknown",
+                ))
+        except Exception:
+            pass
+
         return result
 
     async def execute_plan(
@@ -983,12 +1025,38 @@ class AutonomousMarlow:
             pre_score.urgency, pre_score.relevance, pre_score.cost,
         )
 
+        # Publish ActionStarting event
+        try:
+            await self._event_bus.publish(ActionStarting(
+                tool_name=tool_name, source="integration",
+                pre_score=pre_score.composite,
+            ))
+        except Exception:
+            pass
+
         # Pre-execution: focus target window for input tools
         if tool_name in _INPUT_TOOLS:
             await self._ensure_focus(tool_name, params)
 
-        # Execute
+        # Execute (with timing)
+        _start = _time.time()
         result = await self._executor.execute(tool_name, params)
+        _duration_ms = (_time.time() - _start) * 1000
+
+        # Publish ActionCompleted or ActionFailed
+        try:
+            if result.success:
+                await self._event_bus.publish(ActionCompleted(
+                    tool_name=tool_name, source="integration",
+                    success=True, duration_ms=round(_duration_ms, 1),
+                ))
+            else:
+                await self._event_bus.publish(ActionFailed(
+                    tool_name=tool_name, source="integration",
+                    error=str(result.error) if result.error else "",
+                ))
+        except Exception:
+            pass
 
         # Post-execution: adaptive wait after launching an app
         if (
@@ -1004,7 +1072,6 @@ class AutonomousMarlow:
             await asyncio.sleep(wait_time)
 
             # Detect framework of newly opened app
-            app_name = params.get("app_name") or params.get("name") or ""
             if app_name:
                 framework = await self._app_awareness.detect_and_register(
                     self._executor, app_name,
@@ -1031,8 +1098,17 @@ class AutonomousMarlow:
                 "Interrupt classified: %s — %s",
                 interrupt.priority.name, interrupt.description,
             )
-            handled = await self._handle_unexpected_dialog(post_check)
-            if handled.get("retry"):
+            # Publish DialogDetected event
+            try:
+                await self._event_bus.publish(DialogDetected(
+                    dialog_title=post_check.get("dialog_title", ""),
+                    dialog_type=post_check.get("dialog_type", ""),
+                    source="integration",
+                ))
+            except Exception:
+                pass
+            handle_result = await self._handle_unexpected_dialog(post_check)
+            if handle_result.get("retry"):
                 result = await self._executor.execute(tool_name, params)
 
         # Post-action: snapshot and detect window changes
@@ -1054,11 +1130,27 @@ class AutonomousMarlow:
                             "Window appeared after %s: %s",
                             tool_name, change.window_title,
                         )
+                    try:
+                        await self._event_bus.publish(WindowChanged(
+                            change_type=change.change_type,
+                            window_title=change.window_title,
+                            source="integration",
+                        ))
+                    except Exception:
+                        pass
                 elif change.change_type == "disappeared":
                     logger.warning(
                         "Window disappeared after %s: %s",
                         tool_name, change.window_title,
                     )
+                    try:
+                        await self._event_bus.publish(WindowChanged(
+                            change_type=change.change_type,
+                            window_title=change.window_title,
+                            source="integration",
+                        ))
+                    except Exception:
+                        pass
                 elif change.change_type == "focus_lost":
                     interrupt = self._interrupt_manager.classify_event(
                         "focus_lost", title=change.window_title,
@@ -1067,6 +1159,14 @@ class AutonomousMarlow:
                         "Focus interrupt: %s — %s",
                         interrupt.priority.name, interrupt.description,
                     )
+                    try:
+                        await self._event_bus.publish(FocusLost(
+                            expected_app=getattr(self._window_tracker, '_expected_app', ""),
+                            actual_app=change.window_title,
+                            source="integration",
+                        ))
+                    except Exception:
+                        pass
 
         return result
 
@@ -1287,50 +1387,64 @@ class AutonomousMarlow:
         dtype = classify_dialog(title, message, buttons)
         logger.info("Dialog classified as %s: %s", dtype.value, title)
 
+        handle_result: dict
+
         if dtype == DialogType.FILE_EXISTS:
             logger.info("Handling 'file exists' dialog — clicking Yes/Replace")
             try:
                 await self._executor.execute(
                     "handle_dialog", {"action": "accept"},
                 )
-                return {"retry": False, "action_taken": "accepted_replace", "dialog_type": dtype.value}
+                handle_result = {"retry": False, "action_taken": "accepted_replace", "dialog_type": dtype.value}
             except Exception:
                 await self._executor.execute(
                     "press_key", {"key": "enter"},
                 )
-                return {"retry": False, "action_taken": "pressed_enter", "dialog_type": dtype.value}
+                handle_result = {"retry": False, "action_taken": "pressed_enter", "dialog_type": dtype.value}
 
         elif dtype == DialogType.PATH_ERROR:
             logger.warning("Path error dialog: %s", message)
             await self._executor.execute("press_key", {"key": "enter"})
-            return {"retry": False, "action_taken": "dismissed_path_error", "dialog_type": dtype.value}
+            handle_result = {"retry": False, "action_taken": "dismissed_path_error", "dialog_type": dtype.value}
 
         elif dtype in (DialogType.ERROR, DialogType.WARNING):
             logger.warning("%s dialog: %s — %s", dtype.value, title, message)
             await self._executor.execute("press_key", {"key": "enter"})
-            return {"retry": False, "action_taken": "dismissed_error", "dialog_type": dtype.value}
+            handle_result = {"retry": False, "action_taken": "dismissed_error", "dialog_type": dtype.value}
 
         elif dtype == DialogType.CONFIRMATION:
             logger.info("Confirmation dialog: %s — accepting", message[:80])
             await self._executor.execute("press_key", {"key": "enter"})
-            return {"retry": False, "action_taken": "accepted_confirmation", "dialog_type": dtype.value}
+            handle_result = {"retry": False, "action_taken": "accepted_confirmation", "dialog_type": dtype.value}
 
         elif dtype == DialogType.INFORMATION:
             logger.info("Info dialog: %s — dismissing", message[:80])
             await self._executor.execute("press_key", {"key": "enter"})
-            return {"retry": False, "action_taken": "dismissed_info", "dialog_type": dtype.value}
+            handle_result = {"retry": False, "action_taken": "dismissed_info", "dialog_type": dtype.value}
 
         elif dtype in (DialogType.SAVE, DialogType.OPEN):
             # Save/Open dialogs are expected — don't dismiss them
             logger.info("%s dialog detected — not dismissing (expected)", dtype.value)
-            return {"retry": False, "action_taken": "none_expected_dialog", "dialog_type": dtype.value}
+            handle_result = {"retry": False, "action_taken": "none_expected_dialog", "dialog_type": dtype.value}
 
         else:
             logger.warning(
                 "Unknown dialog: %s — %s. Pressing Escape.", title, message[:80],
             )
             await self._executor.execute("press_key", {"key": "escape"})
-            return {"retry": False, "action_taken": "escaped_unknown", "dialog_type": dtype.value}
+            handle_result = {"retry": False, "action_taken": "escaped_unknown", "dialog_type": dtype.value}
+
+        # Publish DialogHandled event
+        try:
+            await self._event_bus.publish(DialogHandled(
+                dialog_title=title,
+                action_taken=handle_result.get("action_taken", ""),
+                source="integration",
+            ))
+        except Exception:
+            pass
+
+        return handle_result
 
     # ── Callbacks ──
 
