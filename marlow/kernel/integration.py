@@ -25,7 +25,10 @@ from .planning.template_planner import TemplatePlanner
 from .planning.tool_filter import ToolFilter
 from .success_checker import SuccessChecker
 from .types import ToolResult
+from .adaptive_waits import AdaptiveWaits
 from .app_awareness import AppAwareness
+from .interrupt_manager import InterruptManager
+from .scoring.pre_scorer import PreActionScorer
 from .window_tracker import WindowTracker
 
 logger = logging.getLogger("marlow.integration")
@@ -168,6 +171,9 @@ class AutonomousMarlow:
         self._tool_filter: Optional[ToolFilter] = None
         self._window_tracker = WindowTracker()
         self._app_awareness = AppAwareness()
+        self._adaptive_waits = AdaptiveWaits()
+        self._pre_scorer = PreActionScorer()
+        self._interrupt_manager = InterruptManager()
         self._ready = False
 
     def setup(self) -> dict:
@@ -959,6 +965,24 @@ class AutonomousMarlow:
         if tool_name not in self._READ_ONLY_TOOLS:
             await self._take_window_snapshot()
 
+        # Pre-execution: score candidate action (log only, no blocking)
+        pre_context = {
+            "target_app": params.get("window_title", params.get("app_name", "")),
+            "element_type": params.get("control_type", ""),
+            "estimated_tokens": 0,
+            "estimated_ms": 0,
+        }
+        pre_score = self._pre_scorer.score(
+            tool_name=tool_name,
+            context=pre_context,
+            app_name=params.get("window_title", params.get("app_name", "")),
+        )
+        logger.debug(
+            "PreActionScore: %s -> %.2f (rel=%.2f urg=%.2f rel=%.2f cost=%.2f)",
+            tool_name, pre_score.composite, pre_score.reliability,
+            pre_score.urgency, pre_score.relevance, pre_score.cost,
+        )
+
         # Pre-execution: focus target window for input tools
         if tool_name in _INPUT_TOOLS:
             await self._ensure_focus(tool_name, params)
@@ -966,15 +990,18 @@ class AutonomousMarlow:
         # Execute
         result = await self._executor.execute(tool_name, params)
 
-        # Post-execution: wait after launching an app
+        # Post-execution: adaptive wait after launching an app
         if (
             tool_name == "open_application"
             and result.success
         ):
+            app_name = params.get("app_name") or params.get("name") or ""
+            wait_time = self._adaptive_waits.get_wait(app_name)
             logger.info(
-                "Waiting %.1fs for app to launch...", _APP_LAUNCH_DELAY,
+                "Waiting %.1fs for %s to be ready (adaptive)",
+                wait_time, app_name,
             )
-            await asyncio.sleep(_APP_LAUNCH_DELAY)
+            await asyncio.sleep(wait_time)
 
             # Detect framework of newly opened app
             app_name = params.get("app_name") or params.get("name") or ""
@@ -992,6 +1019,18 @@ class AutonomousMarlow:
                 "Dialog detected after %s: %s",
                 tool_name, post_check.get("dialog_title", ""),
             )
+            # Classify as interrupt
+            interrupt = self._interrupt_manager.classify_event(
+                "dialog",
+                title=post_check.get("dialog_title", ""),
+                message=post_check.get("dialog_message", ""),
+            )
+            post_check["interrupt"] = interrupt
+            post_check["interrupt_priority"] = interrupt.priority.name
+            logger.info(
+                "Interrupt classified: %s — %s",
+                interrupt.priority.name, interrupt.description,
+            )
             handled = await self._handle_unexpected_dialog(post_check)
             if handled.get("retry"):
                 result = await self._executor.execute(tool_name, params)
@@ -1002,19 +1041,31 @@ class AutonomousMarlow:
             changes = self._window_tracker.detect_changes()
             for change in changes:
                 if change.change_type == "appeared":
-                    logger.info(
-                        "Window appeared after %s: %s",
-                        tool_name, change.window_title,
+                    interrupt = self._interrupt_manager.classify_event(
+                        "window_appeared", title=change.window_title,
                     )
+                    if interrupt.priority <= 2:  # P0, P1, P2
+                        logger.info(
+                            "Window interrupt: %s — %s",
+                            interrupt.priority.name, interrupt.description,
+                        )
+                    else:
+                        logger.info(
+                            "Window appeared after %s: %s",
+                            tool_name, change.window_title,
+                        )
                 elif change.change_type == "disappeared":
                     logger.warning(
                         "Window disappeared after %s: %s",
                         tool_name, change.window_title,
                     )
                 elif change.change_type == "focus_lost":
-                    logger.warning(
-                        "Focus lost from %s after %s",
-                        change.window_title, tool_name,
+                    interrupt = self._interrupt_manager.classify_event(
+                        "focus_lost", title=change.window_title,
+                    )
+                    logger.info(
+                        "Focus interrupt: %s — %s",
+                        interrupt.priority.name, interrupt.description,
                     )
 
         return result
