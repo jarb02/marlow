@@ -264,8 +264,22 @@ async def download_whisper_model(model_size: str = "base") -> dict:
     )
 
     def _download():
+        from marlow.core.gpu_detect import get_gpu_info
+
+        gpu = get_gpu_info()
+        config = gpu.recommended_whisper_config
+
         start = time.time()
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        try:
+            model = WhisperModel(
+                model_size, device=config["device"],
+                compute_type=config["compute_type"],
+            )
+            device_used = config["device"]
+        except Exception:
+            logger.warning("GPU whisper failed, falling back to CPU")
+            model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            device_used = "cpu"
         elapsed = round(time.time() - start, 1)
 
         # Cache it for transcribe_audio
@@ -276,6 +290,7 @@ async def download_whisper_model(model_size: str = "base") -> dict:
         return {
             "success": True,
             "model": model_size,
+            "device": device_used,
             "status": "downloaded",
             "download_time_seconds": elapsed,
             "hint": "Model cached. transcribe_audio will now start instantly.",
@@ -334,18 +349,33 @@ async def transcribe_audio(
 
         # Cache model to avoid reloading
         if _whisper_model is None or _whisper_model_size != model_size:
+            from marlow.core.gpu_detect import get_gpu_info
+
+            gpu = get_gpu_info()
+            config = gpu.recommended_whisper_config
+
             if not _is_model_cached(model_size):
                 logger.info(
-                    f"Downloading whisper model '{model_size}' (first time, ~150MB)..."
+                    "Downloading whisper model '%s' (first time, ~150MB)...",
+                    model_size,
                 )
             else:
-                logger.info(f"Loading whisper model: {model_size} (CPU, int8)")
+                logger.info(
+                    "Loading whisper model: %s (%s, %s)",
+                    model_size, config["device"], config["compute_type"],
+                )
 
-            _whisper_model = WhisperModel(
-                model_size,
-                device="cpu",
-                compute_type="int8",
-            )
+            try:
+                _whisper_model = WhisperModel(
+                    model_size,
+                    device=config["device"],
+                    compute_type=config["compute_type"],
+                )
+            except Exception:
+                logger.warning("GPU whisper failed, falling back to CPU")
+                _whisper_model = WhisperModel(
+                    model_size, device="cpu", compute_type="int8",
+                )
             _whisper_model_size = model_size
 
         # Transcribe

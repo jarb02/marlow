@@ -8,36 +8,42 @@ Python 3.10+ (dev 3.14) | MIT | PyPI: marlow-mcp | MCP SDK v1.26.0
 
 MCP Server para Windows: automatizacion de escritorio con seguridad desde commit #1, metodos silenciosos (no roba mouse/teclado), proteccion de foco, persistencia entre sesiones, extensiones sandboxed, cero telemetria.
 
+Primer tarea autonoma de escritorio completada. Kernel con 4 LLM providers.
+
 ## VISION
 
 **Principio rector:** Primero ver bien, despues entender, despues ser invisible.
 **Capas:** UIA tree (estructura) → OCR con bboxes (texto) → CDP (Electron) → Computer Vision (ultimo recurso).
 **Shadow Mode (futuro):** Virtual Desktops invisibles + SendMessage + PrintWindow + COM invisible.
 
-## ESTADO (96 tools, 142 tests)
+## ESTADO (96 tools, 540 tests)
 
-| Fase | Tools | Estado |
-|------|-------|--------|
-| Core (Phase 1) | 14 | COMPLETA |
-| Advanced (Phase 2: audio/OCR/background/COM/voice) | 19 | COMPLETA |
-| Intelligence + Extensions (Phase 3) | 12 | COMPLETA |
-| Automation (Phase 4: watcher/scheduler) | 8 | COMPLETA |
-| Voice + TTS (Phase 5) | 3 | COMPLETA |
-| Adaptive + Workflows | 8 | COMPLETA |
-| Self-Improve + Smart Wait | 6 | COMPLETA |
-| UX + Diagnostics | 3 | COMPLETA |
-| CDP (Chrome DevTools Protocol) | 15 | COMPLETA |
-| UIA Events + Dialog Handler | 5 | COMPLETA |
-| Cascade Recovery | 1 | COMPLETA |
-| Set-of-Mark (SoM) Prompting | 2 | COMPLETA |
+| Capa | Tools/Modulos | Estado |
+|------|---------------|--------|
+| Core (Phase 1) | 14 tools | COMPLETA |
+| Advanced (Phase 2: audio/OCR/background/COM/voice) | 19 tools | COMPLETA |
+| Intelligence + Extensions (Phase 3) | 12 tools | COMPLETA |
+| Automation (Phase 4: watcher/scheduler) | 8 tools | COMPLETA |
+| Voice + TTS (Phase 5) | 3 tools | COMPLETA |
+| Adaptive + Workflows | 8 tools | COMPLETA |
+| Self-Improve + Smart Wait | 6 tools | COMPLETA |
+| UX + Diagnostics | 3 tools | COMPLETA |
+| CDP (Chrome DevTools Protocol) | 15 tools | COMPLETA |
+| UIA Events + Dialog Handler | 5 tools | COMPLETA |
+| Cascade Recovery | 1 tool | COMPLETA |
+| Set-of-Mark (SoM) Prompting | 2 tools | COMPLETA |
+| Kernel Tiers 0-3, 6 | types, executor, kernel, goal_engine, scoring, security, planning, cognition | COMPLETA |
+| Phase 1: Ver Mejor (Perception) | WindowTracker, DialogType, AppAwareness | COMPLETA |
+| Phase 2: Escuchar y Hablar (Audio) | AdaptiveVAD, PiperTTS, GPUDetect | COMPLETA |
 
 Plataforma: Windows 11 Home 10.0.26200, dual monitor
+Laptop Training Node: Lenovo IdeaPad i5/16GB, Ollama qwen2.5:7b judge
 
 ## ESTRUCTURA
 
 ```
 marlow/
-├── server.py                  # MCP server (94 tools, focus guard, safety pipeline)
+├── server.py                  # MCP server (96 tools, focus guard, safety pipeline)
 ├── __init__.py                # Version
 ├── core/
 │   ├── config.py              # Config con defaults seguros
@@ -55,7 +61,10 @@ marlow/
 │   ├── adaptive.py            # Pattern detection
 │   ├── workflows.py           # Record/replay workflows
 │   ├── error_journal.py       # Error/solution diary per tool+app
-│   ├── voice_hotkey.py        # Ctrl+Shift+M (record) + Ctrl+Shift+N (stop)
+│   ├── vad.py                 # AdaptiveVAD: Silero VAD (primary) -> RMS (fallback)
+│   ├── piper_tts.py           # Piper TTS offline — es_MX + en_US voices
+│   ├── gpu_detect.py          # GPU detection, CUDA auto-config for whisper
+│   ├── voice_hotkey.py        # Ctrl+Shift+M (record) + Ctrl+Shift+N (stop), uses AdaptiveVAD
 │   ├── voice_overlay.py       # Floating tkinter overlay
 │   └── setup_wizard.py        # First-run wizard + diagnostics
 ├── tools/
@@ -67,7 +76,7 @@ marlow/
 │   ├── system.py              # run_command, open_application, clipboard, system_info
 │   ├── ocr.py                 # Windows OCR (primary) + Tesseract (fallback)
 │   ├── background.py          # Dual monitor / offscreen + agent_screen_only
-│   ├── audio.py               # WASAPI loopback, mic, whisper transcription
+│   ├── audio.py               # WASAPI loopback, mic, whisper transcription (GPU auto-detect)
 │   ├── voice.py               # listen_for_command
 │   ├── app_script.py          # COM automation sandboxed (invisible default)
 │   ├── visual_diff.py         # Before/after pixel comparison
@@ -76,10 +85,33 @@ marlow/
 │   ├── scraper.py             # httpx + BeautifulSoup
 │   ├── watcher.py             # watchdog folder monitoring
 │   ├── scheduler.py           # Recurring task scheduler
-│   ├── tts.py                 # edge-tts + pyttsx3 fallback
+│   ├── tts.py                 # edge-tts (Jorge) -> Piper offline -> pyttsx3
 │   └── wait.py                # wait_for_element/text/window/idle
+├── kernel/
+│   ├── types.py               # ToolResult, enums, base types
+│   ├── config.py              # Kernel configuration
+│   ├── constants.py           # Shared constants
+│   ├── tool_wrapper.py        # Tool function wrapping
+│   ├── kernel.py              # 8-state decision loop HSM
+│   ├── executor.py            # SmartExecutor (async/sync + coroutine detection)
+│   ├── integration.py         # AutonomousMarlow — orchestration, focus mgmt, dialog handling, window tracking, post-action verification
+│   ├── window_tracker.py      # WindowSnapshot, WindowChange, WindowTracker — state between steps
+│   ├── app_awareness.py       # AppAwareness — Electron vs native, CDP/UIA recommendation
+│   ├── world_state.py         # World state representation
+│   ├── loop_guard.py          # Infinite loop detection
+│   ├── memory.py              # Kernel-level memory
+│   ├── knowledge.py           # Knowledge base
+│   ├── goal_engine.py         # 13-state goal lifecycle
+│   ├── plan_validator.py      # Plan validation
+│   ├── success_checker.py     # Success verification
+│   ├── replan.py              # Re-planning on failure
+│   ├── db/                    # SQLite: state.db (10 tables), logs.db (3 tables)
+│   ├── scoring/               # ActionScorer — 4-dimension: execution, outcome, safety, efficiency
+│   ├── security/              # 6 security layers
+│   ├── planning/              # prompts.py, parser.py, template_planner.py, tool_filter.py
+│   └── cognition/             # LLM providers (Anthropic, OpenAI, Gemini, Ollama) + LLMPlanner
 ├── extensions/                # Plugin system (manifest + sandbox)
-└── tests/                     # 125 unit + 17 integration tests
+└── tests/                     # 540 tests (unit + integration)
 ```
 
 ## HERRAMIENTAS MCP (96 tools)
@@ -108,7 +140,33 @@ marlow/
 
 **CDP (15):** cdp_discover, cdp_connect, cdp_disconnect, cdp_list_connections, cdp_send, cdp_click, cdp_type_text, cdp_key_combo, cdp_screenshot, cdp_evaluate, cdp_get_dom, cdp_click_selector, cdp_ensure, cdp_restart_confirmed, cdp_get_knowledge_base
 
-## ARQUITECTURA CLAVE
+## ARQUITECTURA DEL KERNEL
+
+### AutonomousMarlow (integration.py)
+Orchestration layer que conecta GoalEngine + SmartExecutor + real Marlow tools.
+- **Pre-action:** window snapshots, focus management (with dialog skip)
+- **Execution:** SmartExecutor async dispatch with timeout
+- **Post-action:** dialog detection (#32770 class), window change tracking, active window verification
+- **Dialog classification:** DialogType enum (9 types: ERROR, WARNING, CONFIRMATION, SAVE, OPEN, FILE_EXISTS, PATH_ERROR, INFORMATION, UNKNOWN)
+- **App awareness:** AppAwareness detects Electron vs native, recommends CDP/UIA
+- **Window tracking:** WindowTracker records snapshots, detects appeared/disappeared/focus changes
+
+### Kernel HSM (kernel.py)
+8-state decision loop: IDLE → PLANNING → VALIDATING → CONFIRMING → EXECUTING → VERIFYING → REPLANNING → COMPLETE
+
+### GoalEngine (goal_engine.py)
+13-state goal lifecycle. Receives plans from TemplatePlanner (no LLM) or LLMPlanner (4 providers). Validates, confirms, executes step-by-step, verifies success, replans on failure.
+
+### LLM Providers (cognition/)
+4 providers: Anthropic, OpenAI, Gemini, Ollama. LLMPlanner generates plans from natural language goals. ToolFilter provides relevant tool subsets to reduce prompt size.
+
+### ActionScorer (scoring/)
+4-dimension scoring: execution (did it run?), outcome (did it work?), safety (any violations?), efficiency (time/resources). Weighted composite score.
+
+### Security (security/)
+6 layers: input validation, tool authorization, rate limiting, output sanitization, audit logging, kill switch.
+
+## ARQUITECTURA CLAVE (MCP Server)
 
 ### Focus Guard (focus.py)
 `server.py:call_tool()` wraps ALL tools in try/finally save/restore foco via `GetForegroundWindow()` + `SetForegroundWindow()` + `AttachThreadInput`. `focus_window` y `restore_user_focus` excluidos del auto-restore.
@@ -139,32 +197,21 @@ Scans UIA tree for buttons/text, classifies: not_responding > error > save > upd
 ### Set-of-Mark (som.py)
 Walks UIA tree (depth 8), collects interactive elements with valid bboxes, draws numbered [1],[2],[3]... labels on screenshot using PIL alpha compositing. Returns annotated PNG + element map. `som_click(index)` clicks element center by number. Max 100 elements. Orange labels with semi-transparent background.
 
-### Cascade Recovery (cascade_recovery.py)
-5-step pipeline: (1) wait 1.5s + retry UIA, (2) check blocking dialogs, (3) wide fuzzy threshold 0.4, (4) OCR search, (5) screenshot for LLM. Timeout 5-30s. Enabled via `config.automation.cascade_recovery=True`.
-
-### Error Journal (error_journal.py)
-Records failures/successes per tool+app. `get_best_method()` returns highest success_count method. Integrated in mouse, keyboard, escalation. Max 500 entries with smart eviction.
-
-### Agent Screen Only (background.py)
-`agent_screen_only=True` (default): auto-setup dual monitor, redirect new windows to agent screen, block moves to user screen. `open_application()` post-hook moves new windows.
-
-### App Framework Detector (app_detector.py)
-Analyzes DLLs via `psutil.Process.memory_maps()`. Detects 8 frameworks (electron, cef, chromium, edge_webview2, winui3, uwp, wpf, winforms). Cached per PID. UIA tree depth auto-adjusted.
-
 ### Other Subsystems
-- **Workflows:** record/replay tool sequences, meta-tools excluded, safety check per step, delay 100ms-5s
+- **Cascade Recovery:** 5-step pipeline, timeout 5-30s, `config.automation.cascade_recovery=True`
+- **Error Journal:** failures/successes per tool+app, `get_best_method()`, max 500 entries
+- **Agent Screen Only:** dual monitor redirect, block moves to user screen
+- **App Framework Detector:** DLL analysis via psutil, 8 frameworks, cached per PID
+- **Workflows:** record/replay tool sequences, safety check per step
 - **Visual Diff:** PIL ImageChops pixel comparison, threshold 30, 5min expiry
 - **Memory:** JSON in `~/.marlow/memory/`, categories: general/preferences/projects/tasks
 - **Clipboard History:** daemon polls 1s, max 100 entries
-- **Scraper:** httpx + BS4, localhost/private IPs blocked, honest User-Agent
+- **Scraper:** httpx + BS4, localhost/private IPs blocked
 - **Extensions:** pip packages with manifest, sandboxed permissions
 - **Watcher:** watchdog observer, max 500 events, filterable
 - **Scheduler:** daemon threads, interval min 10s, max 200 history, safety-checked
-- **TTS:** edge-tts (neural) → pyttsx3 (SAPI5 offline), MCI API playback, auto language detect
-- **Voice Hotkey:** Ctrl+Shift+M record, chunk-based VAD (RMS 500), max 30s
-- **Voice Overlay:** tkinter topmost 300x200px, color-coded status
-- **Adaptive:** PatternDetector sliding window 2-10, 3+ repetitions trigger suggestion
-- **Setup Wizard:** 8 diagnostic steps, marker at `~/.marlow/setup_complete.json`
+- **TTS:** edge-tts (Jorge) → Piper offline → pyttsx3 (SAPI5), MCI API playback, auto language detect
+- **Voice Hotkey:** Ctrl+Shift+M record, AdaptiveVAD (Silero → RMS), max 30s
 - **Smart Wait:** 4 polling tools, timeout 1-120s, interval 0.5-10s
 
 ## SEGURIDAD (NO NEGOCIABLE)
@@ -203,24 +250,32 @@ Analyzes DLLs via `psutil.Process.memory_maps()`. Detects 8 frameworks (electron
 
 | Componente | Implementado | Futuro |
 |------------|-------------|--------|
-| Activacion | Ctrl+Shift+M hotkey | Wake word "Hey Marlow" (Fase 6) |
-| ASR | faster-whisper CPU int8 | Moonshine streaming (F6), GPU auto (F5) |
-| TTS | edge-tts → pyttsx3 | Piper TTS offline (Fase 5) |
-| VAD | RMS threshold 500 | Silero VAD neuronal (Fase 5) |
+| Activacion | Ctrl+Shift+M hotkey | Wake word "Hey Marlow" (OpenWakeWord) |
+| ASR | faster-whisper (GPU auto-detect) | Moonshine v2 streaming |
+| TTS | edge-tts (Jorge) → Piper offline → pyttsx3 | — |
+| VAD | AdaptiveVAD: Silero neuronal → RMS fallback | TEN VAD |
+| GPU | Auto-detect via gpu_detect.py | CUDA torch for RTX 4080 SUPER |
 
-## ROADMAP RESUMIDO
-
-Ver **ROADMAP.md** para detalle completo.
+## DEVELOPMENT ROADMAP (Master Plan v7)
 
 | Fase | Nombre | Estado |
 |------|--------|--------|
-| 1.1-1.5 | Vision Enhancement (OCR, fuzzy search, framework detect, auto depth, COM invisible) | COMPLETA |
-| 2.1-2.4 | App Intelligence (CDP, UIA events, dialogs, cascade, auto-restart) | COMPLETA |
-| 3.1-3.4 | Understanding (Set-of-Mark, context awareness, knowledge base, teach mode) | 3.1 COMPLETA |
-| 4.1-4.5 | Shadow Mode (virtual desktops, SendMessage, PrintWindow, toast, systray) | PENDIENTE |
-| 5.1-5.4 | Voice Core (Silero VAD, Piper TTS, GPU auto, audio calibration) | PENDIENTE |
-| 6.1-6.5 | Natural Conversation (Moonshine, wake word, barge-in, multi-turn) | PENDIENTE |
-| 7.1-7.6 | Advanced (sensor fusion, OmniParser, YAMNet, NVDA, meeting transcription) | PENDIENTE |
+| Phase 1 | Ver Mejor (Perception): WindowTracker, DialogType, AppAwareness | COMPLETA |
+| Phase 2 | Escuchar y Hablar: Silero VAD, Piper TTS, GPU detect, voz Jorge | COMPLETA |
+| Phase 3 | Reaccionar (Game AI-A: PreActionScorer, InterruptManager, AdaptiveWaits) | NEXT |
+| Phase 4 | EventBus (janus, typed events, 6 priority levels) | PENDIENTE |
+| Phase 5 | Planificar Mejor (GOAP, DesktopWeather, Selector nodes) | PENDIENTE |
+| Phase 6 | Seguridad (OWASP defenses, sandboxing, dual LLM review) | PENDIENTE |
+| Phase 7 | Aprendizaje (Blackboard, Shadow Mode, Training Node integration) | PENDIENTE |
+| Phase 8 | AI Vision (OmniParser, VLM, CDP for Electron, Sensor Fusion) | PENDIENTE |
+| Phase D | Training Node (running in parallel on Lenovo IdeaPad) | EN PROGRESO |
+
+### Kernel Tiers Completados
+- **Tier 0:** Types, config, constants, tool_wrapper
+- **Tier 1:** SmartExecutor (async/sync dispatch, timeout, ToolResult)
+- **Tier 2:** Kernel HSM (8-state decision loop)
+- **Tier 3:** GoalEngine (13-state lifecycle), PlanValidator, SuccessChecker, Replan
+- **Tier 6:** LLM Interface (4 providers: Anthropic, OpenAI, Gemini, Ollama)
 
 ## KEY DECISIONS
 
@@ -228,14 +283,21 @@ Ver **ROADMAP.md** para detalle completo.
 - **Shadow Mode:** OFF by default (explicit activation)
 - **Spotify:** Web API, not CDP (official public API)
 - **GPU:** Auto-detect, transparent, graceful CPU fallback, optional deps only
+- **TTS voice:** es-MX-JorgeNeural (Jorge, male Mexican Spanish)
+- **Post-task:** Marlow does NOT close apps after completing tasks (Jose reviews first)
 
-## ESTILO DE CODIGO
+## CONVENTIONS
 
-- Python 3.10+, type hints, docstrings EN con comentario ES (`/ Comentario`)
+- Python 3.10+, type hints, docstrings EN con comentario ES
 - async/await para tools MCP, blocking ops en `run_in_executor`
 - Error handling retorna dicts, nunca crashes. Cada tool: `"success"` o `"error"` key
 - `ctypes.windll.user32` para Win32 API directa
 - UIAWrapper (backend "uia"): NO tiene `wrapper_object()`, `move_window()`, ni `set_edit_text()`
+- Tests: `python -m pytest tests/ -x -q` (540 passing)
+- Git: always remove Co-authored-by and "Claude" references
+- Git user: jarb02@users.noreply.github.com
+- Project path: `E:\Project Marlow\marlow-final`
+- PowerShell for live tests
 
 ## BUGS RESUELTOS
 
