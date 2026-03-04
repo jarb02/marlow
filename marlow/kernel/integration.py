@@ -28,6 +28,7 @@ from .success_checker import SuccessChecker
 from .types import ToolResult
 from .adaptive_waits import AdaptiveWaits
 from .app_awareness import AppAwareness
+from .desktop_weather import DesktopWeather
 from .event_bus import EventBus
 from .events import (
     GoalStarted, GoalCompleted, GoalFailed,
@@ -36,6 +37,7 @@ from .events import (
     InterruptReceived,
 )
 from .interrupt_manager import InterruptManager
+from .planning.goap import GOAPPlanner
 from .scoring.pre_scorer import PreActionScorer
 from .window_tracker import WindowTracker
 
@@ -183,12 +185,24 @@ class AutonomousMarlow:
         self._pre_scorer = PreActionScorer()
         self._interrupt_manager = InterruptManager()
         self._event_bus = EventBus()
+        self._goap = GOAPPlanner()
+        self._weather = DesktopWeather()
         self._ready = False
 
     @property
     def event_bus(self) -> EventBus:
         """Access the kernel event bus for pub/sub."""
         return self._event_bus
+
+    @property
+    def desktop_weather(self) -> DesktopWeather:
+        """Access the desktop weather tracker."""
+        return self._weather
+
+    @property
+    def goap_planner(self) -> GOAPPlanner:
+        """Access the GOAP local planner."""
+        return self._goap
 
     def setup(self) -> dict:
         """Initialize all components and register real tools.
@@ -284,12 +298,35 @@ class AutonomousMarlow:
         except Exception:
             pass
 
-        # Try template planner first (no LLM needed)
-        plan = self._planner.match(goal_text, context)
+        # Tier 1: TemplatePlanner (trivial, regex)
+        plan = self._planner.match(goal_text, context) if self._planner else None
+
+        # Tier 2: GOAP (medium, A* search, no LLM)
+        if plan is None:
+            goap_actions = self._goap.plan_from_goal_text(goal_text)
+            if goap_actions:
+                steps = [
+                    PlanStep(
+                        id=f"goap_{i}",
+                        tool_name=action.tool_name,
+                        params=dict(action.params_template),
+                        description=action.description,
+                    )
+                    for i, action in enumerate(goap_actions)
+                ]
+                plan = Plan(
+                    goal_id="", goal_text=goal_text, steps=steps,
+                )
+                logger.info(
+                    "GOAP planner: %d-step plan for '%s' (%s)",
+                    len(steps), goal_text,
+                    ", ".join(s.tool_name for s in steps),
+                )
 
         if plan:
+            tier = "Template" if plan.steps and plan.steps[0].id.startswith("goap_") is False else "GOAP"
             logger.info(
-                f"Template match: {len(plan.steps)} steps "
+                f"{tier} match: {len(plan.steps)} steps "
                 f"({', '.join(s.tool_name for s in plan.steps)})",
             )
             result = await self._engine.execute_goal(
@@ -298,20 +335,20 @@ class AutonomousMarlow:
                 pre_built_plan=plan,
             )
         elif self._engine._plan_generator:
-            # No template match — use LLM planner
-            logger.info("No template match; using LLM planner")
+            # Tier 3: LLM planner (complex, API call)
+            logger.info("No template/GOAP match; using LLM planner")
             result = await self._engine.execute_goal(
                 goal_text=goal_text,
                 context=context,
             )
         else:
-            # No template match and no LLM planner
-            logger.warning(f"No template match for: {goal_text}")
+            # No planner available
+            logger.warning(f"No planner match for: {goal_text}")
             result = GoalResult(
                 goal_id="no_plan",
                 goal_text=goal_text,
                 success=False,
-                errors=["No template match and no LLM planner configured"],
+                errors=["No template, GOAP, or LLM planner could handle this goal"],
             )
 
         logger.info(
@@ -989,6 +1026,7 @@ class AutonomousMarlow:
             if result.success and result.data:
                 windows = result.data if isinstance(result.data, list) else []
                 self._window_tracker.record_snapshot(windows)
+                self._weather.update_window_count(len(windows))
         except Exception as e:
             logger.debug(f"Window snapshot failed: {e}")
 
@@ -1003,6 +1041,12 @@ class AutonomousMarlow:
         2. Post-launch delay after ``open_application``
         3. Post-action check for unexpected dialogs (Tier 7A)
         """
+        # Pre-execution: check desktop weather
+        _weather_report = self._weather.get_report()
+        if _weather_report.should_pause:
+            logger.warning("Desktop in TORMENTA — pausing 2s before %s", tool_name)
+            await asyncio.sleep(2.0)
+
         # Pre-execution: snapshot window state before mutating tools
         if tool_name not in self._READ_ONLY_TOOLS:
             await self._take_window_snapshot()
@@ -1055,6 +1099,7 @@ class AutonomousMarlow:
                     tool_name=tool_name, source="integration",
                     error=str(result.error) if result.error else "",
                 ))
+                self._weather.record_error()
         except Exception:
             pass
 
@@ -1099,6 +1144,7 @@ class AutonomousMarlow:
                 interrupt.priority.name, interrupt.description,
             )
             # Publish DialogDetected event
+            self._weather.record_dialog()
             try:
                 await self._event_bus.publish(DialogDetected(
                     dialog_title=post_check.get("dialog_title", ""),
@@ -1116,6 +1162,7 @@ class AutonomousMarlow:
             await self._take_window_snapshot()
             changes = self._window_tracker.detect_changes()
             for change in changes:
+                self._weather.record_window_change()
                 if change.change_type == "appeared":
                     interrupt = self._interrupt_manager.classify_event(
                         "window_appeared", title=change.window_title,
