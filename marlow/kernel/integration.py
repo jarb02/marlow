@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from enum import Enum
 from typing import Optional
 
 from .executor import SmartExecutor
@@ -24,6 +25,8 @@ from .planning.template_planner import TemplatePlanner
 from .planning.tool_filter import ToolFilter
 from .success_checker import SuccessChecker
 from .types import ToolResult
+from .app_awareness import AppAwareness
+from .window_tracker import WindowTracker
 
 logger = logging.getLogger("marlow.integration")
 
@@ -48,6 +51,68 @@ _DIALOG_TITLE_HINTS = (
 _NOT_DIALOG_HINTS = (
     "file explorer", "explorer", "windows explorer",
 )
+
+
+class DialogType(Enum):
+    ERROR = "error"
+    WARNING = "warning"
+    CONFIRMATION = "confirmation"
+    SAVE = "save"
+    OPEN = "open"
+    FILE_EXISTS = "file_exists"
+    PATH_ERROR = "path_error"
+    INFORMATION = "information"
+    UNKNOWN = "unknown"
+
+
+def classify_dialog(title: str, message: str, buttons: list) -> DialogType:
+    """Classify a dialog based on its title, message, and buttons."""
+    title_lower = title.lower()
+    msg_lower = message.lower()
+
+    # File exists / overwrite
+    if any(w in msg_lower for w in (
+        "already exists", "replace", "overwrite", "reemplazar", "ya existe",
+    )):
+        return DialogType.FILE_EXISTS
+
+    # Path error
+    if any(w in msg_lower for w in (
+        "path does not exist", "not found", "cannot find",
+        "no existe", "no se encuentra", "access denied", "acceso denegado",
+    )):
+        return DialogType.PATH_ERROR
+
+    # Save dialog
+    if any(w in title_lower for w in ("save as", "save file", "guardar como")):
+        return DialogType.SAVE
+
+    # Open dialog
+    if any(w in title_lower for w in ("open file", "open", "abrir")):
+        return DialogType.OPEN
+
+    # Error
+    if "error" in title_lower or any(
+        w in msg_lower for w in ("error", "failed", "fallo")
+    ):
+        return DialogType.ERROR
+
+    # Warning
+    if any(w in title_lower for w in ("warning", "advertencia")):
+        return DialogType.WARNING
+
+    # Confirmation
+    if any(w in msg_lower for w in (
+        "are you sure", "do you want", "would you like",
+        "desea", "esta seguro", "confirmar",
+    )):
+        return DialogType.CONFIRMATION
+
+    # Information
+    if any(w in title_lower for w in ("information", "info", "informacion")):
+        return DialogType.INFORMATION
+
+    return DialogType.UNKNOWN
 
 
 async def _safe_hotkey(keyboard_mod, **kw):
@@ -101,6 +166,8 @@ class AutonomousMarlow:
         self._engine: Optional[GoalEngine] = None
         self._planner: Optional[TemplatePlanner] = None
         self._tool_filter: Optional[ToolFilter] = None
+        self._window_tracker = WindowTracker()
+        self._app_awareness = AppAwareness()
         self._ready = False
 
     def setup(self) -> dict:
@@ -867,6 +934,16 @@ class AutonomousMarlow:
 
     # ── Orchestration ──
 
+    async def _take_window_snapshot(self):
+        """Record current window state via list_windows tool."""
+        try:
+            result = await self._executor.execute("list_windows", {})
+            if result.success and result.data:
+                windows = result.data if isinstance(result.data, list) else []
+                self._window_tracker.record_snapshot(windows)
+        except Exception as e:
+            logger.debug(f"Window snapshot failed: {e}")
+
     async def _execute_tool(
         self, tool_name: str, params: dict,
     ) -> ToolResult:
@@ -878,6 +955,10 @@ class AutonomousMarlow:
         2. Post-launch delay after ``open_application``
         3. Post-action check for unexpected dialogs (Tier 7A)
         """
+        # Pre-execution: snapshot window state before mutating tools
+        if tool_name not in self._READ_ONLY_TOOLS:
+            await self._take_window_snapshot()
+
         # Pre-execution: focus target window for input tools
         if tool_name in _INPUT_TOOLS:
             await self._ensure_focus(tool_name, params)
@@ -895,6 +976,15 @@ class AutonomousMarlow:
             )
             await asyncio.sleep(_APP_LAUNCH_DELAY)
 
+            # Detect framework of newly opened app
+            app_name = params.get("app_name") or params.get("name") or ""
+            if app_name:
+                framework = await self._app_awareness.detect_and_register(
+                    self._executor, app_name,
+                )
+                if framework:
+                    logger.info("Detected %s framework: %s", app_name, framework)
+
         # Post-action: active verification (Tier 7A)
         post_check = await self._post_action_check(tool_name, params, result)
         if post_check.get("error_dialog"):
@@ -905,6 +995,27 @@ class AutonomousMarlow:
             handled = await self._handle_unexpected_dialog(post_check)
             if handled.get("retry"):
                 result = await self._executor.execute(tool_name, params)
+
+        # Post-action: snapshot and detect window changes
+        if tool_name not in self._READ_ONLY_TOOLS:
+            await self._take_window_snapshot()
+            changes = self._window_tracker.detect_changes()
+            for change in changes:
+                if change.change_type == "appeared":
+                    logger.info(
+                        "Window appeared after %s: %s",
+                        tool_name, change.window_title,
+                    )
+                elif change.change_type == "disappeared":
+                    logger.warning(
+                        "Window disappeared after %s: %s",
+                        tool_name, change.window_title,
+                    )
+                elif change.change_type == "focus_lost":
+                    logger.warning(
+                        "Focus lost from %s after %s",
+                        change.window_title, tool_name,
+                    )
 
         return result
 
@@ -955,6 +1066,14 @@ class AutonomousMarlow:
         if not target:
             return
 
+        self._window_tracker.set_expected_app(target)
+
+        method = self._app_awareness.recommend_method(target)
+        if method == "cdp":
+            logger.info(
+                "Electron app detected (%s) — CDP recommended", target,
+            )
+
         try:
             # Attempt 1: try the value as-is (works for real titles)
             focus_result = await self._executor.execute(
@@ -989,6 +1108,12 @@ class AutonomousMarlow:
             logger.warning(
                 "Could not find window for '%s'", target,
             )
+
+            # Verify expected app is active after focus attempts
+            if not self._window_tracker.is_expected_app_active():
+                logger.warning(
+                    "Expected %s to be active but it's not", target,
+                )
         except Exception as e:
             logger.warning("Focus attempt failed: %s", e)
 
@@ -1085,67 +1210,76 @@ class AutonomousMarlow:
         except Exception:
             pass
 
+        # Check 2: For critical actions, track active window title
+        _VERIFY_WITH_TITLE = {"type_text", "hotkey", "press_key", "click"}
+        if tool_name in _VERIFY_WITH_TITLE and not check.get("error_dialog"):
+            try:
+                current_title = self._window_tracker.get_active_window_title()
+                if current_title:
+                    check["active_window"] = current_title
+            except Exception:
+                pass
+
         return check
 
     async def _handle_unexpected_dialog(self, dialog_info: dict) -> dict:
         """Handle an unexpected dialog that appeared after an action.
 
-        Returns ``{"retry": bool, "action_taken": str}``.
+        Uses ``classify_dialog`` to determine dialog type and respond
+        appropriately.  Returns ``{"retry": bool, "action_taken": str,
+        "dialog_type": str}``.
         """
-        title = dialog_info.get("dialog_title", "").lower()
-        message = dialog_info.get("dialog_message", "").lower()
+        title = dialog_info.get("dialog_title", "")
+        message = dialog_info.get("dialog_message", "")
         buttons = dialog_info.get("dialog_buttons", [])
 
-        # Case 1: "File already exists, replace?" → Accept
-        if any(
-            w in message
-            for w in ("already exists", "replace", "overwrite", "reemplazar")
-        ):
+        dtype = classify_dialog(title, message, buttons)
+        logger.info("Dialog classified as %s: %s", dtype.value, title)
+
+        if dtype == DialogType.FILE_EXISTS:
             logger.info("Handling 'file exists' dialog — clicking Yes/Replace")
             try:
                 await self._executor.execute(
                     "handle_dialog", {"action": "accept"},
                 )
-                return {"retry": False, "action_taken": "accepted_replace"}
+                return {"retry": False, "action_taken": "accepted_replace", "dialog_type": dtype.value}
             except Exception:
                 await self._executor.execute(
                     "press_key", {"key": "enter"},
                 )
-                return {"retry": False, "action_taken": "pressed_enter"}
+                return {"retry": False, "action_taken": "pressed_enter", "dialog_type": dtype.value}
 
-        # Case 2: "Path does not exist" → Dismiss and let replan handle it
-        if any(
-            w in message
-            for w in ("path does not exist", "not found", "cannot find", "no existe")
-        ):
+        elif dtype == DialogType.PATH_ERROR:
             logger.warning("Path error dialog: %s", message)
             await self._executor.execute("press_key", {"key": "enter"})
-            return {"retry": False, "action_taken": "dismissed_path_error"}
+            return {"retry": False, "action_taken": "dismissed_path_error", "dialog_type": dtype.value}
 
-        # Case 3: Error / warning dialog → Dismiss
-        if any(w in title for w in ("error", "warning", "alert")):
-            logger.warning("Error dialog: %s — %s", title, message)
+        elif dtype in (DialogType.ERROR, DialogType.WARNING):
+            logger.warning("%s dialog: %s — %s", dtype.value, title, message)
             await self._executor.execute("press_key", {"key": "enter"})
-            return {"retry": False, "action_taken": "dismissed_error"}
+            return {"retry": False, "action_taken": "dismissed_error", "dialog_type": dtype.value}
 
-        # Case 4: Confirmation dialog → Accept (safe default)
-        if any(
-            w in message
-            for w in (
-                "are you sure", "do you want", "would you like",
-                "¿desea", "¿está seguro",
-            )
-        ):
+        elif dtype == DialogType.CONFIRMATION:
             logger.info("Confirmation dialog: %s — accepting", message[:80])
             await self._executor.execute("press_key", {"key": "enter"})
-            return {"retry": False, "action_taken": "accepted_confirmation"}
+            return {"retry": False, "action_taken": "accepted_confirmation", "dialog_type": dtype.value}
 
-        # Case 5: Unknown dialog → Try to dismiss with Escape
-        logger.warning(
-            "Unknown dialog: %s — %s. Pressing Escape.", title, message[:80],
-        )
-        await self._executor.execute("press_key", {"key": "escape"})
-        return {"retry": False, "action_taken": "escaped_unknown"}
+        elif dtype == DialogType.INFORMATION:
+            logger.info("Info dialog: %s — dismissing", message[:80])
+            await self._executor.execute("press_key", {"key": "enter"})
+            return {"retry": False, "action_taken": "dismissed_info", "dialog_type": dtype.value}
+
+        elif dtype in (DialogType.SAVE, DialogType.OPEN):
+            # Save/Open dialogs are expected — don't dismiss them
+            logger.info("%s dialog detected — not dismissing (expected)", dtype.value)
+            return {"retry": False, "action_taken": "none_expected_dialog", "dialog_type": dtype.value}
+
+        else:
+            logger.warning(
+                "Unknown dialog: %s — %s. Pressing Escape.", title, message[:80],
+            )
+            await self._executor.execute("press_key", {"key": "escape"})
+            return {"retry": False, "action_taken": "escaped_unknown", "dialog_type": dtype.value}
 
     # ── Callbacks ──
 
