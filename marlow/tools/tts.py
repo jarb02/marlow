@@ -1,17 +1,19 @@
 """
 Marlow TTS Tools
 
-Text-to-speech with two engines:
+Text-to-speech with three engines:
 1. Primary: edge-tts — Microsoft Edge neural voices (high quality,
    async, no Windows voice packs needed). Requires internet.
-2. Fallback: pyttsx3 — Windows SAPI5 (offline, lower quality).
+2. Fallback: Piper TTS — offline neural voices (high quality, no internet).
+3. Last resort: pyttsx3 — Windows SAPI5 (offline, lower quality).
 
-Audio playback via Windows MCI API (ctypes) — plays MP3 natively,
+Audio playback via Windows MCI API (ctypes) — plays MP3/WAV natively,
 zero external deps for playback.
 
-/ Text-to-speech con dos motores:
+/ Text-to-speech con tres motores:
 / 1. Primario: edge-tts — voces neurales de Microsoft Edge (alta calidad).
-/ 2. Fallback: pyttsx3 — SAPI5 de Windows (offline, menor calidad).
+/ 2. Fallback: Piper TTS — voces neurales offline (alta calidad).
+/ 3. Ultimo recurso: pyttsx3 — SAPI5 de Windows (offline, menor calidad).
 """
 
 import os
@@ -42,7 +44,7 @@ _SPANISH_WORDS = {
 
 # ── Edge-TTS voice mapping ──
 _EDGE_VOICES = {
-    "es": "es-MX-DaliaNeural",
+    "es": "es-MX-JorgeNeural",
     "en": "en-US-JennyNeural",
 }
 
@@ -232,7 +234,76 @@ async def _speak_edge_tts(
 
 
 # ─────────────────────────────────────────────────────────────
-# pyttsx3 Engine (fallback — offline SAPI5)
+# Piper TTS Engine (fallback 2 — offline neural voices)
+# ─────────────────────────────────────────────────────────────
+
+_piper_engine = None
+
+
+def _get_piper():
+    """Lazy-init Piper TTS engine."""
+    global _piper_engine
+    if _piper_engine is None:
+        try:
+            from marlow.core.piper_tts import PiperTTSEngine
+            _piper_engine = PiperTTSEngine()
+        except Exception as e:
+            logger.debug("Piper TTS init failed: %s", e)
+            # Return a stub so we don't retry
+            class _Stub:
+                available = False
+            _piper_engine = _Stub()
+    return _piper_engine
+
+
+async def _speak_piper(
+    text: str,
+    language: str,
+    rate: int,
+) -> dict:
+    """Speak via Piper TTS (offline neural voices).
+
+    / Habla via Piper TTS (voces neurales offline).
+    """
+    piper = _get_piper()
+    if not piper.available:
+        return {"error": "Piper TTS not available", "_fallback": True}
+
+    def _synth():
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        output_path = str(_TTS_DIR / f"tts_piper_{ts}.wav")
+        wav_path = piper.synthesize(text, language=language, output_path=output_path)
+        return wav_path
+
+    try:
+        loop = asyncio.get_running_loop()
+        wav_path = await loop.run_in_executor(None, _synth)
+    except Exception as e:
+        logger.warning("Piper TTS synthesis failed: %s", e)
+        return {"error": f"Piper synthesis failed: {e}", "_fallback": True}
+
+    if not wav_path:
+        return {"error": "Piper produced no audio", "_fallback": True}
+
+    # Play via MCI
+    loop = asyncio.get_running_loop()
+    played = await loop.run_in_executor(None, _play_audio_mci, wav_path)
+
+    if not played:
+        return {"error": "MCI playback of Piper audio failed", "_fallback": True}
+
+    return {
+        "success": True,
+        "engine": "piper",
+        "text": text,
+        "language": language,
+        "voice": piper.list_voices().get(language[:2], "unknown"),
+        "char_count": len(text),
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# pyttsx3 Engine (fallback 3 — offline SAPI5, last resort)
 # ─────────────────────────────────────────────────────────────
 
 def _select_sapi5_voice(engine: object, language: str, voice_name: Optional[str] = None):
@@ -334,7 +405,8 @@ async def speak(
     Speak text aloud using text-to-speech.
 
     Primary engine: edge-tts (Microsoft neural voices, high quality).
-    Fallback: pyttsx3 SAPI5 (offline, if edge-tts fails / no internet).
+    Fallback 2: Piper TTS (offline neural, if edge-tts fails / no internet).
+    Fallback 3: pyttsx3 SAPI5 (offline, last resort).
 
     Args:
         text: Text to speak aloud.
@@ -357,13 +429,22 @@ async def speak(
     # Try edge-tts first (high quality neural voices)
     result = await _speak_edge_tts(text, detected_lang, voice, rate)
 
-    # Fallback to pyttsx3 if edge-tts failed
+    # Fallback 2: Piper TTS (offline neural)
     if result.get("_fallback") or "error" in result:
         edge_error = result.get("error", "unknown")
-        logger.info(f"edge-tts failed ({edge_error}), falling back to pyttsx3")
+        logger.info("edge-tts failed (%s), trying Piper TTS", edge_error)
+        result = await _speak_piper(text, detected_lang, rate)
+        if "success" in result:
+            result["note"] = f"Used Piper offline (edge-tts error: {edge_error})"
+            return result
+
+    # Fallback 3: pyttsx3 SAPI5 (last resort)
+    if result.get("_fallback") or "error" in result:
+        piper_error = result.get("error", "unknown")
+        logger.info("Piper failed (%s), falling back to pyttsx3", piper_error)
         result = await _speak_pyttsx3(text, detected_lang, voice, rate)
         if "success" in result:
-            result["note"] = f"Used offline fallback (edge-tts error: {edge_error})"
+            result["note"] = f"Used pyttsx3 last resort (Piper: {piper_error})"
 
     return result
 

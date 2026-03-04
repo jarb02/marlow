@@ -25,6 +25,8 @@ import winsound
 from typing import Optional, Callable
 from pathlib import Path
 
+from marlow.core.vad import AdaptiveVAD
+
 logger = logging.getLogger("marlow.core.voice_hotkey")
 
 # ── Module state ──
@@ -43,9 +45,12 @@ _saved_hwnd: Optional[int] = None  # foreground window when hotkey pressed
 # ── Recording config ──
 CHUNK_DURATION = 0.5        # seconds per chunk
 SAMPLE_RATE = 16000          # 16kHz mono (optimal for whisper)
-SILENCE_RMS_THRESHOLD = 500  # RMS below this = silence
+SILENCE_RMS_THRESHOLD = 500  # RMS below this = silence (fallback only)
 SILENCE_CHUNKS_TO_STOP = 4   # 2 seconds of silence after speech
 MAX_RECORDING_SECONDS = 30   # absolute max
+
+# ── VAD instance (Silero primary, RMS fallback) ──
+_vad = AdaptiveVAD(silero_threshold=0.5, rms_threshold=SILENCE_RMS_THRESHOLD)
 
 
 def start_voice_hotkey(
@@ -268,15 +273,17 @@ def _record_and_transcribe():
 
 
 def _record_with_vad():
-    """
-    Record audio in 0.5s chunks with voice activity detection.
-    Stops after 2s of continuous silence AFTER speech is detected.
+    """Record audio in 0.5s chunks with voice activity detection.
+
+    Uses AdaptiveVAD (Silero primary, RMS fallback) for speech detection.
+    Stops after sustained silence AFTER speech is detected.
     Max 30 seconds total.
 
     Returns:
         Concatenated numpy array of int16 samples, or None on error.
 
     / Graba audio en chunks de 0.5s con deteccion de actividad de voz.
+    / Usa AdaptiveVAD (Silero primario, RMS fallback).
     """
     try:
         import sounddevice as sd
@@ -288,9 +295,11 @@ def _record_with_vad():
     chunk_samples = int(CHUNK_DURATION * SAMPLE_RATE)
     max_chunks = int(MAX_RECORDING_SECONDS / CHUNK_DURATION)
 
+    # Reset VAD state for this recording session
+    _vad.reset()
+    logger.debug("Recording with VAD backend: %s", _vad.backend)
+
     chunks = []
-    has_speech = False
-    silence_count = 0
 
     for i in range(max_chunks):
         # Check kill switch between chunks
@@ -312,22 +321,24 @@ def _record_with_vad():
                 dtype="int16",
             )
             sd.wait()
-            chunks.append(chunk.flatten())
+            chunk_flat = chunk.flatten()
+            chunks.append(chunk_flat)
         except Exception as e:
             logger.error(f"Recording chunk error: {e}")
             break
 
-        # Compute RMS for this chunk
-        rms = _compute_rms_from_array(chunks[-1])
+        # Process chunk through AdaptiveVAD
+        # Convert int16 to float32 for Silero compatibility
+        chunk_f32 = chunk_flat.astype(np.float32) / 32768.0
+        result = _vad.process_chunk(chunk_f32)
 
-        if rms >= SILENCE_RMS_THRESHOLD:
-            has_speech = True
-            silence_count = 0
-        elif has_speech:
-            silence_count += 1
-            if silence_count >= SILENCE_CHUNKS_TO_STOP:
-                logger.debug(f"Silence detected after speech, stopping (chunk {i+1})")
-                break
+        # Check if speech ended (sustained silence after speech)
+        if _vad.is_end_of_speech():
+            logger.debug(
+                "End of speech detected by %s at chunk %d",
+                _vad.backend, i + 1,
+            )
+            break
 
     if not chunks:
         return None
