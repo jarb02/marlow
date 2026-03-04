@@ -118,12 +118,13 @@ marlow/
 │   │   ├── injection_detector.py  # Prompt injection defense — 21 patterns, spotlighting
 │   │   └── plan_reviewer.py       # Dual safety review — rule-based, blocks critical plans
 │   ├── blackboard.py          # Blackboard — centralized key-value, namespaces, TTL, listeners
+│   ├── plan_granularity.py    # Adaptive granularity — 4 levels based on per-app reliability
 │   ├── desktop_weather.py     # DesktopWeather — ring buffer trends, 4 climate levels
 │   ├── planning/              # prompts.py, parser.py, template_planner.py, tool_filter.py
 │   │   └── goap.py            # GOAP — A* planner, 16 actions, plan_from_goal_text
 │   └── cognition/             # LLM providers (Anthropic, OpenAI, Gemini, Ollama) + LLMPlanner
 ├── extensions/                # Plugin system (manifest + sandbox)
-└── tests/                     # 808 tests (unit + integration)
+└── tests/                     # 830 tests (unit + integration)
 ```
 
 ## HERRAMIENTAS MCP (96 tools)
@@ -278,7 +279,7 @@ Walks UIA tree (depth 8), collects interactive elements with valid bboxes, draws
 | Phase 4 | EventBus (typed events, pub/sub, wildcards, circuit breakers) | COMPLETA |
 | Phase 5 | Planificar Mejor (GOAP, DesktopWeather, 3-tier planning) | COMPLETA |
 | Phase 6 | Seguridad: expanded validation, injection defense, dual safety review | COMPLETA |
-| Phase 7 | Aprendizaje (Blackboard, Shadow Mode, Training Node integration) | PENDIENTE |
+| Phase 7 | Aprendizaje: Blackboard, adaptive plan granularity | COMPLETA |
 | Phase 8 | AI Vision (OmniParser, VLM, CDP for Electron, Sensor Fusion) | PENDIENTE |
 | Phase D | Training Node (running in parallel on Lenovo IdeaPad) | EN PROGRESO |
 

@@ -37,6 +37,8 @@ from .events import (
     InterruptReceived,
 )
 from .interrupt_manager import InterruptManager
+from .blackboard import Blackboard
+from .plan_granularity import PlanGranularityAdapter
 from .planning.goap import GOAPPlanner
 from .scoring.pre_scorer import PreActionScorer
 from .security.plan_reviewer import PlanReviewer
@@ -189,6 +191,9 @@ class AutonomousMarlow:
         self._goap = GOAPPlanner()
         self._weather = DesktopWeather()
         self._plan_reviewer = PlanReviewer()
+        self._granularity = PlanGranularityAdapter()
+        self._blackboard = Blackboard()
+        self._current_gran_config = None
         self._ready = False
 
     @property
@@ -205,6 +210,11 @@ class AutonomousMarlow:
     def goap_planner(self) -> GOAPPlanner:
         """Access the GOAP local planner."""
         return self._goap
+
+    @property
+    def blackboard(self) -> Blackboard:
+        """Access the shared blackboard."""
+        return self._blackboard
 
     def setup(self) -> dict:
         """Initialize all components and register real tools.
@@ -291,6 +301,9 @@ class AutonomousMarlow:
 
         logger.info(f"Goal: {goal_text}")
         _corr_id = goal_text[:50]
+
+        self._blackboard.set("goal.current", goal_text, source="integration")
+        self._blackboard.set("goal.start_time", _time.time(), source="integration")
 
         try:
             await self._event_bus.publish(GoalStarted(
@@ -407,6 +420,13 @@ class AutonomousMarlow:
                 ))
         except Exception:
             pass
+
+        self._blackboard.set("goal.current", "", source="integration")
+        self._blackboard.set(
+            "goal.last_result",
+            result.success if hasattr(result, "success") else False,
+            source="integration",
+        )
 
         return result
 
@@ -1074,6 +1094,16 @@ class AutonomousMarlow:
         2. Post-launch delay after ``open_application``
         3. Post-action check for unexpected dialogs (Tier 7A)
         """
+        # Pre-execution: adaptive granularity based on app reliability
+        app_name = params.get(
+            "expected_app", params.get("name", params.get("app", "")),
+        )
+        self._current_gran_config = self._granularity.get_config(
+            app_name, tool_name,
+        )
+        self._blackboard.set("world.active_tool", tool_name, source="integration")
+        self._blackboard.set("world.active_app", app_name, source="integration")
+
         # Pre-execution: check desktop weather
         _weather_report = self._weather.get_report()
         if _weather_report.should_pause:
@@ -1414,8 +1444,9 @@ class AutonomousMarlow:
         if tool_name in self._READ_ONLY_TOOLS:
             return check
 
-        # Small wait for UI to settle
-        await asyncio.sleep(0.3)
+        # Small wait for UI to settle (adaptive per app reliability)
+        _gc = self._current_gran_config
+        await asyncio.sleep(_gc.add_wait_after_action if _gc else 0.3)
 
         # Use handle_dialog(report) — it scans for real #32770 dialogs
         try:
