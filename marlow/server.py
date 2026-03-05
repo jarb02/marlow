@@ -2614,16 +2614,46 @@ async def _demo_start(args: dict) -> dict:
     recorder = _get_demo_recorder()
     if recorder.is_recording:
         return {"success": False, "error": "Already recording a demonstration"}
+
+    # Start UIA monitor so events accumulate during the demonstration
+    from marlow.core.uia_events import get_manager
+    mgr = get_manager()
+    uia_status = "already_running"
+    if not mgr.is_running():
+        err = mgr.start()
+        if err:
+            return {"success": False, "error": f"Failed to start UIA monitor: {err}"}
+        uia_status = "started"
+
     demo = recorder.start(
         name=args["name"],
         description=args.get("description", ""),
     )
-    return {"success": True, "message": f"Recording started: {demo.name}", "recording": True}
+    return {
+        "success": True,
+        "message": f"Recording started: {demo.name}",
+        "recording": True,
+        "uia_monitor": uia_status,
+    }
 
 
 async def _demo_stop(args: dict) -> dict:
     from marlow.kernel.demonstration import PlanExtractor
+    from marlow.kernel.demo_bridge import DemoBridge
+    from marlow.core.uia_events import get_manager
+
     recorder = _get_demo_recorder()
+    if not recorder.is_recording:
+        return {"success": False, "error": "Not recording"}
+
+    # Drain accumulated UIA events into the recorder before stopping
+    mgr = get_manager()
+    if mgr.is_running():
+        raw_events = mgr.get_events(limit=500)
+        bridge = DemoBridge(recorder)
+        # get_events returns newest-first; reverse for chronological order
+        bridge.process_uia_events(list(reversed(raw_events)))
+
     demo = recorder.stop()
     if demo:
         extractor = PlanExtractor()
@@ -2638,7 +2668,7 @@ async def _demo_stop(args: dict) -> dict:
             "plan": extractor.format_for_review(steps),
             "saved_to": filepath,
         }
-    return {"success": False, "error": "Not recording"}
+    return {"success": False, "error": "Recording stop failed"}
 
 
 async def _demo_status(args: dict) -> dict:
