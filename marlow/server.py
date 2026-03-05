@@ -2600,6 +2600,16 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
 # ─────────────────────────────────────────────────────────────
 
 _demo_recorder = None
+_demo_keyboard_events: list[dict] = []
+_demo_modifiers_pressed: set[str] = set()
+_demo_kb_hook = None
+
+_MODIFIER_NAMES = frozenset({
+    "ctrl", "alt", "shift",
+    "left ctrl", "right ctrl",
+    "left alt", "right alt",
+    "left shift", "right shift",
+})
 
 
 def _get_demo_recorder():
@@ -2610,7 +2620,106 @@ def _get_demo_recorder():
     return _demo_recorder
 
 
+def _demo_on_key(event):
+    """Keyboard hook callback — captures keystrokes during demonstration."""
+    if not _get_demo_recorder().is_recording:
+        return
+
+    import ctypes
+    name = event.name
+    name_lower = name.lower() if name else ""
+    normalized = name_lower.replace("left ", "").replace("right ", "")
+
+    if event.event_type == "down":
+        if name_lower in _MODIFIER_NAMES:
+            _demo_modifiers_pressed.add(normalized)
+        else:
+            # Get foreground window title
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            buf = ctypes.create_unicode_buffer(256)
+            ctypes.windll.user32.GetWindowTextW(hwnd, buf, 256)
+            window_title = buf.value
+
+            if _demo_modifiers_pressed:
+                hotkey = "+".join(sorted(_demo_modifiers_pressed)) + "+" + name_lower
+                _demo_keyboard_events.append({
+                    "key": hotkey,
+                    "time": event.time,
+                    "window": window_title,
+                    "is_hotkey": True,
+                })
+            else:
+                _demo_keyboard_events.append({
+                    "key": name,
+                    "time": event.time,
+                    "window": window_title,
+                    "is_hotkey": False,
+                })
+
+    elif event.event_type == "up":
+        _demo_modifiers_pressed.discard(normalized)
+
+
+def _demo_flush_keyboard(recorder):
+    """Process accumulated keyboard events into the recorder."""
+    text_buf = ""
+    text_window = ""
+
+    for kev in _demo_keyboard_events:
+        key = kev["key"]
+        window = kev["window"]
+        is_hotkey = kev["is_hotkey"]
+
+        if is_hotkey:
+            # Flush text buffer first
+            if text_buf:
+                recorder.add_keyboard_event(text_buf, text_window, is_hotkey=False)
+                text_buf = ""
+                text_window = ""
+            recorder.add_keyboard_event(key, window, is_hotkey=True)
+            continue
+
+        # Non-hotkey key
+        if key == "space":
+            if window != text_window and text_buf:
+                recorder.add_keyboard_event(text_buf, text_window, is_hotkey=False)
+                text_buf = ""
+            text_window = window
+            text_buf += " "
+        elif key == "backspace":
+            if text_buf:
+                text_buf = text_buf[:-1]
+            else:
+                recorder.add_keyboard_event("backspace", window, is_hotkey=False)
+        elif key == "enter":
+            if text_buf:
+                recorder.add_keyboard_event(text_buf, text_window, is_hotkey=False)
+                text_buf = ""
+                text_window = ""
+            recorder.add_keyboard_event("enter", window, is_hotkey=False)
+        elif len(key) == 1 and key.isprintable():
+            # Printable character — accumulate
+            if window != text_window and text_buf:
+                recorder.add_keyboard_event(text_buf, text_window, is_hotkey=False)
+                text_buf = ""
+            text_window = window
+            text_buf += key
+        else:
+            # Special key (tab, escape, f1, etc.)
+            if text_buf:
+                recorder.add_keyboard_event(text_buf, text_window, is_hotkey=False)
+                text_buf = ""
+                text_window = ""
+            if key not in ("ctrl", "alt", "shift"):
+                recorder.add_keyboard_event(key, window, is_hotkey=False)
+
+    # Flush remaining text
+    if text_buf:
+        recorder.add_keyboard_event(text_buf, text_window, is_hotkey=False)
+
+
 async def _demo_start(args: dict) -> dict:
+    global _demo_kb_hook
     recorder = _get_demo_recorder()
     if recorder.is_recording:
         return {"success": False, "error": "Already recording a demonstration"}
@@ -2625,6 +2734,18 @@ async def _demo_start(args: dict) -> dict:
             return {"success": False, "error": f"Failed to start UIA monitor: {err}"}
         uia_status = "started"
 
+    # Start keyboard hook
+    kb_status = "disabled"
+    _demo_keyboard_events.clear()
+    _demo_modifiers_pressed.clear()
+    try:
+        import keyboard as kb
+        _demo_kb_hook = kb.hook(_demo_on_key)
+        kb_status = "active"
+    except Exception as e:
+        logger.warning(f"Keyboard hook not available: {e}")
+        _demo_kb_hook = None
+
     demo = recorder.start(
         name=args["name"],
         description=args.get("description", ""),
@@ -2634,10 +2755,12 @@ async def _demo_start(args: dict) -> dict:
         "message": f"Recording started: {demo.name}",
         "recording": True,
         "uia_monitor": uia_status,
+        "keyboard_hook": kb_status,
     }
 
 
 async def _demo_stop(args: dict) -> dict:
+    global _demo_kb_hook
     from marlow.kernel.demonstration import PlanExtractor
     from marlow.kernel.demo_bridge import DemoBridge
     from marlow.core.uia_events import get_manager
@@ -2646,7 +2769,22 @@ async def _demo_stop(args: dict) -> dict:
     if not recorder.is_recording:
         return {"success": False, "error": "Not recording"}
 
-    # Drain accumulated UIA events into the recorder before stopping
+    # Unhook keyboard first (stop capturing)
+    if _demo_kb_hook is not None:
+        try:
+            import keyboard as kb
+            kb.unhook(_demo_kb_hook)
+        except Exception:
+            pass
+        _demo_kb_hook = None
+
+    # Flush keyboard events into recorder
+    _demo_flush_keyboard(recorder)
+    kb_events = len(_demo_keyboard_events)
+    _demo_keyboard_events.clear()
+    _demo_modifiers_pressed.clear()
+
+    # Drain accumulated UIA events into the recorder
     mgr = get_manager()
     if mgr.is_running():
         raw_events = mgr.get_events(limit=500)
