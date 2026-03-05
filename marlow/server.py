@@ -2003,6 +2003,69 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+
+        # ── Learning from Demonstration (LfD) ──
+        Tool(
+            name="demo_start",
+            description=(
+                "Start recording a user demonstration. Marlow observes the user "
+                "working on the desktop and captures UIA events (window opens, "
+                "focus changes, clicks) to build a timeline. Call demo_stop when done."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name for this demonstration (e.g. 'Save file in Notepad').",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional description of what the demo covers.",
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
+        Tool(
+            name="demo_stop",
+            description=(
+                "Stop recording the current demonstration. Extracts a reproducible "
+                "plan from the captured event timeline and saves it to disk. "
+                "Returns the extracted steps for review."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="demo_status",
+            description=(
+                "Check the current demonstration recording status: "
+                "whether recording is active, event count, and duration."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="demo_list",
+            description="List all saved demonstrations with their event and step counts.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="demo_replay",
+            description=(
+                "Load a saved demonstration and return its extracted plan steps. "
+                "The steps can then be executed by Marlow to replay the user's actions."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Filename of the saved demonstration JSON.",
+                    },
+                },
+                "required": ["filename"],
+            },
+        ),
     ]
 
 
@@ -2517,6 +2580,12 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         "get_inspiration": lambda args: help_mod.get_inspiration(
             count=args.get("count", 3),
         ),
+        # Learning from Demonstration (LfD)
+        "demo_start": lambda args: _demo_start(args),
+        "demo_stop": lambda args: _demo_stop(args),
+        "demo_status": lambda args: _demo_status(args),
+        "demo_list": lambda args: _demo_list(args),
+        "demo_replay": lambda args: _demo_replay(args),
     }
 
     handler = tool_map.get(name)
@@ -2524,6 +2593,84 @@ async def _dispatch_tool(name: str, arguments: dict) -> dict:
         return await handler(arguments)
     else:
         return {"error": f"Unknown tool: {name}"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Learning from Demonstration (LfD) helpers
+# ─────────────────────────────────────────────────────────────
+
+_demo_recorder = None
+
+
+def _get_demo_recorder():
+    global _demo_recorder
+    if _demo_recorder is None:
+        from marlow.kernel.demonstration import DemonstrationRecorder
+        _demo_recorder = DemonstrationRecorder()
+    return _demo_recorder
+
+
+async def _demo_start(args: dict) -> dict:
+    recorder = _get_demo_recorder()
+    if recorder.is_recording:
+        return {"success": False, "error": "Already recording a demonstration"}
+    demo = recorder.start(
+        name=args["name"],
+        description=args.get("description", ""),
+    )
+    return {"success": True, "message": f"Recording started: {demo.name}", "recording": True}
+
+
+async def _demo_stop(args: dict) -> dict:
+    from marlow.kernel.demonstration import PlanExtractor
+    recorder = _get_demo_recorder()
+    demo = recorder.stop()
+    if demo:
+        extractor = PlanExtractor()
+        steps = extractor.extract(demo)
+        filepath = recorder.save(demo)
+        return {
+            "success": True,
+            "name": demo.name,
+            "events": demo.event_count,
+            "steps": len(steps),
+            "duration": round(demo.duration_seconds, 1),
+            "plan": extractor.format_for_review(steps),
+            "saved_to": filepath,
+        }
+    return {"success": False, "error": "Not recording"}
+
+
+async def _demo_status(args: dict) -> dict:
+    recorder = _get_demo_recorder()
+    if recorder.is_recording and recorder.current_demo:
+        demo = recorder.current_demo
+        return {
+            "recording": True,
+            "name": demo.name,
+            "events": demo.event_count,
+            "duration": round(demo.duration_seconds, 1),
+        }
+    return {"recording": False}
+
+
+async def _demo_list(args: dict) -> dict:
+    recorder = _get_demo_recorder()
+    demos = recorder.list_demos()
+    return {"demos": demos, "count": len(demos)}
+
+
+async def _demo_replay(args: dict) -> dict:
+    recorder = _get_demo_recorder()
+    data = recorder.load_demo(args["filename"])
+    if data:
+        return {
+            "success": True,
+            "name": data.get("name", ""),
+            "steps": data.get("extracted_steps", []),
+            "step_count": data.get("step_count", 0),
+        }
+    return {"success": False, "error": "Demo not found"}
 
 
 async def _auto_move_to_agent(app_name: str) -> None:
