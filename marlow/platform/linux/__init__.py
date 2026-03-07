@@ -1,4 +1,4 @@
-"""Linux platform backend — Sway/Wayland + AT-SPI2.
+"""Linux platform backend — Marlow Compositor / Sway + AT-SPI2.
 
 Provides concrete implementations of the platform ABCs for Linux
 desktop environments running Sway (wlroots-based Wayland compositor).
@@ -25,9 +25,17 @@ def get_platform() -> Platform:
     from .screenshot import GrimScreenCapture
     from .system import LinuxSystemProvider
     from .ui_tree import AtSpiUITreeProvider
-    from .windows import SwayWindowManager
+    # Auto-detect compositor backend: Marlow compositor > Sway
+    from .compositor_windows import _socket_exists
 
-    wm = SwayWindowManager()
+    if _socket_exists():
+        from .compositor_windows import CompositorWindowManager
+        wm = CompositorWindowManager()
+        logger.info("Using Marlow compositor backend (IPC socket found)")
+    else:
+        from .windows import SwayWindowManager
+        wm = SwayWindowManager()
+        logger.info("Using Sway backend (i3ipc)")
     focus = SwayFocusGuard(window_manager=wm)
 
     # Optional providers
