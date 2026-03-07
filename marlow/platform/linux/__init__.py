@@ -25,17 +25,9 @@ def get_platform() -> Platform:
     from .screenshot import GrimScreenCapture
     from .system import LinuxSystemProvider
     from .ui_tree import AtSpiUITreeProvider
-    # Auto-detect compositor backend: Marlow compositor > Sway
-    from .compositor_windows import _socket_exists
-
-    if _socket_exists():
-        from .compositor_windows import CompositorWindowManager
-        wm = CompositorWindowManager()
-        logger.info("Using Marlow compositor backend (IPC socket found)")
-    else:
-        from .windows import SwayWindowManager
-        wm = SwayWindowManager()
-        logger.info("Using Sway backend (i3ipc)")
+    # Compositor IPC with lazy connect + Sway fallback
+    from .compositor_windows import CompositorWindowManager
+    wm = CompositorWindowManager()
     focus = SwayFocusGuard(window_manager=wm)
 
     # Optional providers
