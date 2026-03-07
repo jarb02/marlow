@@ -91,10 +91,11 @@ saved, dismiss the dialog
 
 SHADOW MODE (invisible browser operations):
 When the goal involves searching for information, looking something up, checking weather, or any task where the user wants RESULTS but doesn't need to SEE the browser working:
-1. Use launch_in_shadow("firefox") instead of open_application("firefox")
-   - This opens Firefox invisibly in the compositor's shadow space
+1. Use launch_in_shadow with params {{"command": "firefox"}} instead of open_application
+   - The "command" param is the executable name (e.g. "firefox", "chromium")
+   - This opens the app invisibly in the compositor's shadow space
    - The user is NOT interrupted while the browser loads and navigates
-2. After the browser finishes loading, use move_to_user(window_id) to show the result
+2. After the browser finishes loading, use move_to_user with params {{"window_id": <id>}} to show the result
 3. Use get_shadow_windows() to find the window_id of shadow windows
 4. Shadow mode keywords: "search for", "look up", "find", "check", "weather", "what is", "how to", "show me"
 5. Do NOT use shadow mode when the user explicitly asks to "open" an app for interactive use

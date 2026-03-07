@@ -454,7 +454,9 @@ class AutonomousMarlow:
         # These use the compositor's shadow_space for invisible windows.
         # Available when running on Marlow Compositor (not Sway).
         tools["launch_in_shadow"] = lambda **kw: p.windows.launch_in_shadow(
-            command=kw.get("command", ""),
+            command=(kw.get("command") or kw.get("application")
+                     or kw.get("app_name") or kw.get("app")
+                     or kw.get("name") or kw.get("program") or ""),
         )
         tools["get_shadow_windows"] = (
             lambda **kw: _wrap_shadow_windows(p)

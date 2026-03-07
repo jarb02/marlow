@@ -104,6 +104,8 @@ class SmartExecutor:
                 f"Unknown tool: {tool_name}", tool_name=tool_name,
             )
 
+        logger.debug("execute(%s) params=%s", tool_name, params)
+
         try:
             if inspect.iscoroutinefunction(func):
                 # Case 1: native async
