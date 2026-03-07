@@ -1,0 +1,24 @@
+# Marlow MVP - Sway config minimo
+# Terminal por defecto
+set $term foot
+# Mod key = Super
+set $mod Mod4
+# Keybinds basicos
+bindsym $mod+Return exec $term
+bindsym $mod+Shift+q kill
+bindsym $mod+Shift+e exec swaynag -t warning -m "Exit Sway?" -B "Yes" "swaymsg exit"
+# Navegacion
+bindsym $mod+h focus left
+bindsym $mod+j focus down
+bindsym $mod+k focus up
+bindsym $mod+l focus right
+# AT-SPI2 habilitado
+exec systemctl --user start at-spi-dbus-bus.service
+# Status bar
+bar {
+    status_command date +"%Y-%m-%d %H:%M"
+}
+
+
+# Marlow launcher
+bindsym $mod+m exec python3 ~/marlow/marlow/launcher.py

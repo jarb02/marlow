@@ -1,0 +1,16 @@
+[Unit]
+Description=Marlow Autonomous Agent Daemon
+After=graphical-session.target
+Requires=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -c "from marlow.daemon_linux import main; main()"
+WorkingDirectory=/home/josemarlow/marlow
+Environment=PATH=/home/josemarlow/.local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/home/josemarlow/marlow
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

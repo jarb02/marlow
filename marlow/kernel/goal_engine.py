@@ -95,6 +95,7 @@ class GoalResult:
     errors: list[str] = field(default_factory=list)
     duration_s: float = 0.0
     replan_count: int = 0
+    result_summary: str = ""
 
 
 class GoalEngine:
@@ -324,6 +325,39 @@ class GoalEngine:
             if step_success:
                 step.status = "completed"
                 self._scores.append(1.0 if check_passed else 0.85)
+                # Capture result summary from last successful step
+                if result.data:
+                    try:
+                        data = result.data
+                        if isinstance(data, dict):
+                            # Extract meaningful summary from tool result
+                            summary_parts = []
+                            for key in ("windows", "elements", "text", "output", "result", "matches", "items"):
+                                if key in data:
+                                    val = data[key]
+                                    if isinstance(val, list):
+                                        summary_parts.append(f"{len(val)} {key}")
+                                        # Include first few items
+                                        for item in val[:5]:
+                                            if isinstance(item, dict):
+                                                name = item.get("title") or item.get("name") or item.get("app_id") or str(item)[:60]
+                                                summary_parts.append(f"  - {name}")
+                                            else:
+                                                summary_parts.append(f"  - {str(item)[:60]}")
+                                    elif isinstance(val, str):
+                                        summary_parts.append(f"{key}: {val[:200]}")
+                                    else:
+                                        summary_parts.append(f"{key}: {val}")
+                            if summary_parts:
+                                self._last_result_summary = "\n".join(summary_parts)
+                            elif "success" in data:
+                                self._last_result_summary = str(data)[:300]
+                        elif isinstance(data, str):
+                            self._last_result_summary = data[:300]
+                        elif isinstance(data, list):
+                            self._last_result_summary = f"{len(data)} items"
+                    except Exception:
+                        pass
                 self._current_step_index += 1
             else:
                 # Handle failure
@@ -437,6 +471,7 @@ class GoalEngine:
             errors=self._errors,
             duration_s=round(time.monotonic() - self._started_at, 2),
             replan_count=self._replan_count,
+            result_summary=self._last_result_summary,
         )
 
     def _reset(self):
@@ -448,6 +483,7 @@ class GoalEngine:
         self._llm_calls = 0
         self._scores = []
         self._errors = []
+        self._last_result_summary = ""
         self._started_at = 0.0
         self._state_history = []
 

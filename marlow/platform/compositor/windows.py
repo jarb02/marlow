@@ -54,6 +54,7 @@ class CompositorWindowManager(WindowManager):
                 return await client.list_windows()
 
             windows = _run_async(self._with_client(_list))
+            logger.info("IPC list_windows returned %d windows: %s", len(windows), windows)
             result: list[WindowInfo] = []
 
             for w in windows:
