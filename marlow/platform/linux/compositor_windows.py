@@ -1,12 +1,15 @@
-"""Linux WindowManager — Marlow Compositor IPC (sync) with Sway fallback.
+"""Linux WindowManager — Marlow Compositor IPC (sync). No Sway fallback.
 
 Uses a direct synchronous Unix socket + MessagePack. No asyncio.
 Reconnects lazily on each call if disconnected.
 
-Shadow Mode methods: launch_in_shadow, get_shadow_windows, move_to_user,
+When compositor IPC fails, operations fail cleanly — no Sway fallback.
+Sway fallback caused crashes (SIGABRT) when sway was stale/dead.
+
+Shadow Mode: launch_in_shadow, get_shadow_windows, move_to_user,
 move_to_shadow — same sync socket pattern as list_windows.
 
-/ WindowManager Linux — socket sync al compositor Marlow + Shadow Mode.
+/ WindowManager Linux — socket sync al compositor, sin fallback a Sway.
 """
 
 from __future__ import annotations
@@ -32,11 +35,10 @@ def _socket_path() -> str:
 
 
 class CompositorWindowManager(WindowManager):
-    """Window management: compositor IPC (sync) first, Sway fallback."""
+    """Window management via compositor IPC only. No Sway fallback."""
 
     def __init__(self):
         self._sock: socket.socket | None = None
-        self._sway_fallback = None
 
     def _ensure_connected(self) -> bool:
         """Connect to compositor socket if not already connected."""
@@ -45,6 +47,7 @@ class CompositorWindowManager(WindowManager):
 
         path = _socket_path()
         if not os.path.exists(path):
+            logger.debug("Compositor socket not found: %s", path)
             return False
 
         try:
@@ -55,7 +58,7 @@ class CompositorWindowManager(WindowManager):
             logger.info("Connected to compositor IPC: %s", path)
             return True
         except Exception as e:
-            logger.debug("Compositor connect failed: %s", e)
+            logger.warning("Compositor connect failed: %s", e)
             return False
 
     def _send(self, request: dict) -> dict | None:
@@ -80,7 +83,7 @@ class CompositorWindowManager(WindowManager):
 
             return msgpack.unpackb(resp_buf, raw=False)
         except Exception as e:
-            logger.debug("IPC send/recv failed: %s", e)
+            logger.warning("IPC send/recv failed: %s", e)
             self._disconnect()
             return None
 
@@ -103,52 +106,51 @@ class CompositorWindowManager(WindowManager):
                 pass
             self._sock = None
 
-    def _get_sway(self):
-        """Lazy-init Sway fallback."""
-        if self._sway_fallback is None:
-            try:
-                from .windows import SwayWindowManager
-                self._sway_fallback = SwayWindowManager()
-            except Exception:
-                pass
-        return self._sway_fallback
-
     # ── WindowManager interface ──
 
     def list_windows(self, include_minimized: bool = True) -> list[WindowInfo]:
-        # Try compositor IPC
         resp = self._send({"type": "ListWindows"})
         if resp and resp.get("status") == "ok":
             windows = resp.get("data", [])
-            logger.info("list_windows via compositor: %d windows", len(windows))
+            logger.info("list_windows: %d windows", len(windows))
             return [self._to_info(w) for w in windows]
-
-        # Fallback to Sway
-        sway = self._get_sway()
-        if sway:
-            try:
-                result = sway.list_windows(include_minimized)
-                if result:
-                    return result
-            except Exception:
-                pass
-
+        logger.warning("list_windows: compositor IPC failed")
         return []
 
     def focus_window(self, identifier: str) -> bool:
+        # Try numeric window_id first
         try:
             wid = int(identifier)
+            resp = self._send({"type": "FocusWindow", "window_id": wid})
+            if resp and resp.get("status") == "ok":
+                return True
+            logger.warning("focus_window(%d): %s", wid,
+                           resp.get("message", "failed") if resp else "IPC failed")
+            return False
         except ValueError:
-            # Not a numeric ID — try Sway
-            sway = self._get_sway()
-            return sway.focus_window(identifier) if sway else False
+            pass
 
-        resp = self._send({"type": "FocusWindow", "window_id": wid})
-        if resp and resp.get("status") == "ok":
-            return True
+        # String identifier — search by title/app_id in window list
+        resp = self._send({"type": "ListWindows"})
+        if not resp or resp.get("status") != "ok":
+            logger.warning("focus_window('%s'): can't list windows", identifier)
+            return False
 
-        sway = self._get_sway()
-        return sway.focus_window(identifier) if sway else False
+        id_lower = identifier.lower()
+        for w in resp.get("data", []):
+            title = (w.get("title") or "").lower()
+            app_id = (w.get("app_id") or "").lower()
+            if id_lower in title or id_lower in app_id:
+                wid = w.get("window_id")
+                if wid is not None:
+                    focus_resp = self._send({"type": "FocusWindow", "window_id": wid})
+                    if focus_resp and focus_resp.get("status") == "ok":
+                        logger.info("focus_window('%s'): focused window %d (%s)",
+                                    identifier, wid, w.get("title"))
+                        return True
+
+        logger.warning("focus_window('%s'): no matching window found", identifier)
+        return False
 
     def get_focused_window(self) -> Optional[WindowInfo]:
         resp = self._send({"type": "ListWindows"})
@@ -156,37 +158,28 @@ class CompositorWindowManager(WindowManager):
             for w in resp.get("data", []):
                 if w.get("focused"):
                     return self._to_info(w)
-
-        sway = self._get_sway()
-        return sway.get_focused_window() if sway else None
+        return None
 
     def manage_window(self, identifier: str, action: str, **kwargs) -> bool:
-        sway = self._get_sway()
-        if sway:
-            return sway.manage_window(identifier, action, **kwargs)
+        # TODO: implement via compositor IPC (close, minimize, maximize)
+        logger.warning("manage_window not yet implemented via compositor IPC")
         return False
 
     # ── Shadow Mode operations ──
 
     def launch_in_shadow(self, command: str) -> dict:
-        """Launch a command and route its window to shadow_space.
-
-        / Lanza un comando y enruta su ventana al shadow_space.
-        """
+        """Launch a command and route its window to shadow_space."""
         resp = self._send({"type": "LaunchInShadow", "command": command})
         if resp and resp.get("status") == "ok":
             data = resp.get("data", {})
-            logger.info("launch_in_shadow: %s → %s", command, data)
+            logger.info("launch_in_shadow: %s -> %s", command, data)
             return {"success": True, **data}
         msg = resp.get("message", "IPC failed") if resp else "Compositor not available"
         logger.warning("launch_in_shadow failed: %s", msg)
         return {"success": False, "error": msg}
 
     def get_shadow_windows(self) -> list[WindowInfo]:
-        """List all windows in shadow_space (invisible).
-
-        / Lista ventanas en shadow_space (invisibles al usuario).
-        """
+        """List all windows in shadow_space (invisible)."""
         resp = self._send({"type": "GetShadowWindows"})
         if resp and resp.get("status") == "ok":
             windows = resp.get("data", [])
@@ -195,23 +188,18 @@ class CompositorWindowManager(WindowManager):
         return []
 
     def move_to_user(self, window_id: int) -> dict:
-        """Promote a window from shadow_space to user_space.
-
-        / Promueve una ventana de shadow a visible.
-        """
+        """Promote a window from shadow_space to user_space."""
         resp = self._send({"type": "MoveToUser", "window_id": window_id})
         if resp and resp.get("status") == "ok":
+            data = resp.get("data", {})
             logger.info("move_to_user: window %d promoted", window_id)
-            return {"success": True, "window_id": window_id}
+            return {"success": True, "window_id": window_id, **data}
         msg = resp.get("message", "IPC failed") if resp else "Compositor not available"
         logger.warning("move_to_user failed: %s", msg)
         return {"success": False, "error": msg}
 
     def move_to_shadow(self, window_id: int) -> dict:
-        """Move a window from user_space to shadow_space.
-
-        / Mueve una ventana de visible a shadow (invisible).
-        """
+        """Move a window from user_space to shadow_space."""
         resp = self._send({"type": "MoveToShadow", "window_id": window_id})
         if resp and resp.get("status") == "ok":
             logger.info("move_to_shadow: window %d hidden", window_id)

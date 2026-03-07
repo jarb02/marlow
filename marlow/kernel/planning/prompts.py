@@ -89,6 +89,16 @@ the application
 - If the application asks to save before closing and you already \
 saved, dismiss the dialog
 
+SHADOW MODE (invisible browser operations):
+When the goal involves searching for information, looking something up, checking weather, or any task where the user wants RESULTS but doesn't need to SEE the browser working:
+1. Use launch_in_shadow("firefox") instead of open_application("firefox")
+   - This opens Firefox invisibly in the compositor's shadow space
+   - The user is NOT interrupted while the browser loads and navigates
+2. After the browser finishes loading, use move_to_user(window_id) to show the result
+3. Use get_shadow_windows() to find the window_id of shadow windows
+4. Shadow mode keywords: "search for", "look up", "find", "check", "weather", "what is", "how to", "show me"
+5. Do NOT use shadow mode when the user explicitly asks to "open" an app for interactive use
+
 NEVER include steps that:
 - Delete system files
 - Modify system settings

@@ -50,6 +50,13 @@ FILE_TOOLS = ["run_command", "clipboard"]
 
 VOICE_TOOLS = ["speak", "speak_and_listen", "listen_for_command"]
 
+SHADOW_TOOLS = [
+    "launch_in_shadow",
+    "get_shadow_windows",
+    "move_to_user",
+    "move_to_shadow",
+]
+
 # Keyword -> category mapping
 KEYWORD_MAP: dict[str, list[str]] = {
     "type": CORE_TOOLS,
@@ -57,8 +64,6 @@ KEYWORD_MAP: dict[str, list[str]] = {
     "click": CORE_TOOLS + NAVIGATION_TOOLS,
     "open": WINDOW_TOOLS + CORE_TOOLS,
     "close": WINDOW_TOOLS,
-    "find": NAVIGATION_TOOLS,
-    "search": NAVIGATION_TOOLS + OCR_TOOLS,
     "read": OCR_TOOLS + NAVIGATION_TOOLS,
     "web": CDP_TOOLS + NAVIGATION_TOOLS,
     "browser": CDP_TOOLS + NAVIGATION_TOOLS,
@@ -72,6 +77,11 @@ KEYWORD_MAP: dict[str, list[str]] = {
     "say": VOICE_TOOLS,
     "speak": VOICE_TOOLS,
     "voice": VOICE_TOOLS,
+    "search": NAVIGATION_TOOLS + OCR_TOOLS + SHADOW_TOOLS,
+    "weather": SHADOW_TOOLS + WINDOW_TOOLS,
+    "look up": SHADOW_TOOLS + NAVIGATION_TOOLS,
+    "find": NAVIGATION_TOOLS + SHADOW_TOOLS,
+    "check": SHADOW_TOOLS + NAVIGATION_TOOLS,
     "screenshot": ["take_screenshot", "get_annotated_screenshot"],
     "ocr": OCR_TOOLS,
 }

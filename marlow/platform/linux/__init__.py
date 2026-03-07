@@ -1,10 +1,10 @@
 """Linux platform backend — Marlow Compositor / Sway + AT-SPI2.
 
-Auto-detects whether the Marlow Compositor is running (socket exists).
-If yes: uses CompositorInputProvider + CompositorScreenCapture (IPC).
-If no: falls back to WaylandInputProvider (wtype/ydotool) + GrimScreenCapture.
+Two mutually exclusive modes — NO mixing:
+- Compositor mode: ALL providers use compositor IPC. Zero Sway/wtype/grim.
+- Sway mode: ALL providers use Sway IPC + wtype + ydotool + grim.
 
-/ Backend Linux — auto-detect compositor vs Sway fallback.
+/ Backend Linux — compositor puro O sway puro, nunca mixto.
 """
 
 from __future__ import annotations
@@ -27,41 +27,57 @@ def _compositor_socket_exists() -> bool:
 
 
 def get_platform() -> Platform:
-    """Create and return a Platform instance with Linux backends."""
+    """Create and return a Platform instance with Linux backends.
+
+    When the compositor socket exists, ALL desktop I/O goes through
+    compositor IPC. Sway/wtype/grim are never loaded — not even as
+    fallback. If the compositor IPC fails, the operation fails cleanly.
+    """
 
     from .accessibility import AtSpiAccessibilityProvider
     from .audio import PipeWireAudioProvider
     from .system import LinuxSystemProvider
     from .ui_tree import AtSpiUITreeProvider
-    # Compositor IPC with lazy connect + Sway fallback
-    from .compositor_windows import CompositorWindowManager
-    wm = CompositorWindowManager()
 
-    # Auto-detect: compositor IPC vs Sway/Wayland fallback
     use_compositor = _compositor_socket_exists()
 
     if use_compositor:
-        logger.info("Marlow Compositor detected — using IPC providers")
+        # ── Compositor mode: 100% IPC, zero Sway ──
+        logger.info("Platform: compositor (all providers via IPC)")
+        from .compositor_windows import CompositorWindowManager
         from marlow.platform.compositor.input import CompositorInputProvider
         from marlow.platform.compositor.screenshot import CompositorScreenCapture
+
+        wm = CompositorWindowManager()
         input_provider = CompositorInputProvider()
         screen_provider = CompositorScreenCapture()
+
         try:
             from marlow.platform.compositor.focus import CompositorFocusGuard
             focus = CompositorFocusGuard(window_manager=wm)
-        except Exception:
-            from .focus import SwayFocusGuard
-            focus = SwayFocusGuard(window_manager=wm)
+        except Exception as e:
+            logger.warning("CompositorFocusGuard failed (%s), using stub", e)
+            from marlow.platform.base import FocusGuard
+
+            class _StubFocusGuard(FocusGuard):
+                def save_user_focus(self): pass
+                def restore_user_focus(self) -> bool: return True
+
+            focus = _StubFocusGuard()
     else:
-        logger.info("No compositor socket — using Sway/Wayland providers")
+        # ── Sway mode: wtype + ydotool + grim + i3ipc ──
+        logger.info("Platform: sway (wtype/grim/i3ipc)")
+        from .compositor_windows import CompositorWindowManager
         from .input import WaylandInputProvider
         from .screenshot import GrimScreenCapture
         from .focus import SwayFocusGuard
+
+        wm = CompositorWindowManager()
         input_provider = WaylandInputProvider()
         screen_provider = GrimScreenCapture()
         focus = SwayFocusGuard(window_manager=wm)
 
-    # Optional providers
+    # Optional providers (platform-agnostic, safe to load always)
     ocr = None
     escalation = None
     cascade_recovery = None
