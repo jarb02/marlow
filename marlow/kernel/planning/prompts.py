@@ -90,15 +90,21 @@ the application
 saved, dismiss the dialog
 
 SHADOW MODE (invisible browser operations):
-When the goal involves searching for information, looking something up, checking weather, or any task where the user wants RESULTS but doesn't need to SEE the browser working:
-1. Use launch_in_shadow with params {{"command": "firefox"}} instead of open_application
-   - The "command" param is the executable name (e.g. "firefox", "chromium")
-   - This opens the app invisibly in the compositor's shadow space
-   - The user is NOT interrupted while the browser loads and navigates
-2. After the browser finishes loading, use move_to_user with params {{"window_id": <id>}} to show the result
-3. Use get_shadow_windows() to find the window_id of shadow windows
-4. Shadow mode keywords: "search for", "look up", "find", "check", "weather", "what is", "how to", "show me"
-5. Do NOT use shadow mode when the user explicitly asks to "open" an app for interactive use
+When the goal involves searching, looking something up, checking weather, or any task where the user wants RESULTS but doesn't need to SEE the browser working:
+1. Use launch_in_shadow with the FULL command including URL:
+   params: {{"command": "firefox https://www.google.com/search?q=your+query"}}
+   - The "command" param is the full shell command to execute
+   - Include the search URL directly — do NOT launch a blank browser
+   - URL-encode spaces as + in the query string
+   - The window launches invisibly and launch_in_shadow waits for it
+2. The launch_in_shadow response includes the window_id. Use it with move_to_user to show the result:
+   params: {{"window_id": <id from step 1>}}
+3. A shadow mode plan is ONLY 2 steps:
+   Step 1: launch_in_shadow with full URL command
+   Step 2: move_to_user with the window_id from step 1
+4. Do NOT use focus_window, type_text, hotkey, or press_key on shadow windows — they cannot receive input. The URL must be in the launch command.
+5. Shadow mode keywords: "search for", "look up", "find", "check", "weather", "what is", "how to", "show me"
+6. Do NOT use shadow mode when the user explicitly asks to "open" an app for interactive use
 
 NEVER include steps that:
 - Delete system files

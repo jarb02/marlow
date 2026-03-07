@@ -124,3 +124,103 @@ class CompositorWindowManager(WindowManager):
             identifier, action,
         )
         return False
+
+    # ── Shadow Mode operations ──
+
+    def launch_in_shadow(self, command: str) -> dict:
+        """Launch a command in shadow_space, wait up to 10s for its window."""
+        import time
+
+        try:
+            data = _run_async(self._with_client(
+                lambda c: c.launch_in_shadow(command)
+            ))
+            if "error" in data:
+                logger.warning("launch_in_shadow failed: %s", data["error"])
+                return {"success": False, "error": data["error"]}
+
+            logger.info("launch_in_shadow: %s -> %s (waiting for window)", command, data)
+
+            # Poll for the shadow window to appear (app needs time to connect)
+            for i in range(20):  # 20 x 0.5s = 10s max
+                time.sleep(0.5)
+                shadow = self.get_shadow_windows()
+                if shadow:
+                    win = shadow[0]
+                    logger.info("launch_in_shadow: window appeared after %.1fs: %s",
+                                (i + 1) * 0.5, win.title)
+                    return {
+                        "success": True,
+                        "window_id": int(win.identifier),
+                        "title": win.title,
+                        "app_id": win.app_name,
+                        **data,
+                    }
+
+            logger.warning("launch_in_shadow: window did not appear in 10s")
+            return {"success": True, "warning": "window not yet visible", **data}
+        except Exception as e:
+            logger.error("launch_in_shadow error: %s", e)
+            return {"success": False, "error": str(e)}
+
+    def get_shadow_windows(self) -> list[WindowInfo]:
+        """List all windows in shadow_space (invisible)."""
+        try:
+            windows = _run_async(self._with_client(
+                lambda c: c.get_shadow_windows()
+            ))
+            logger.info("get_shadow_windows: %d windows", len(windows))
+            result: list[WindowInfo] = []
+            for w in windows:
+                wid = w.get("window_id", 0)
+                result.append(WindowInfo(
+                    identifier=str(wid),
+                    title=w.get("title", "(unnamed)"),
+                    app_name=w.get("app_id", f"window_{wid}"),
+                    pid=w.get("pid", 0),
+                    is_focused=False,
+                    is_visible=False,
+                    x=w.get("x", 0),
+                    y=w.get("y", 0),
+                    width=w.get("width", 0),
+                    height=w.get("height", 0),
+                    extra={
+                        "app_id": w.get("app_id", ""),
+                        "compositor": "marlow",
+                        "shadow": True,
+                    },
+                ))
+            return result
+        except Exception as e:
+            logger.error("get_shadow_windows error: %s", e)
+            return []
+
+    def move_to_user(self, window_id: int) -> dict:
+        """Promote a window from shadow_space to user_space."""
+        try:
+            ok = _run_async(self._with_client(
+                lambda c: c.move_to_user(window_id)
+            ))
+            if ok:
+                logger.info("move_to_user: window %d promoted", window_id)
+                return {"success": True, "window_id": window_id}
+            logger.warning("move_to_user failed for window %d", window_id)
+            return {"success": False, "error": "compositor returned false"}
+        except Exception as e:
+            logger.error("move_to_user error: %s", e)
+            return {"success": False, "error": str(e)}
+
+    def move_to_shadow(self, window_id: int) -> dict:
+        """Move a window from user_space to shadow_space."""
+        try:
+            ok = _run_async(self._with_client(
+                lambda c: c.move_to_shadow(window_id)
+            ))
+            if ok:
+                logger.info("move_to_shadow: window %d hidden", window_id)
+                return {"success": True, "window_id": window_id}
+            logger.warning("move_to_shadow failed for window %d", window_id)
+            return {"success": False, "error": "compositor returned false"}
+        except Exception as e:
+            logger.error("move_to_shadow error: %s", e)
+            return {"success": False, "error": str(e)}
