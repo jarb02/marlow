@@ -336,14 +336,18 @@ class GoalEngine:
                                 if key in data:
                                     val = data[key]
                                     if isinstance(val, list):
-                                        summary_parts.append(f"{len(val)} {key}")
-                                        # Include first few items
-                                        for item in val[:5]:
+                                        # Compact summary: "2 windows: foot, foot"
+                                        names = []
+                                        for item in val[:10]:
                                             if isinstance(item, dict):
-                                                name = item.get("title") or item.get("name") or item.get("app_id") or str(item)[:60]
-                                                summary_parts.append(f"  - {name}")
+                                                name = item.get("title") or item.get("app_name") or item.get("name") or item.get("app_id") or ""
+                                                names.append(name or "(unnamed)")
                                             else:
-                                                summary_parts.append(f"  - {str(item)[:60]}")
+                                                names.append(str(item)[:40])
+                                        if names:
+                                            summary_parts.append(f"{len(val)} {key}: {', '.join(names)}")
+                                        else:
+                                            summary_parts.append(f"{len(val)} {key}")
                                     elif isinstance(val, str):
                                         summary_parts.append(f"{key}: {val[:200]}")
                                     else:
