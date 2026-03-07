@@ -808,9 +808,10 @@ class AutonomousMarlow:
                 errors=["No template, GOAP, or LLM planner could handle this goal"],
             )
 
+        _status = "completed" if result.success else "FAILED"
         logger.info(
-            "Result: success=%s, steps=%d/%d, score=%.2f, errors=%s",
-            result.success, result.steps_completed, result.steps_total,
+            "Result: %s, steps=%d/%d, score=%.2f, errors=%s",
+            _status, result.steps_completed, result.steps_total,
             result.avg_score, result.errors,
         )
 

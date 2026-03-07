@@ -452,7 +452,14 @@ class GoalEngine:
 
         # Done with all steps (or failed/cancelled)
         if self._state not in (GoalState.FAILED, GoalState.CANCELLED):
-            self._set_state(GoalState.COMPLETED)
+            # If zero steps completed, treat as failure
+            steps = self._plan.steps if self._plan else []
+            completed = sum(1 for s in steps if s.status == "completed")
+            if completed == 0 and len(steps) > 0:
+                self._errors.append("No steps completed successfully")
+                self._set_state(GoalState.FAILED)
+            else:
+                self._set_state(GoalState.COMPLETED)
 
     # ── Helpers ──
 
