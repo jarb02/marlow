@@ -450,6 +450,22 @@ class AutonomousMarlow:
                 )
             )
 
+        # -- Shadow Mode (Compositor IPC) --
+        # These use the compositor's shadow_space for invisible windows.
+        # Available when running on Marlow Compositor (not Sway).
+        tools["launch_in_shadow"] = lambda **kw: p.windows.launch_in_shadow(
+            command=kw.get("command", ""),
+        )
+        tools["get_shadow_windows"] = (
+            lambda **kw: _wrap_shadow_windows(p)
+        )
+        tools["move_to_user"] = lambda **kw: p.windows.move_to_user(
+            window_id=int(kw.get("window_id", 0)),
+        )
+        tools["move_to_shadow"] = lambda **kw: p.windows.move_to_shadow(
+            window_id=int(kw.get("window_id", 0)),
+        )
+
         # -- Visual Diff --
         if p.visual_diff:
             tools["visual_diff"] = lambda **kw: p.visual_diff.capture_before(
@@ -1153,6 +1169,29 @@ def _wrap_list_windows(p, include_minimized: bool) -> dict:
     if isinstance(result, dict):
         return result
     return {"success": False, "error": "Unexpected result type"}
+
+
+
+def _wrap_shadow_windows(p) -> dict:
+    """Wrap shadow windows list into tool result format."""
+    try:
+        wins = p.windows.get_shadow_windows()
+        return {
+            "success": True,
+            "shadow_windows": [
+                {
+                    "window_id": w.extra.get("window_id", w.identifier),
+                    "title": w.title,
+                    "app_name": w.app_name,
+                    "x": w.x, "y": w.y,
+                    "width": w.width, "height": w.height,
+                }
+                for w in wins
+            ],
+            "count": len(wins),
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 def _wrap_clipboard(p, kw: dict) -> dict:
