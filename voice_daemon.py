@@ -152,7 +152,7 @@ class VoiceDaemon:
             async with aiohttp.ClientSession() as session:
                 resp = await session.post(
                     "http://localhost:8420/goal",
-                    json={"text": text},
+                    json={"goal": text},
                     timeout=aiohttp.ClientTimeout(total=120),
                 )
                 return await resp.json()

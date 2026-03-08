@@ -42,6 +42,26 @@ PATTERNS: list[tuple[str, str]] = [
     (r"(?i)^(?:close|exit|quit)\s+(.+)$", "_plan_close_app"),
     # Save file
     (r"(?i)^save\s+(?:the\s+)?(?:file|document)", "_plan_save"),
+
+    # --- Spanish patterns ---
+    # Abrir / abre aplicación
+    (r"(?i)^(?:abre|abrir|inicia|lanza|ejecuta)\s+(.+)$", "_plan_open_app"),
+    # Cerrar / cierra aplicación
+    (r"(?i)^(?:cierra|cerrar|salir\s+de)\s+(.+)$", "_plan_close_app"),
+    # Captura de pantalla
+    (r"(?i)^(?:toma|captura|saca)\s+(?:una?\s+)?(?:captura|screenshot|foto)", "_plan_screenshot"),
+    # Guardar archivo
+    (r"(?i)^(?:guarda|guardar)\s+(?:el\s+)?(?:archivo|documento)", "_plan_save"),
+
+    # --- Search patterns (EN + ES) ---
+    # "search for X", "busca X", "look up X", "find X on the web"
+    (
+        r"(?i)^(?:search\s+(?:for\s+)?|busca(?:r)?\s+|look\s+up\s+|"
+        r"find\s+|buscar\s+en\s+(?:google|internet)\s+|"
+        r"muéstrame\s+(?:el\s+)?|show\s+me\s+(?:the\s+)?)"
+        r"(.+)$",
+        "_plan_search",
+    ),
 ]
 
 
@@ -190,6 +210,39 @@ class TemplatePlanner:
                     success_check={"type": "none"},
                 ),
             ],
+        )
+
+    def _plan_search(self, match, context) -> Plan:
+        """Plan a web search: launch firefox in shadow, move to user."""
+        query = match.group(1).strip()
+        # URL-encode query: replace spaces with +
+        url_query = query.replace(" ", "+")
+        search_url = f"https://www.google.com/search?q={url_query}"
+
+        return Plan(
+            goal_id="",
+            goal_text=match.string,
+            steps=[
+                PlanStep(
+                    id="step_1",
+                    tool_name="launch_in_shadow",
+                    params={"command": f"firefox {search_url}"},
+                    description=f"Search for: {query}",
+                    risk="low",
+                    estimated_duration_ms=5000,
+                    success_check={"type": "return_value", "params": {"key": "window_id"}},
+                ),
+                PlanStep(
+                    id="step_2",
+                    tool_name="move_to_user",
+                    params={"window_id": "$window_id"},
+                    description="Show search results to user",
+                    risk="low",
+                    estimated_duration_ms=1000,
+                    success_check={"type": "return_value", "params": {"key": "success"}},
+                ),
+            ],
+            context={"target_app": "firefox"},
         )
 
     def _plan_open_and_type(self, match, context) -> Plan:
