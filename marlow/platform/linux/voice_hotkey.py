@@ -1,24 +1,28 @@
-"""Linux push-to-talk via evdev — Super+V keybind.
+"""Linux push-to-talk — compositor-driven via trigger file.
 
-Uses evdev to listen for Super (Meta_L) + V key combo.
-Requires user to be in the `input` group: sudo usermod -aG input $USER
+The compositor (KMS backend) owns all input devices exclusively.
+Push-to-talk is handled by the compositor intercepting Super+V
+and writing to /tmp/marlow-voice-trigger.
 
-Falls back to a subprocess-based approach using `wev` if evdev unavailable.
-
-/ Push-to-talk Linux via evdev — Super+V.
+/ Push-to-talk Linux — compositor escribe trigger file en Super+V.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
+import os
 import time
 
 logger = logging.getLogger("marlow.platform.linux.voice_hotkey")
 
+TRIGGER_FILE = "/tmp/marlow-voice-trigger"
+
 
 class PushToTalkListener:
-    """Listen for Super+V push-to-talk keybind via evdev.
+    """Listen for Super+V push-to-talk via compositor trigger file.
+
+    The compositor writes "press" or "release" to /tmp/marlow-voice-trigger
+    when the user presses/releases Super+V.
 
     Usage:
         listener = PushToTalkListener()
@@ -28,127 +32,69 @@ class PushToTalkListener:
         listener.close()
     """
 
-    # evdev key codes
-    KEY_LEFTMETA = 125
-    KEY_V = 47
-
     def __init__(self):
-        self._held = False
-        self._pressed_event = threading.Event()
         self._stop = False
-        self._device = None
-        self._thread = None
-        self._keys_down: set[int] = set()
+        # Clean up stale trigger file on init
+        self._clear_trigger()
 
-        self._start_listener()
-
-    def _start_listener(self):
-        """Find keyboard device and start listener thread."""
+    def _read_trigger(self) -> str:
+        """Read the trigger file contents."""
         try:
-            import evdev
-        except ImportError:
-            logger.error(
-                "evdev not installed. Run: pip install evdev\n"
-                "Also ensure user is in input group: sudo usermod -aG input $USER"
-            )
-            return
+            if os.path.exists(TRIGGER_FILE):
+                with open(TRIGGER_FILE, "r") as f:
+                    return f.read().strip()
+        except Exception:
+            pass
+        return ""
 
-        # Find a keyboard device
-        devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
-        keyboard = None
-        for dev in devices:
-            caps = dev.capabilities(verbose=False)
-            # EV_KEY = 1, check if it has typical keyboard keys
-            if 1 in caps:
-                key_codes = caps[1]
-                # A real keyboard should have alphabetic keys (KEY_A=30..KEY_Z=51)
-                if self.KEY_V in key_codes and self.KEY_LEFTMETA in key_codes:
-                    keyboard = dev
-                    break
-
-        if keyboard is None:
-            logger.error("No keyboard device found via evdev")
-            for dev in devices:
-                dev.close()
-            return
-
-        # Close non-selected devices
-        for dev in devices:
-            if dev != keyboard:
-                dev.close()
-
-        self._device = keyboard
-        logger.info("Listening on device: %s (%s)", keyboard.name, keyboard.path)
-
-        self._thread = threading.Thread(
-            target=self._listen_loop, daemon=True, name="ptt-evdev",
-        )
-        self._thread.start()
-
-    def _listen_loop(self):
-        """Read evdev events and track Super+V state."""
-        import evdev
-
+    def _clear_trigger(self):
+        """Remove the trigger file."""
         try:
-            for event in self._device.read_loop():
-                if self._stop:
-                    break
-                if event.type != evdev.ecodes.EV_KEY:
-                    continue
-
-                key_event = evdev.categorize(event)
-
-                if key_event.keystate == evdev.KeyEvent.key_down:
-                    self._keys_down.add(event.code)
-
-                    # Check for Super+V combo
-                    if (self.KEY_LEFTMETA in self._keys_down
-                            and event.code == self.KEY_V):
-                        self._held = True
-                        self._pressed_event.set()
-                        logger.debug("Push-to-talk: PRESSED")
-
-                elif key_event.keystate == evdev.KeyEvent.key_up:
-                    self._keys_down.discard(event.code)
-
-                    # Release if either Super or V is released
-                    if event.code in (self.KEY_LEFTMETA, self.KEY_V):
-                        if self._held:
-                            self._held = False
-                            logger.debug("Push-to-talk: RELEASED")
-
-        except OSError:
-            if not self._stop:
-                logger.error("Lost connection to keyboard device")
-        except Exception as e:
-            if not self._stop:
-                logger.error("evdev listener error: %s", e)
+            if os.path.exists(TRIGGER_FILE):
+                os.unlink(TRIGGER_FILE)
+        except Exception:
+            pass
 
     def wait_for_press(self, timeout: float = None) -> bool:
-        """Block until Super+V is pressed. Returns True if pressed."""
-        self._pressed_event.clear()
-        if self._device is None:
-            # No evdev — simulate with a long wait (voice daemon fallback)
-            logger.warning("No evdev device — push-to-talk unavailable")
-            time.sleep(timeout or 60)
-            return False
-        result = self._pressed_event.wait(timeout=timeout)
-        return result
+        """Block until Super+V is pressed (compositor writes 'press').
+
+        Polls the trigger file every 50ms.
+        """
+        self._clear_trigger()
+        start = time.monotonic()
+        poll_interval = 0.05  # 50ms
+
+        while not self._stop:
+            state = self._read_trigger()
+            if state == "press":
+                logger.debug("Push-to-talk: PRESSED (compositor trigger)")
+                return True
+
+            if timeout and (time.monotonic() - start) > timeout:
+                return False
+
+            time.sleep(poll_interval)
+
+        return False
 
     def is_held(self) -> bool:
-        """Check if Super+V is still held down."""
-        return self._held
+        """Check if Super+V is still held (trigger file says 'press').
+
+        Returns False once compositor writes 'release'.
+        """
+        if self._stop:
+            return False
+        state = self._read_trigger()
+        if state == "release":
+            self._clear_trigger()
+            return False
+        # "press" or empty (compositor hasn't updated yet) = still held
+        return state == "press"
 
     def close(self):
-        """Stop listener and close device."""
+        """Stop listener and clean up."""
         self._stop = True
-        self._pressed_event.set()  # unblock wait_for_press
-        if self._device:
-            try:
-                self._device.close()
-            except Exception:
-                pass
-            self._device = None
+        self._clear_trigger()
         logger.info("Push-to-talk listener closed")
 
 
@@ -159,15 +105,18 @@ _hotkey_active = False
 
 async def get_voice_hotkey_status() -> dict:
     """Report voice hotkey status on Linux."""
+    trigger_exists = os.path.exists(TRIGGER_FILE)
     return {
         "success": True,
         "hotkey_active": _hotkey_active,
-        "hotkey": "super+v (push-to-talk)",
-        "currently_recording": False,
+        "hotkey": "super+v (push-to-talk, compositor-driven)",
+        "currently_recording": trigger_exists and open(TRIGGER_FILE).read().strip() == "press"
+            if trigger_exists else False,
         "last_transcribed_text": None,
+        "mechanism": "compositor trigger file (/tmp/marlow-voice-trigger)",
         "platform_note": (
-            "Push-to-talk via Super+V (evdev). "
-            "Requires input group membership. "
+            "Push-to-talk via Super+V. The compositor intercepts the keybind "
+            "and signals via /tmp/marlow-voice-trigger. "
             "Use voice_daemon.py --push-to-talk for full experience."
         ),
     }
@@ -177,6 +126,6 @@ async def toggle_voice_overlay() -> dict:
     """Voice overlay not yet implemented on Linux."""
     return {
         "success": False,
-        "error": "Voice overlay not available on Linux (Sway). "
+        "error": "Voice overlay not available on Linux compositor. "
                  "Use speak/listen_for_command tools directly.",
     }
