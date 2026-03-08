@@ -493,6 +493,54 @@ class AutonomousMarlow:
             )
         )
 
+        # -- Voice / TTS --
+        try:
+            from marlow.platform.linux.tts import speak, speak_and_listen
+            tools["speak"] = lambda **kw: speak(
+                text=kw.get("text", ""),
+                language=kw.get("language", "auto"),
+                voice=kw.get("voice"),
+                rate=kw.get("rate", 175),
+            )
+            tools["speak_and_listen"] = lambda **kw: speak_and_listen(
+                text=kw.get("text", ""),
+                timeout=kw.get("timeout", 10),
+                language=kw.get("language", "auto"),
+                voice=kw.get("voice"),
+            )
+        except ImportError:
+            logger.warning("TTS module not available")
+
+        try:
+            from marlow.tools.voice import listen_for_command
+            tools["listen_for_command"] = lambda **kw: listen_for_command(
+                duration_seconds=kw.get("duration_seconds", 10),
+                language=kw.get("language", "auto"),
+            )
+        except ImportError:
+            logger.warning("voice module not available")
+
+        try:
+            from marlow.tools.audio import transcribe_audio, download_whisper_model
+            tools["transcribe_audio"] = lambda **kw: transcribe_audio(
+                audio_path=kw.get("audio_path", ""),
+                language=kw.get("language", "auto"),
+            )
+            tools["download_whisper_model"] = lambda **kw: download_whisper_model(
+                model_name=kw.get("model_name", "base"),
+            )
+        except ImportError:
+            logger.warning("audio transcription tools not available")
+
+        try:
+            from marlow.platform.linux.voice_hotkey import (
+                get_voice_hotkey_status, toggle_voice_overlay,
+            )
+            tools["get_voice_hotkey_status"] = lambda **kw: get_voice_hotkey_status()
+            tools["toggle_voice_overlay"] = lambda **kw: toggle_voice_overlay()
+        except ImportError:
+            logger.warning("voice hotkey module not available")
+
         # ══════════════════════════════════════════════════
         # AGNOSTIC TOOLS (pure Python, no platform deps)
         # ══════════════════════════════════════════════════

@@ -314,7 +314,7 @@ async def download_whisper_model(model_size: str = "base") -> dict:
 async def transcribe_audio(
     audio_path: str,
     language: str = "auto",
-    model_size: str = "base",
+    model_size: str = "auto",
 ) -> dict:
     """
     Transcribe an audio file using faster-whisper (CPU, int8).
@@ -322,8 +322,8 @@ async def transcribe_audio(
     Args:
         audio_path: Path to WAV audio file.
         language: Language code (e.g., "en", "es") or "auto" for detection.
-        model_size: Whisper model size: "tiny", "base", "small", "medium".
-                   Default: "base" (good accuracy/speed balance on CPU).
+        model_size: Whisper model size: "tiny", "base", "small", "medium", or
+                   "auto" to select based on hardware capabilities.
 
     Returns:
         Dictionary with transcribed text, language, and segments.
@@ -332,6 +332,15 @@ async def transcribe_audio(
     """
     if not os.path.isfile(audio_path):
         return {"error": f"Audio file not found: {audio_path}"}
+
+    # Auto-select model based on hardware if "auto"
+    if model_size == "auto":
+        try:
+            from marlow.platform.linux.voice_capabilities import get_voice_capabilities
+            model_size = get_voice_capabilities().recommended_whisper_model()
+            logger.info("Auto-selected whisper model: %s", model_size)
+        except ImportError:
+            model_size = "base"  # safe fallback
 
     try:
         from faster_whisper import WhisperModel
