@@ -102,6 +102,14 @@ class VoiceDaemon:
             self._pyaudio.terminate()
             self._pyaudio = None
 
+    # Common whisper hallucinations (garbage audio → phantom text)
+    _HALLUCINATIONS = {
+        "suscríbete", "subtítulos", "amara.org", "subtitulado por",
+        "gracias por ver", "thanks for watching", "subscribe",
+        "like and subscribe", "subtítulos por la comunidad",
+        "música", "aplausos", "risas",
+    }
+
     async def transcribe(self, audio: np.ndarray) -> str:
         """Transcribe audio array to text."""
         self._ensure_asr()
@@ -109,9 +117,17 @@ class VoiceDaemon:
 
         def _run():
             segments, info = self._asr_model.transcribe(
-                audio, language="es", beam_size=1, vad_filter=False,
+                audio, language="es", beam_size=5, vad_filter=True,
             )
-            return " ".join(s.text for s in segments).strip()
+            text = " ".join(s.text for s in segments).strip()
+
+            # Filter hallucinations
+            lower = text.lower()
+            for halluc in VoiceDaemon._HALLUCINATIONS:
+                if halluc in lower:
+                    logger.warning("Filtered hallucination: '%s'", text)
+                    return ""
+            return text
 
         start = time.monotonic()
         text = await loop.run_in_executor(None, _run)
