@@ -25,3 +25,29 @@
 - Email: jarb02@users.noreply.github.com
 - Never include Co-authored-by or Claude references
 - Push to: git@github.com:jarb02/marlow.git (linux-mvp branch)
+
+## StepContext (b7e4b07)
+GoalEngine passes runtime values between steps using $variable references:
+- After each successful step, scalar outputs are stored in _step_context
+- Later steps reference them: {"window_id": "$window_id"}
+- _resolve_params() substitutes $variables before tool execution
+- _step_context resets per goal (isolation between goals)
+- Replan includes step_context for the LLM to reference available variables
+
+## Shadow Mode Interaction (Phase 7)
+Two patterns in the planner prompt:
+- Pattern A (quick URL search): launch_in_shadow + move_to_user (2 steps)
+- Pattern B (interactive): launch → focus → interact → screenshot → OCR → move_to_user
+
+Key fixes:
+- Compositor input routing: SendKey/SendText/SendHotkey now focus target window_id
+  via focus_agent_window() before sending input (previously ignored window_id)
+- Screenshot provider: _find_window_id searches both user_space AND shadow_space
+  (was only searching user_space, and used wrong dict key "id" instead of "window_id")
+- manage_window: implemented via IPC (CloseWindow/MinimizeWindow/MaximizeWindow)
+- Planner prompt: expanded shadow mode section with Pattern A/B documentation
+
+## Live Test
+~/test_shadow_interaction.py — runs 8 tests against compositor IPC:
+  launch → shadow list → focus → seat status → type_text → screenshot → move_to_user → close
+Requires compositor running.
