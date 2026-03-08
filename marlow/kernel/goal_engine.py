@@ -301,12 +301,25 @@ class GoalEngine:
                     step.description,
                 )
 
+            # Resolve $variable references from step context
+            _resolution_error = None
+            try:
+                resolved_params = self._resolve_params(step.params)
+            except ValueError as exc:
+                logger.warning("StepContext resolution failed: %s", exc)
+                resolved_params = step.params
+                _resolution_error = str(exc)
+
             # Execute the step
             self._set_state(GoalState.EXECUTING)
 
-            if self._tool_executor:
+            if _resolution_error:
+                result = ToolResult.fail(
+                    _resolution_error, tool_name=step.tool_name,
+                )
+            elif self._tool_executor:
                 result = await self._tool_executor(
-                    step.tool_name, step.params,
+                    step.tool_name, resolved_params,
                 )
             else:
                 result = ToolResult.fail(
@@ -325,6 +338,16 @@ class GoalEngine:
             if step_success:
                 step.status = "completed"
                 self._scores.append(1.0 if check_passed else 0.85)
+                # Merge step outputs into context for subsequent steps
+                if result.data and isinstance(result.data, dict):
+                    for k, v in result.data.items():
+                        if isinstance(v, (str, int, float, bool)):
+                            self._step_context[k] = v
+                    if self._step_context:
+                        logger.info(
+                            "StepContext after %s: %s",
+                            step.tool_name, self._step_context,
+                        )
                 # Capture result summary from last successful step
                 if result.data:
                     try:
@@ -423,6 +446,7 @@ class GoalEngine:
                                         ]
                                         if s.status == "completed"
                                     ],
+                                    "step_context": dict(self._step_context),
                                     "failed_step": step.description,
                                     "error": error_msg,
                                     "replan": True,
@@ -463,6 +487,31 @@ class GoalEngine:
 
     # ── Helpers ──
 
+    def _resolve_params(self, params: dict) -> dict:
+        """Resolve $variable references in step params from step context.
+
+        Values starting with ``$`` are looked up in ``_step_context``
+        which accumulates outputs from previously completed steps.
+        """
+        resolved = {}
+        for key, value in params.items():
+            if isinstance(value, str) and value.startswith("$"):
+                var_name = value[1:]
+                if var_name in self._step_context:
+                    resolved[key] = self._step_context[var_name]
+                    logger.info(
+                        "StepContext: resolved $%s -> %s",
+                        var_name, self._step_context[var_name],
+                    )
+                else:
+                    raise ValueError(
+                        "StepContext: '$%s' not found. Available: %s"
+                        % (var_name, list(self._step_context.keys()))
+                    )
+            else:
+                resolved[key] = value
+        return resolved
+
     def _build_result(self, goal_id: str, goal_text: str) -> GoalResult:
         steps = self._plan.steps if self._plan else []
         completed = sum(1 for s in steps if s.status == "completed")
@@ -495,6 +544,7 @@ class GoalEngine:
         self._scores = []
         self._errors = []
         self._last_result_summary = ""
+        self._step_context: dict = {}
         self._started_at = 0.0
         self._state_history = []
 

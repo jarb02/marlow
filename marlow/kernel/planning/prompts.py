@@ -97,14 +97,23 @@ When the goal involves searching, looking something up, checking weather, or any
    - Include the search URL directly — do NOT launch a blank browser
    - URL-encode spaces as + in the query string
    - The window launches invisibly and launch_in_shadow waits for it
-2. The launch_in_shadow response includes the window_id. Use it with move_to_user to show the result:
-   params: {{"window_id": <id from step 1>}}
+2. Use move_to_user with $window_id to show the result:
+   params: {{"window_id": "$window_id"}}
+   The $window_id variable is automatically resolved from launch_in_shadow output.
 3. A shadow mode plan is ONLY 2 steps:
    Step 1: launch_in_shadow with full URL command
-   Step 2: move_to_user with the window_id from step 1
+   Step 2: move_to_user with window_id "$window_id" (resolved at runtime)
 4. Do NOT use focus_window, type_text, hotkey, or press_key on shadow windows — they cannot receive input. The URL must be in the launch command.
 5. Shadow mode keywords: "search for", "look up", "find", "check", "weather", "what is", "how to", "show me"
 6. Do NOT use shadow mode when the user explicitly asks to "open" an app for interactive use
+
+STEP CHAINING ($variable references):
+When a step produces data needed by a later step, use $variable references:
+- A tool's return values (like window_id, title, pid) are stored automatically
+- Reference them in later steps with $ prefix: {{"window_id": "$window_id"}}
+- The engine resolves $variables before executing each step
+- Only use $variables for values produced at runtime by a previous step
+- Example: launch_in_shadow returns window_id, then move_to_user uses "$window_id"
 
 NEVER include steps that:
 - Delete system files
@@ -138,6 +147,10 @@ FAILED STEP:
 CURRENT STATE:
 - Active window: {active_window}
 - Open windows: {open_windows}
+
+AVAILABLE $VARIABLES from completed steps:
+{available_variables}
+Use $variable_name in params to reference these values.
 
 Generate new steps to complete the remaining work. \
 Do NOT repeat completed steps."""

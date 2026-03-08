@@ -100,6 +100,7 @@ class LLMPlanner:
                 error_message=context.get("error", "unknown"),
                 active_window=context.get("active_window", "unknown"),
                 open_windows=context.get("open_windows", "unknown"),
+                available_variables=context.get("step_context", {}),
             )
         else:
             additional = f"User home directory: {os.path.expanduser('~')}\n"
