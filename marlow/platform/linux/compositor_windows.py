@@ -161,9 +161,49 @@ class CompositorWindowManager(WindowManager):
         return None
 
     def manage_window(self, identifier: str, action: str, **kwargs) -> bool:
-        # TODO: implement via compositor IPC (close, minimize, maximize)
-        logger.warning("manage_window not yet implemented via compositor IPC")
+        """Manage a window: close, minimize, maximize via compositor IPC."""
+        # Resolve window_id from identifier
+        try:
+            wid = int(identifier)
+        except ValueError:
+            # Search by title/app_id
+            wid = self._find_window_id(identifier)
+            if wid is None:
+                logger.warning("manage_window: window '%s' not found", identifier)
+                return False
+
+        action_lower = action.lower()
+        type_map = {
+            "close": "CloseWindow",
+            "minimize": "MinimizeWindow",
+            "maximize": "MaximizeWindow",
+        }
+
+        ipc_type = type_map.get(action_lower)
+        if not ipc_type:
+            logger.warning("manage_window: unsupported action '%s'", action)
+            return False
+
+        resp = self._send({"type": ipc_type, "window_id": wid})
+        if resp and resp.get("status") == "ok":
+            logger.info("manage_window: %s window %d", action_lower, wid)
+            return True
+        msg = resp.get("message", "IPC failed") if resp else "Compositor not available"
+        logger.warning("manage_window(%s, %s) failed: %s", identifier, action, msg)
         return False
+
+    def _find_window_id(self, identifier: str) -> int | None:
+        """Search for a window ID by title or app_id substring."""
+        resp = self._send({"type": "ListWindows"})
+        if not resp or resp.get("status") != "ok":
+            return None
+        id_lower = identifier.lower()
+        for w in resp.get("data", []):
+            title = (w.get("title") or "").lower()
+            app_id = (w.get("app_id") or "").lower()
+            if id_lower in title or id_lower in app_id:
+                return w.get("window_id")
+        return None
 
     # ── Shadow Mode operations ──
 

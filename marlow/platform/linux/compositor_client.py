@@ -143,6 +143,32 @@ class MarlowCompositorClient:
         })
         return resp.get("status") == "ok"
 
+    # ─── Window management ───
+
+    async def close_window(self, window_id: int) -> bool:
+        """Send close request to a window."""
+        resp = await self.send_request({
+            "type": "CloseWindow",
+            "window_id": window_id,
+        })
+        return resp.get("status") == "ok"
+
+    async def minimize_window(self, window_id: int) -> bool:
+        """Minimize (unmap) a window."""
+        resp = await self.send_request({
+            "type": "MinimizeWindow",
+            "window_id": window_id,
+        })
+        return resp.get("status") == "ok"
+
+    async def maximize_window(self, window_id: int) -> bool:
+        """Maximize a window to fill the output."""
+        resp = await self.send_request({
+            "type": "MaximizeWindow",
+            "window_id": window_id,
+        })
+        return resp.get("status") == "ok"
+
     # ─── Screenshot ───
 
     async def request_screenshot(

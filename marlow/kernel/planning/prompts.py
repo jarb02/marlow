@@ -89,23 +89,42 @@ the application
 - If the application asks to save before closing and you already \
 saved, dismiss the dialog
 
-SHADOW MODE (invisible browser operations):
-When the goal involves searching, looking something up, checking weather, or any task where the user wants RESULTS but doesn't need to SEE the browser working:
-1. Use launch_in_shadow with the FULL command including URL:
-   params: {{"command": "firefox https://www.google.com/search?q=your+query"}}
-   - The "command" param is the full shell command to execute
-   - Include the search URL directly — do NOT launch a blank browser
-   - URL-encode spaces as + in the query string
-   - The window launches invisibly and launch_in_shadow waits for it
-2. Use move_to_user with $window_id to show the result:
-   params: {{"window_id": "$window_id"}}
-   The $window_id variable is automatically resolved from launch_in_shadow output.
-3. A shadow mode plan is ONLY 2 steps:
-   Step 1: launch_in_shadow with full URL command
-   Step 2: move_to_user with window_id "$window_id" (resolved at runtime)
-4. Do NOT use focus_window, type_text, hotkey, or press_key on shadow windows — they cannot receive input. The URL must be in the launch command.
-5. Shadow mode keywords: "search for", "look up", "find", "check", "weather", "what is", "how to", "show me"
-6. Do NOT use shadow mode when the user explicitly asks to "open" an app for interactive use
+SHADOW MODE (invisible window operations):
+Shadow mode runs apps invisibly in shadow_space. Two patterns:
+
+PATTERN A — Quick URL Search (2 steps):
+For simple lookups where the URL contains everything needed:
+1. launch_in_shadow: params: {{"command": "firefox https://www.google.com/search?q=your+query"}}
+   - Include the search URL directly — URL-encode spaces as +
+   - launch_in_shadow waits for the window and returns $window_id
+2. move_to_user: params: {{"window_id": "$window_id"}}
+   - Shows the result to the user
+
+PATTERN B — Interactive Shadow (multi-step):
+For goals that require interaction with the shadow window (typing, clicking, reading results):
+1. launch_in_shadow: params: {{"command": "firefox https://example.com"}}
+   - Returns $window_id
+2. focus_window: params: {{"identifier": "$window_id"}}
+   - Sets agent input focus to the shadow window (required before typing/clicking)
+3. wait_for_idle: params: {{"timeout": 3}}
+   - Wait for the page to load
+4. type_text / click / press_key / hotkey:
+   - Interact with the shadow window (input routed via compositor IPC)
+   - For click, use coordinates relative to the window
+5. take_screenshot: params: {{"window_title": "firefox"}}
+   - Captures the shadow window (screenshot provider searches shadow_space)
+6. ocr_region: params: {{"window_title": "firefox"}}
+   - Extract text from the shadow window screenshot
+7. move_to_user: params: {{"window_id": "$window_id"}}
+   - Show the final result to the user
+
+SHADOW MODE RULES:
+- Use Pattern A for simple searches where the URL has the full query
+- Use Pattern B when you need to interact (e.g., fill forms, navigate)
+- Shadow mode keywords: "search for", "look up", "find", "check", "weather", "what is", "how to", "show me"
+- Do NOT use shadow mode when the user explicitly asks to "open" an app for interactive use
+- Always focus_window before typing/clicking on a shadow window
+- take_screenshot and ocr_region find shadow windows by title automatically
 
 STEP CHAINING ($variable references):
 When a step produces data needed by a later step, use $variable references:

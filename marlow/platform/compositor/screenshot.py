@@ -72,14 +72,20 @@ class CompositorScreenCapture(ScreenCapture):
             raise RuntimeError(f"Compositor screenshot failed: {e}") from e
 
     async def _find_window_id(self, client, title: str) -> Optional[int]:
-        """Find window ID by title substring."""
-        windows = await client.list_windows()
+        """Find window ID by title substring (searches user + shadow)."""
         title_lower = title.lower()
-        for w in windows:
+        # Search user_space first
+        for w in await client.list_windows():
             wt = (w.get("title") or "").lower()
             app = (w.get("app_id") or "").lower()
             if title_lower in wt or title_lower in app:
-                return w.get("id")
+                return w.get("window_id")
+        # Search shadow_space (for shadow window screenshots)
+        for w in await client.get_shadow_windows():
+            wt = (w.get("title") or "").lower()
+            app = (w.get("app_id") or "").lower()
+            if title_lower in wt or title_lower in app:
+                return w.get("window_id")
         return None
 
     @staticmethod
