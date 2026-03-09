@@ -35,10 +35,12 @@ VOICE_CLIPS_DIR = SETTINGS_DIR / "voice_clips"
 @dataclass
 class UserSettings:
     name: str = ""
+    language: str = "es"
 
 @dataclass
 class VoiceSettings:
     enabled: bool = True
+    engine: str = "auto"  # auto | gemini-live | local
     wake_word: bool = True
     wake_word_model: str = "marlow"
     push_to_talk_key: str = "Super+V"
@@ -86,6 +88,13 @@ class TelegramSettings:
     files: TelegramFiles = field(default_factory=TelegramFiles)
 
 @dataclass
+class GeminiSettings:
+    api_key_env: str = "GEMINI_API_KEY"
+    model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+    voice: str = ""  # empty = default, or: Puck, Kore, Charon, Aoede, etc.
+    language: str = "es"
+
+@dataclass
 class PrivacySettings:
     ambient_awareness: bool = False
     excluded_windows: list[str] = field(default_factory=list)
@@ -94,6 +103,7 @@ class PrivacySettings:
 @dataclass
 class Secrets:
     anthropic_api_key: str = ""
+    gemini_api_key: str = ""
     telegram_bot_token: str = ""
 
 
@@ -110,6 +120,7 @@ class MarlowSettings:
     whisper: WhisperSettings = field(default_factory=WhisperSettings)
     sidebar: SidebarSettings = field(default_factory=SidebarSettings)
     telegram: TelegramSettings = field(default_factory=TelegramSettings)
+    gemini: GeminiSettings = field(default_factory=GeminiSettings)
     privacy: PrivacySettings = field(default_factory=PrivacySettings)
     secrets: Secrets = field(default_factory=Secrets)
 
@@ -122,6 +133,11 @@ class MarlowSettings:
     def has_llm(self) -> bool:
         """True if an LLM API key is configured."""
         return bool(self.secrets.anthropic_api_key)
+
+    @property
+    def has_gemini(self) -> bool:
+        """True if a Gemini API key is configured."""
+        return bool(self.secrets.gemini_api_key)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -243,14 +259,18 @@ def load_settings() -> MarlowSettings:
             settings.telegram.files = _populate_dataclass(
                 TelegramFiles, tg["files"],
             )
+    if "gemini" in config:
+        settings.gemini = _populate_dataclass(GeminiSettings, config["gemini"])
     if "privacy" in config:
         settings.privacy = _populate_dataclass(PrivacySettings, config["privacy"])
 
     # Load secrets (TOML file)
     anthropic = secrets_data.get("anthropic", {})
+    gemini_sec = secrets_data.get("gemini", {})
     telegram_sec = secrets_data.get("telegram", {})
     settings.secrets = Secrets(
         anthropic_api_key=anthropic.get("api_key", ""),
+        gemini_api_key=gemini_sec.get("api_key", ""),
         telegram_bot_token=telegram_sec.get("bot_token", ""),
     )
 
@@ -258,6 +278,11 @@ def load_settings() -> MarlowSettings:
     env_anthropic = os.environ.get("ANTHROPIC_API_KEY", "")
     if env_anthropic:
         settings.secrets.anthropic_api_key = env_anthropic
+    env_gemini = os.environ.get("GEMINI_API_KEY", "")
+    if not env_gemini:
+        env_gemini = os.environ.get("MARLOW_GEMINI_API_KEY", "")
+    if env_gemini:
+        settings.secrets.gemini_api_key = env_gemini
     env_telegram = os.environ.get("MARLOW_TELEGRAM_TOKEN", "")
     if env_telegram:
         settings.secrets.telegram_bot_token = env_telegram
@@ -295,10 +320,12 @@ def save_settings(settings: MarlowSettings):
     logger.info("Saved config to %s", CONFIG_PATH)
 
     # Write secrets.toml (only if there are secrets to save)
-    if settings.secrets.anthropic_api_key or settings.secrets.telegram_bot_token:
+    if settings.secrets.anthropic_api_key or settings.secrets.gemini_api_key or settings.secrets.telegram_bot_token:
         secrets_dict = {}
         if settings.secrets.anthropic_api_key:
             secrets_dict["anthropic"] = {"api_key": settings.secrets.anthropic_api_key}
+        if settings.secrets.gemini_api_key:
+            secrets_dict["gemini"] = {"api_key": settings.secrets.gemini_api_key}
         if settings.secrets.telegram_bot_token:
             secrets_dict["telegram"] = {"bot_token": settings.secrets.telegram_bot_token}
 
@@ -320,6 +347,8 @@ def save_secret(key: str, value: str):
 
     if key == "anthropic_api_key":
         existing.setdefault("anthropic", {})["api_key"] = value
+    elif key == "gemini_api_key":
+        existing.setdefault("gemini", {})["api_key"] = value
     elif key == "telegram_bot_token":
         existing.setdefault("telegram", {})["bot_token"] = value
     else:

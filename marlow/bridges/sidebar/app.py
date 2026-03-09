@@ -303,6 +303,7 @@ class MarlowSidebar(Gtk.Application):
         self._window = None
         self._daemon_poller = None
         self._last_status = "idle"
+        self._last_transcript_time = 0.0
 
     def do_activate(self):
         # Create window
@@ -342,8 +343,9 @@ class MarlowSidebar(Gtk.Application):
         self._window.set_child(self._webview)
         self._window.present()
 
-        # Start polling daemon status
+        # Start polling daemon status + voice transcripts
         GLib.timeout_add(2000, self._poll_daemon_status)
+        GLib.timeout_add(1500, self._poll_transcripts)
 
     def _on_title_change(self, webview, pspec):
         """Handle messages from JavaScript via title changes."""
@@ -397,13 +399,16 @@ class MarlowSidebar(Gtk.Application):
                     summary = result.get("result_summary", "")
                     status = result.get("status", "unknown")
 
-                    if success and summary:
-                        response_text = summary
-                    elif success:
-                        response_text = "Listo"
-                    else:
-                        errors = result.get("errors", [])
-                        response_text = errors[0] if errors else f"Estado: {status}"
+                    # Prefer 'response' field (LLM-formatted)
+                    response_text = result.get("response", "")
+                    if not response_text:
+                        if success and summary:
+                            response_text = summary
+                        elif success:
+                            response_text = "OK"
+                        else:
+                            errors = result.get("errors", [])
+                            response_text = errors[0] if errors else status
 
                     GLib.idle_add(self._add_marlow_message, response_text)
             except Exception as e:
@@ -413,7 +418,6 @@ class MarlowSidebar(Gtk.Application):
 
         # Show processing state
         self._run_js("setStatus('processing')")
-        self._run_js(f"addMessage('Procesando...', 'marlow')")
 
     def _toggle_mic(self, state: str):
         """Toggle mic via trigger file."""
@@ -458,6 +462,40 @@ class MarlowSidebar(Gtk.Application):
 
         threading.Thread(target=_do, daemon=True).start()
         return True  # Continue polling
+
+    def _poll_transcripts(self) -> bool:
+        """Poll daemon /transcripts for voice conversation updates."""
+        since = self._last_transcript_time
+
+        def _do():
+            import urllib.request
+            try:
+                url = f"{DAEMON_URL}/transcripts?since={since}"
+                with urllib.request.urlopen(url, timeout=3) as resp:
+                    data = json.loads(resp.read())
+                    transcripts = data.get("transcripts", [])
+                    for t in transcripts:
+                        role = t.get("role", "user")
+                        text = t.get("text", "")
+                        ts = t.get("time", 0)
+                        if ts > self._last_transcript_time:
+                            self._last_transcript_time = ts
+                        if text:
+                            css_role = "marlow" if role == "marlow" else "user"
+                            GLib.idle_add(
+                                self._add_voice_transcript, text, css_role,
+                            )
+            except Exception:
+                pass
+
+        threading.Thread(target=_do, daemon=True).start()
+        return True  # Continue polling
+
+    def _add_voice_transcript(self, text: str, role: str):
+        """Add a voice transcript message to the chat (via voice channel tag)."""
+        safe = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        self._run_js(f"addMessage('{safe}', '{role}', 'voice')")
+        return False
 
     def _run_js(self, js: str):
         """Execute JavaScript in the webview."""

@@ -25,6 +25,8 @@ from typing import Optional
 
 from aiohttp import web
 
+from marlow.kernel.cognition import create_provider, LLMProviderError
+
 # ─────────────────────────────────────────────────────────────
 # Constants
 # ─────────────────────────────────────────────────────────────
@@ -57,6 +59,93 @@ class GoalRecord:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+# ─────────────────────────────────────────────────────────────
+# Intent classification — keyword routing only
+# ─────────────────────────────────────────────────────────────
+
+# Default routing keywords. Override via [intent] in config.toml.
+_DEFAULT_KEYWORDS = {
+    "greetings": [
+        "hola", "hey", "hi", "hello", "buenos dias", "buenas tardes",
+        "buenas noches", "que tal", "que onda", "saludos",
+    ],
+    "questions": [
+        "qué", "que es", "cómo", "como", "por qué", "porque",
+        "cuánto", "cuanto", "dónde", "donde", "cuándo", "cuando",
+        "quién", "quien", "what", "how", "why", "where", "when", "who",
+        "puedes", "sabes", "conoces", "explica", "dime",
+    ],
+    "actions": [
+        "busca", "search", "abre", "open", "cierra", "close",
+        "captura", "screenshot", "muestra", "show", "escribe", "write",
+        "ejecuta", "run", "instala", "install", "mueve", "move",
+        "minimiza", "minimize", "maximiza", "maximize", "mata", "kill",
+        "crea", "create", "borra", "delete", "copia", "copy",
+    ],
+}
+
+# Map ISO codes to LLM-friendly language names
+_LANG_NAMES = {
+    "es": "Spanish", "en": "English", "pt": "Portuguese",
+    "fr": "French", "de": "German", "it": "Italian",
+    "ja": "Japanese", "zh": "Chinese", "ko": "Korean",
+}
+
+
+def _load_intent_keywords() -> dict[str, list[str]]:
+    """Load intent routing keywords from config, with defaults."""
+    keywords = dict(_DEFAULT_KEYWORDS)
+    try:
+        import tomllib
+        config_path = os.path.expanduser("~/.config/marlow/config.toml")
+        if os.path.exists(config_path):
+            with open(config_path, "rb") as f:
+                config = tomllib.load(f)
+            intent = config.get("intent", {})
+            for key in ("greetings", "questions", "actions"):
+                if key in intent:
+                    keywords[key] = intent[key]
+    except Exception:
+        pass
+    return keywords
+
+
+def classify_intent(text: str) -> str:
+    """Classify user input as 'greeting', 'question', or 'action'.
+
+    Only for routing — the LLM handles all natural language generation.
+    """
+    keywords = _load_intent_keywords()
+    lower = text.lower().strip().rstrip("?!.,")
+    words = lower.split()
+
+    if not words:
+        return "greeting"
+
+    # Check greetings (usually at the start)
+    for g in keywords["greetings"]:
+        if lower == g or lower.startswith(g + " ") or lower.startswith(g + ","):
+            return "greeting"
+
+    # Check action keywords (anywhere in text)
+    for a in keywords["actions"]:
+        if a in words:
+            return "action"
+
+    # Check question words (usually at start)
+    first = words[0]
+    for q in keywords["questions"]:
+        if first == q or lower.startswith(q + " "):
+            return "question"
+
+    # Trailing ? is likely a question
+    if text.strip().endswith("?"):
+        return "question"
+
+    # Default to conversational (let LLM handle it)
+    return "question"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -135,8 +224,12 @@ class MarlowDaemon:
         self._stop_requested: bool = False
         self._shutdown_event: asyncio.Event = asyncio.Event()
         self._ws_clients: list = []
+        self._transcripts: list[dict] = []  # Voice conversation transcripts
         self._telegram = None  # WebSocket connections from sidebar
         self._queue_worker: Optional[asyncio.Task] = None
+        self._llm = None  # LLM provider for conversational responses
+        self._user_name: str = ""
+        self._language: str = "Spanish"  # Full name for LLM prompts
 
     # ── Lifecycle ──
 
@@ -158,11 +251,96 @@ class MarlowDaemon:
         self._tools_count = result["total_tools"]
         self._start_time = time.time()
         self._state = "idle"
+        self._load_user_prefs()
         logger.info(
-            "AutonomousMarlow ready: %d tools, provider=%s",
-            self._tools_count, provider,
+            "AutonomousMarlow ready: %d tools, provider=%s, user=%s, lang=%s",
+            self._tools_count, provider, self._user_name, self._language,
         )
         return result
+
+    def _load_user_prefs(self):
+        """Load user name and language from settings."""
+        try:
+            from marlow.core.settings import get_settings
+            s = get_settings()
+            self._user_name = s.user.name or "User"
+            lang_code = getattr(s.user, "language", "es")
+            self._language = _LANG_NAMES.get(lang_code, lang_code)
+        except Exception:
+            self._user_name = "User"
+            self._language = "Spanish"
+
+    def _ensure_llm(self):
+        """Lazy-init LLM provider for conversational responses."""
+        if self._llm is not None:
+            return
+        provider = os.environ.get("MARLOW_LLM_PROVIDER", "anthropic")
+        model = os.environ.get("MARLOW_LLM_MODEL", "")
+        try:
+            self._llm = create_provider(provider, model=model, timeout=30.0)
+            logger.info("Conversational LLM ready: %s", provider)
+        except Exception as e:
+            logger.warning("Failed to init conversational LLM: %s", e)
+
+    async def _llm_chat(self, text: str) -> str:
+        """Generate a conversational response via LLM."""
+        self._ensure_llm()
+        if not self._llm:
+            return ""
+
+        system = (
+            f"You are Marlow, a desktop assistant. "
+            f"The user's name is {self._user_name}. "
+            f"Respond in {self._language}. "
+            f"Be concise, natural, and helpful. Max 1-2 sentences."
+        )
+        try:
+            return (await self._llm.generate(
+                messages=[{"role": "user", "content": text}],
+                system=system,
+                max_tokens=150,
+                temperature=0.7,
+            )).strip()
+        except Exception as e:
+            logger.error("LLM chat error: %s", e)
+            return ""
+
+    async def _llm_format_result(self, original_message: str, result: dict) -> str:
+        """Format a GoalEngine result into natural language via LLM."""
+        self._ensure_llm()
+        if not self._llm:
+            # Fallback without LLM
+            if result.get("success"):
+                return result.get("result_summary") or "Done."
+            errs = result.get("errors", [])
+            return errs[0][:150] if errs else "Failed."
+
+        compact = {
+            "success": result.get("success"),
+            "steps": result.get("steps_completed"),
+            "errors": result.get("errors", [])[:2],
+            "summary": result.get("result_summary", ""),
+        }
+
+        system = (
+            f"The user asked: \"{original_message}\"\n"
+            f"The result was: {json.dumps(compact)}\n"
+            f"Summarize the outcome naturally in {self._language} in 1 sentence. "
+            f"Do not include technical details like JSON or field names."
+        )
+        try:
+            return (await self._llm.generate(
+                messages=[{"role": "user", "content": "Summarize this result."}],
+                system=system,
+                max_tokens=100,
+                temperature=0.5,
+            )).strip()
+        except Exception as e:
+            logger.error("LLM format error: %s", e)
+            if result.get("success"):
+                return result.get("result_summary") or ""
+            errs = result.get("errors", [])
+            return errs[0][:150] if errs else ""
 
     def _teardown(self):
         """Clean shutdown of AutonomousMarlow."""
@@ -285,7 +463,11 @@ class MarlowDaemon:
                     self._ws_clients.remove(ws)
 
     async def handle_goal(self, request: web.Request) -> web.Response:
-        """POST /goal — Submit a goal for execution."""
+        """POST /goal — Submit a goal for execution.
+
+        Routes greetings/questions to LLM, actions to GoalEngine.
+        All natural language is generated by the LLM (language from config).
+        """
         try:
             body = await request.json()
         except (json.JSONDecodeError, Exception):
@@ -302,6 +484,24 @@ class MarlowDaemon:
             )
 
         channel = body.get("channel", "console")
+        intent = classify_intent(goal_text)
+        logger.info("Intent: %s for '%s' (channel=%s)", intent, goal_text[:60], channel)
+
+        # ── Conversational intents: LLM responds directly ──
+        if intent in ("greeting", "question"):
+            response_text = await self._llm_chat(goal_text)
+            if not response_text:
+                response_text = goal_text  # Echo if LLM unavailable
+            return web.json_response({
+                "success": True,
+                "status": "completed",
+                "goal": goal_text,
+                "response": response_text,
+                "result_summary": response_text,
+                "intent": intent,
+            })
+
+        # ── Action intent: GoalEngine executes, LLM formats result ──
         record = GoalRecord(goal=goal_text, channel=channel)
         queue_size = self._goal_queue.qsize()
 
@@ -312,21 +512,25 @@ class MarlowDaemon:
                 "status": "queued",
                 "goal": goal_text,
                 "position": queue_size + 1,
-                "message": f"Goal queued (position {queue_size + 1}). "
-                           f"Another goal is currently executing.",
+                "response": f"Queued at position {queue_size + 1}.",
             })
 
-        # Wait for execution to complete (but with timeout for very long goals)
-        # Give it a moment to start, then poll for completion
+        # Wait for execution to complete
         for _ in range(600):  # 10 min max
             await asyncio.sleep(1.0)
             if record.status in ("completed", "failed", "stopped"):
-                return web.json_response(record.to_dict())
+                result = record.to_dict()
+                # Format result with LLM
+                response_text = await self._llm_format_result(goal_text, result)
+                result["response"] = response_text
+                if not result.get("result_summary"):
+                    result["result_summary"] = response_text
+                return web.json_response(result)
 
         return web.json_response({
             "status": "timeout",
             "goal": goal_text,
-            "message": "Goal still executing after 10 minutes. Check /status.",
+            "response": "Still executing after 10 minutes.",
         })
 
     async def handle_status(self, request: web.Request) -> web.Response:
@@ -361,6 +565,66 @@ class MarlowDaemon:
             "status": "ok",
             "uptime": round(time.time() - self._start_time, 1),
         })
+
+    async def handle_tool(self, request: web.Request) -> web.Response:
+        """POST /tool — Execute a single tool directly (for Gemini function calls)."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        tool_name = body.get("tool", "")
+        params = body.get("params", {})
+
+        if not tool_name:
+            return web.json_response({"error": "Missing 'tool' field"}, status=400)
+
+        if not self._marlow or tool_name not in self._marlow._tool_map:
+            return web.json_response(
+                {"error": f"Unknown tool: {tool_name}"}, status=400,
+            )
+
+        try:
+            func = self._marlow._tool_map[tool_name]
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, lambda: func(**params))
+            if isinstance(result, dict):
+                return web.json_response(result)
+            return web.json_response({"success": True, "result": str(result)})
+        except Exception as e:
+            logger.error("Tool execution error (%s): %s", tool_name, e)
+            return web.json_response({"success": False, "error": str(e)})
+
+    async def handle_transcript(self, request: web.Request) -> web.Response:
+        """POST /transcript — Add a voice conversation transcript entry."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        entry = {
+            "role": body.get("role", "user"),
+            "text": body.get("text", ""),
+            "time": time.time(),
+        }
+        self._transcripts.append(entry)
+        if len(self._transcripts) > 50:
+            self._transcripts = self._transcripts[-50:]
+
+        # Broadcast to WebSocket clients
+        await self._broadcast_ws({
+            "type": "transcript",
+            "role": entry["role"],
+            "text": entry["text"],
+        })
+
+        return web.json_response({"ok": True})
+
+    async def handle_get_transcripts(self, request: web.Request) -> web.Response:
+        """GET /transcripts — Get recent voice transcripts (with ?since= filter)."""
+        since = float(request.query.get("since", 0))
+        recent = [t for t in self._transcripts if t["time"] > since]
+        return web.json_response({"transcripts": recent})
 
     async def handle_history(self, request: web.Request) -> web.Response:
         """GET /history — Last 20 executed goals."""
@@ -422,6 +686,9 @@ class MarlowDaemon:
         app.router.add_post("/stop", self.handle_stop)
         app.router.add_get("/health", self.handle_health)
         app.router.add_get("/history", self.handle_history)
+        app.router.add_post("/tool", self.handle_tool)
+        app.router.add_post("/transcript", self.handle_transcript)
+        app.router.add_get("/transcripts", self.handle_get_transcripts)
         app.router.add_get("/ws", self.handle_ws)
 
         # Setup signal handlers

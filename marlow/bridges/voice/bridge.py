@@ -348,13 +348,11 @@ class VoiceBridge(BridgeBase):
                     os.unlink(trigger)
                     await play_clip("en_que_te_ayudo")
                     self.context.on_wake_word("voice")
-                    # Capture while held
-                    audio = await self._capture_push_to_talk()
-                    if audio is not None:
-                        text = await self._transcribe(audio)
-                        if text and len(text.strip()) >= 3:
-                            self.context.on_speech_end(text)
+                    # State is now LISTENING — next loop iteration
+                    # _handle_listening() will capture via VAD and execute
                     return
+                elif state == "release":
+                    os.unlink(trigger)
             except Exception:
                 pass
 
