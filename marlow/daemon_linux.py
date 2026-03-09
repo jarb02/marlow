@@ -134,6 +134,7 @@ class MarlowDaemon:
         self._tools_count: int = 0
         self._stop_requested: bool = False
         self._shutdown_event: asyncio.Event = asyncio.Event()
+        self._ws_clients: list = []  # WebSocket connections from sidebar
         self._queue_worker: Optional[asyncio.Task] = None
 
     # ── Lifecycle ──
@@ -239,6 +240,48 @@ class MarlowDaemon:
                 pass
 
     # ── HTTP Handlers ──
+
+
+    async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
+        """WebSocket /ws — real-time updates for sidebar."""
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        self._ws_clients.append(ws)
+        logger.info("Sidebar WebSocket connected (%d clients)", len(self._ws_clients))
+
+        try:
+            async for msg in ws:
+                if msg.type == web.WSMsgType.TEXT:
+                    try:
+                        data = json.loads(msg.data)
+                        if data.get("type") == "goal":
+                            goal_text = data.get("text", "").strip()
+                            if goal_text:
+                                record = GoalRecord(goal=goal_text, channel="sidebar")
+                                await self._goal_queue.put(record)
+                                await ws.send_json({"type": "ack", "goal": goal_text})
+                    except json.JSONDecodeError:
+                        pass
+                elif msg.type == web.WSMsgType.ERROR:
+                    break
+        finally:
+            if ws in self._ws_clients:
+                self._ws_clients.remove(ws)
+            logger.info("Sidebar WebSocket disconnected (%d clients)", len(self._ws_clients))
+
+        return ws
+
+    async def _broadcast_ws(self, event: dict):
+        """Send event to all connected WebSocket clients."""
+        if not self._ws_clients:
+            return
+        data = json.dumps(event)
+        for ws in list(self._ws_clients):
+            try:
+                await ws.send_str(data)
+            except Exception:
+                if ws in self._ws_clients:
+                    self._ws_clients.remove(ws)
 
     async def handle_goal(self, request: web.Request) -> web.Response:
         """POST /goal — Submit a goal for execution."""
@@ -354,6 +397,7 @@ class MarlowDaemon:
         app.router.add_post("/stop", self.handle_stop)
         app.router.add_get("/health", self.handle_health)
         app.router.add_get("/history", self.handle_history)
+        app.router.add_get("/ws", self.handle_ws)
 
         # Setup signal handlers
         loop = asyncio.get_running_loop()
