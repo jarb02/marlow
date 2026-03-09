@@ -27,6 +27,14 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("WebKit", "6.0")
 from gi.repository import Gtk, WebKit, GLib, Gdk
 
+# Layer shell for proper sidebar anchoring (wayland compositor integration)
+try:
+    gi.require_version("Gtk4LayerShell", "1.0")
+    from gi.repository import Gtk4LayerShell
+    HAS_LAYER_SHELL = True
+except (ValueError, ImportError):
+    HAS_LAYER_SHELL = False
+
 logger = logging.getLogger("marlow.sidebar")
 
 # Lazy imports for onboarding
@@ -298,6 +306,19 @@ class MarlowSidebar(Gtk.Application):
         self._window.set_title("Marlow")
         self._window.set_default_size(SIDEBAR_WIDTH, 600)
         self._window.set_resizable(True)
+
+        # Anchor sidebar to right edge as a layer surface
+        if HAS_LAYER_SHELL:
+            Gtk4LayerShell.init_for_window(self._window)
+            Gtk4LayerShell.set_layer(self._window, Gtk4LayerShell.Layer.TOP)
+            Gtk4LayerShell.set_anchor(self._window, Gtk4LayerShell.Edge.RIGHT, True)
+            Gtk4LayerShell.set_anchor(self._window, Gtk4LayerShell.Edge.TOP, True)
+            Gtk4LayerShell.set_anchor(self._window, Gtk4LayerShell.Edge.BOTTOM, True)
+            Gtk4LayerShell.set_exclusive_zone(self._window, SIDEBAR_WIDTH)
+            Gtk4LayerShell.set_margin(self._window, Gtk4LayerShell.Edge.TOP, 0)
+            logger.info("Sidebar using layer-shell (anchored right, %dpx)", SIDEBAR_WIDTH)
+        else:
+            logger.warning("gtk4-layer-shell not available, sidebar will be a regular window")
 
         # WebKit webview
         self._webview = WebKit.WebView()
