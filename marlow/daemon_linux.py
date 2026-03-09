@@ -247,6 +247,23 @@ class MarlowDaemon:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, lambda: func(**args))
             if isinstance(result, dict):
+                # Fallback: if launch_in_shadow failed (no compositor),
+                # try open_application instead so Sway mode still works.
+                if (tool_name == "launch_in_shadow"
+                        and not result.get("success")
+                        and "open_application" in self._marlow._tool_map):
+                    command = args.get("command", "")
+                    logger.info(
+                        "launch_in_shadow failed, falling back to "
+                        "open_application: %s", command,
+                    )
+                    func2 = self._marlow._tool_map["open_application"]
+                    result = await loop.run_in_executor(
+                        None, lambda: func2(app_name=command),
+                    )
+                    if isinstance(result, dict):
+                        result["note"] = "Opened visibly (shadow mode unavailable)"
+                        return result
                 return result
             return {"success": True, "result": str(result)}
         except Exception as e:
@@ -374,8 +391,7 @@ class MarlowDaemon:
                 if record.success:
                     response = record.result_summary or "Listo."
                 else:
-                    errors = record.errors
-                    response = errors[0][:200] if errors else "No pude completar la tarea."
+                    response = self._sanitize_error(record.errors)
                 result["response"] = response
                 if not result.get("result_summary"):
                     result["result_summary"] = response
@@ -386,6 +402,40 @@ class MarlowDaemon:
             "goal": goal_text,
             "response": "La tarea sigue ejecutandose despues de 10 minutos.",
         }
+
+
+    @staticmethod
+    def _sanitize_error(errors: list[str]) -> str:
+        """Convert internal errors to user-friendly messages.
+
+        NEVER show raw technical messages (plan validation, tool names,
+        JSON, stack traces) to the user. Always natural language.
+        """
+        if not errors:
+            return "No pude completar la tarea. ¿Quieres intentar de otra forma?"
+
+        raw = errors[0].lower()
+
+        # Plan validation failures — tools not available
+        if "plan validation failed" in raw or "unknown tool" in raw:
+            return ("No tengo todas las herramientas necesarias para eso "
+                    "en este momento. ¿Quieres que lo intente de otra forma?")
+
+        # No plan found
+        if "no plan" in raw or "no template" in raw:
+            return ("No encontré una forma de hacer eso. "
+                    "¿Puedes describir lo que necesitas de otra manera?")
+
+        # Timeout
+        if "timeout" in raw or "timed out" in raw:
+            return "La tarea tardó demasiado. ¿Quieres que lo intente de nuevo?"
+
+        # Connection / network errors
+        if "connection" in raw or "network" in raw or "socket" in raw:
+            return "Hubo un problema de conexión. ¿Quieres que lo intente de nuevo?"
+
+        # Generic fallback — never show the raw error
+        return "No pude completar eso. ¿Quieres intentar de otra forma?"
 
     # ── HTTP Handlers ──
 

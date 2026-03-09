@@ -116,15 +116,23 @@ class GeminiTextBridge:
         try:
             response = await self._chat.send_message(text)
         except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                # Rate limit — retry once after delay (do not reset chat)
-                logger.warning("Gemini rate limited, retrying in 5s...")
-                await asyncio.sleep(5)
-                try:
-                    response = await self._chat.send_message(text)
-                except Exception as e2:
-                    logger.error("Gemini retry also failed: %s", e2)
-                    raise
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                delay = self._parse_retry_delay(err_str)
+                if delay <= 10:
+                    logger.warning("Gemini rate limited, retrying in %ds...", delay)
+                    await asyncio.sleep(delay)
+                    try:
+                        response = await self._chat.send_message(text)
+                    except Exception as e2:
+                        logger.warning("Gemini retry also failed: %s", e2)
+                        return self._rate_limit_message()
+                else:
+                    logger.warning(
+                        "Gemini rate limited (retry in %ds), too long to wait",
+                        delay,
+                    )
+                    return self._rate_limit_message()
             else:
                 logger.error("Gemini send_message error: %s", e)
                 self._chat = None
@@ -180,14 +188,23 @@ class GeminiTextBridge:
             try:
                 response = await self._chat.send_message(function_responses)
             except Exception as e:
-                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                    logger.warning("Gemini rate limited on tool response, retrying in 5s...")
-                    await asyncio.sleep(5)
-                    try:
-                        response = await self._chat.send_message(function_responses)
-                    except Exception as e2:
-                        logger.error("Gemini retry also failed: %s", e2)
-                        raise
+                err_str = str(e)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    delay = self._parse_retry_delay(err_str)
+                    if delay <= 10:
+                        logger.warning("Gemini rate limited on tool response, retrying in %ds...", delay)
+                        await asyncio.sleep(delay)
+                        try:
+                            response = await self._chat.send_message(function_responses)
+                        except Exception as e2:
+                            logger.warning("Gemini retry also failed: %s", e2)
+                            return self._rate_limit_message()
+                    else:
+                        logger.warning(
+                            "Gemini rate limited on tool response (retry in %ds)",
+                            delay,
+                        )
+                        return self._rate_limit_message()
                 else:
                     logger.error("Gemini tool response error: %s", e)
                     self._chat = None
@@ -249,6 +266,25 @@ class GeminiTextBridge:
             ]
 
         return compact
+
+
+    @staticmethod
+    def _parse_retry_delay(error_str: str) -> int:
+        """Extract retry delay in seconds from a 429 error message."""
+        import re
+        # Look for "Please retry in Xs" or "retryDelay: Xs"
+        match = re.search(r'retry\s+in\s+(\d+(?:\.\d+)?)\s*s', error_str, re.IGNORECASE)
+        if match:
+            return max(1, int(float(match.group(1))))
+        return 5  # Default
+
+    def _rate_limit_message(self) -> str:
+        """Return a friendly message when rate limited."""
+        if self._language == "es":
+            return ("Estoy un poco saturado en este momento. "
+                    "¿Puedes intentar de nuevo en unos segundos?")
+        return ("I'm a bit busy right now. "
+                "Can you try again in a few seconds?")
 
     def reset_chat(self):
         """Force reset the chat session (e.g. sidebar disconnect)."""
