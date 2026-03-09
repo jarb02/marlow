@@ -134,7 +134,8 @@ class MarlowDaemon:
         self._tools_count: int = 0
         self._stop_requested: bool = False
         self._shutdown_event: asyncio.Event = asyncio.Event()
-        self._ws_clients: list = []  # WebSocket connections from sidebar
+        self._ws_clients: list = []
+        self._telegram = None  # WebSocket connections from sidebar
         self._queue_worker: Optional[asyncio.Task] = None
 
     # ── Lifecycle ──
@@ -389,6 +390,30 @@ class MarlowDaemon:
 
         # Start goal queue worker
         self._queue_worker = asyncio.create_task(self._queue_worker_loop())
+
+
+        # Start Telegram bridge if configured
+        try:
+            from marlow.core.settings import get_settings
+            settings = get_settings()
+            if settings.telegram.enabled and settings.secrets.telegram_bot_token:
+                from marlow.bridges.telegram.bridge import TelegramBridge
+                self._telegram = TelegramBridge()
+
+                async def _tg_goal(text, channel):
+                    record = GoalRecord(goal=text, channel=channel)
+                    await self._goal_queue.put(record)
+                    # Wait for result (simplified)
+                    for _ in range(600):
+                        await asyncio.sleep(1.0)
+                        if record.status in ("completed", "failed", "stopped"):
+                            return record.to_dict()
+                    return {"success": False, "errors": ["timeout"]}
+
+                asyncio.create_task(self._telegram.start(_tg_goal))
+                logger.info("Telegram bridge started")
+        except Exception as e:
+            logger.warning("Telegram bridge not started: %s", e)
 
         # Setup HTTP routes
         app = web.Application()
