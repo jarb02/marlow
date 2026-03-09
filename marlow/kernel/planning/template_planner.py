@@ -6,6 +6,7 @@ This saves LLM calls for simple, well-known tasks.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Optional
 
@@ -213,32 +214,52 @@ class TemplatePlanner:
         )
 
     def _plan_search(self, match, context) -> Plan:
-        """Plan a web search: launch firefox in shadow, move to user."""
+        """Plan a web search: shadow mode if compositor available, else direct open."""
         query = match.group(1).strip()
-        # URL-encode query: replace spaces with +
         url_query = query.replace(" ", "+")
         search_url = f"https://www.google.com/search?q={url_query}"
 
+        # Check if compositor is available for shadow mode
+        compositor_sock = f"/run/user/{os.getuid()}/marlow-compositor.sock"
+        if os.path.exists(compositor_sock):
+            return Plan(
+                goal_id="",
+                goal_text=match.string,
+                steps=[
+                    PlanStep(
+                        id="step_1",
+                        tool_name="launch_in_shadow",
+                        params={"command": f"firefox {search_url}"},
+                        description=f"Search for: {query}",
+                        risk="low",
+                        estimated_duration_ms=5000,
+                        success_check={"type": "return_value", "params": {"key": "window_id"}},
+                    ),
+                    PlanStep(
+                        id="step_2",
+                        tool_name="move_to_user",
+                        params={"window_id": ""},
+                        description="Show search results to user",
+                        risk="low",
+                        estimated_duration_ms=1000,
+                        success_check={"type": "return_value", "params": {"key": "success"}},
+                    ),
+                ],
+                context={"target_app": "firefox"},
+            )
+
+        # Fallback: open firefox directly (no shadow mode)
         return Plan(
             goal_id="",
             goal_text=match.string,
             steps=[
                 PlanStep(
                     id="step_1",
-                    tool_name="launch_in_shadow",
-                    params={"command": f"firefox {search_url}"},
+                    tool_name="open_application",
+                    params={"name": f"firefox {search_url}"},
                     description=f"Search for: {query}",
                     risk="low",
-                    estimated_duration_ms=5000,
-                    success_check={"type": "return_value", "params": {"key": "window_id"}},
-                ),
-                PlanStep(
-                    id="step_2",
-                    tool_name="move_to_user",
-                    params={"window_id": "$window_id"},
-                    description="Show search results to user",
-                    risk="low",
-                    estimated_duration_ms=1000,
+                    estimated_duration_ms=3000,
                     success_check={"type": "return_value", "params": {"key": "success"}},
                 ),
             ],

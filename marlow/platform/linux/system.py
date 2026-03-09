@@ -52,20 +52,34 @@ class LinuxSystemProvider(SystemProvider):
             }
 
     def open_application(self, name_or_path: str) -> dict:
-        """Launch an application by name or path."""
+        """Launch an application by name, path, or command with arguments."""
         try:
-            # If it's a full path, launch directly
-            if os.path.isfile(name_or_path):
+            parts = name_or_path.split()
+
+            # Multi-word command (e.g. "firefox https://...")
+            if len(parts) > 1:
+                resolved = shutil.which(parts[0])
+                if resolved:
+                    parts[0] = resolved
                 proc = subprocess.Popen(
-                    [name_or_path],
+                    parts,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
                 return {"success": True, "pid": proc.pid}
 
-            # If it looks like a desktop app name, try common launchers
-            # Try direct execution first (e.g. "firefox", "nautilus")
-            resolved = shutil.which(name_or_path)
+            # Single word — try as executable name
+            name = parts[0]
+
+            if os.path.isfile(name):
+                proc = subprocess.Popen(
+                    [name],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                return {"success": True, "pid": proc.pid}
+
+            resolved = shutil.which(name)
             if resolved:
                 proc = subprocess.Popen(
                     [resolved],
@@ -74,9 +88,9 @@ class LinuxSystemProvider(SystemProvider):
                 )
                 return {"success": True, "pid": proc.pid}
 
-            # Fallback to xdg-open (for file associations / URLs)
+            # Fallback to xdg-open
             r = subprocess.run(
-                ["xdg-open", name_or_path],
+                ["xdg-open", name],
                 capture_output=True, text=True, timeout=10,
             )
             if r.returncode == 0:

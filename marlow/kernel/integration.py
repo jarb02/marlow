@@ -578,8 +578,7 @@ class AutonomousMarlow:
                 timeout=kw.get("timeout", 30),
             )
             tools["open_application"] = lambda **kw: system.open_application(
-                app_name=kw.get("app_name") or kw.get("name"),
-                app_path=kw.get("app_path"),
+                name_or_path=kw.get("app_name") or kw.get("name") or kw.get("name_or_path", ""),
             )
             tools["clipboard"] = lambda **kw: system.clipboard(
                 action=kw.get("action", "read"),
