@@ -43,6 +43,7 @@ LOG_FILE = os.path.join(MARLOW_DIR, "daemon.log")
 @dataclass
 class GoalRecord:
     goal: str
+    channel: str = "console"  # voice | sidebar | telegram | console
     status: str = "queued"  # queued | executing | completed | failed | stopped
     success: bool = False
     steps_completed: int = 0
@@ -256,7 +257,8 @@ class MarlowDaemon:
                 status=400,
             )
 
-        record = GoalRecord(goal=goal_text)
+        channel = body.get("channel", "console")
+        record = GoalRecord(goal=goal_text, channel=channel)
         queue_size = self._goal_queue.qsize()
 
         await self._goal_queue.put(record)
