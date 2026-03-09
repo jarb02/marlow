@@ -29,6 +29,15 @@ from gi.repository import Gtk, WebKit, GLib, Gdk
 
 logger = logging.getLogger("marlow.sidebar")
 
+# Lazy imports for onboarding
+def _check_onboarding():
+    try:
+        sys.path.insert(0, os.path.expanduser("~/marlow"))
+        from marlow.bridges.sidebar.onboarding import is_onboarding_needed
+        return is_onboarding_needed()
+    except Exception:
+        return False
+
 SIDEBAR_WIDTH = 380
 DAEMON_URL = "http://localhost:8420"
 
@@ -292,7 +301,14 @@ class MarlowSidebar(Gtk.Application):
 
         # WebKit webview
         self._webview = WebKit.WebView()
-        self._webview.load_html(CHAT_HTML, "file:///")
+        # Check if onboarding is needed
+        if _check_onboarding():
+            from marlow.bridges.sidebar.onboarding import get_onboarding_html
+            self._webview.load_html(get_onboarding_html(), "file:///")
+            self._onboarding_mode = True
+        else:
+            self._webview.load_html(CHAT_HTML, "file:///")
+            self._onboarding_mode = False
 
         # Monitor title changes for message bridge
         self._webview.connect("notify::title", self._on_title_change)
@@ -309,12 +325,34 @@ class MarlowSidebar(Gtk.Application):
         if not title:
             return
 
+        if title.startswith("ONBOARD:"):
+            self._handle_onboarding(title[8:])
+            return
+
         if title.startswith("MSG:"):
             text = title[4:]
             self._send_goal(text)
         elif title.startswith("MIC:"):
             mic_state = title[4:]
             self._toggle_mic(mic_state)
+
+    def _handle_onboarding(self, data: str):
+        """Handle onboarding events from the wizard."""
+        parts = data.split(":", 1)
+        if len(parts) != 2:
+            return
+        event_type, value = parts
+
+        try:
+            from marlow.bridges.sidebar.onboarding import process_onboarding_event
+            process_onboarding_event(event_type, value)
+        except Exception as e:
+            logger.error("Onboarding error: %s", e)
+
+        # When done, switch to normal chat mode
+        if event_type == "done":
+            self._onboarding_mode = False
+            self._webview.load_html(CHAT_HTML, "file:///")
 
     def _send_goal(self, text: str):
         """Send goal to daemon via HTTP in a thread."""
