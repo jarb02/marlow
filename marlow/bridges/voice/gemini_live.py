@@ -27,123 +27,12 @@ RECEIVE_SAMPLE_RATE = 24000  # Gemini outputs 24kHz
 CHUNK_SIZE = 1024
 
 
-# ─────────────────────────────────────────────────────────────
-# Marlow desktop tools as Gemini function declarations
-# ─────────────────────────────────────────────────────────────
-
-def _build_tool_declarations():
-    """Build Gemini function declarations for Marlow desktop tools."""
-    from google.genai import types
-
-    return [
-        types.Tool(function_declarations=[
-            types.FunctionDeclaration(
-                name="launch_in_shadow",
-                description=(
-                    "Launch an application in shadow mode (invisible to user). "
-                    "Use for web searches, opening apps in background."
-                ),
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "command": types.Schema(
-                            type=types.Type.STRING,
-                            description="Command to launch, e.g. 'firefox https://google.com/search?q=weather'",
-                        ),
-                    },
-                    required=["command"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="move_to_user",
-                description="Move a shadow window to the user's visible screen.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "window_id": types.Schema(
-                            type=types.Type.INTEGER,
-                            description="Window ID to promote to visible screen",
-                        ),
-                    },
-                    required=["window_id"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="open_application",
-                description="Open an application on the user's desktop.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "app_name": types.Schema(
-                            type=types.Type.STRING,
-                            description="Application name: firefox, foot, nautilus, etc.",
-                        ),
-                    },
-                    required=["app_name"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="close_window",
-                description="Close a window on the desktop.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "window_id": types.Schema(
-                            type=types.Type.INTEGER,
-                            description="Window ID to close",
-                        ),
-                    },
-                    required=["window_id"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="list_windows",
-                description="List all open windows on the desktop with their IDs and titles.",
-                parameters=types.Schema(type=types.Type.OBJECT, properties={}),
-            ),
-            types.FunctionDeclaration(
-                name="take_screenshot",
-                description="Take a screenshot of a window or the full screen.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "window_id": types.Schema(
-                            type=types.Type.INTEGER,
-                            description="Window ID to capture. Omit for full screen.",
-                        ),
-                    },
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="run_command",
-                description="Run a shell command on the system and return its output.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "command": types.Schema(
-                            type=types.Type.STRING,
-                            description="Shell command to execute",
-                        ),
-                    },
-                    required=["command"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="type_text",
-                description="Type text into the currently focused window.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "text": types.Schema(
-                            type=types.Type.STRING,
-                            description="Text to type",
-                        ),
-                    },
-                    required=["text"],
-                ),
-            ),
-        ])
-    ]
+# Tools and system prompt imported from shared schema
+from marlow.bridges.tools_schema import (
+    build_tool_declarations,
+    build_system_prompt,
+    resolve_tool_call,
+)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -199,35 +88,7 @@ class GeminiLiveVoiceBridge:
         self._output_end_time = 0.0  # timestamp when output stopped + buffer
 
     def _build_system_prompt(self) -> str:
-        lang_map = {
-            "es": "Responde siempre en español. Usa un tono natural, amigable y conciso.",
-            "en": "Always respond in English. Use a natural, friendly, and concise tone.",
-            "pt": "Responda sempre em português. Use um tom natural, amigável e conciso.",
-            "fr": "Réponds toujours en français. Utilise un ton naturel, amical et concis.",
-        }
-        lang_instruction = lang_map.get(
-            self._language,
-            f"Respond in {self._language}. Be natural, friendly, concise.",
-        )
-
-        return (
-            f"You are Marlow, an AI desktop assistant integrated into Marlow OS "
-            f"(a custom Linux desktop environment).\n"
-            f"The user's name is {self._user_name}. {lang_instruction}\n\n"
-            f"You control the user's desktop through function calls. When the user "
-            f"asks you to do something on their computer (search, open apps, close "
-            f"windows, take screenshots, etc.), use the available tools.\n\n"
-            f"Conversation guidelines:\n"
-            f"- Be concise. 1-3 sentences max for most responses.\n"
-            f"- For greetings, respond warmly but briefly.\n"
-            f"- When executing actions, briefly acknowledge what you're doing.\n"
-            f"- After completing an action, summarize the result naturally.\n"
-            f"- If an action fails, explain simply and offer alternatives.\n"
-            f"- Hold multi-turn conversations naturally. Remember context within this session.\n"
-            f"- If the user asks to see something you found in shadow mode, use move_to_user.\n"
-            f"- Never mention technical details like window IDs, JSON, or APIs.\n"
-            f"- When the user says goodbye (adiós, bye, etc.), respond briefly and end naturally.\n"
-        )
+        return build_system_prompt(self._user_name, self._language)
 
     def _build_config(self) -> dict:
         from google.genai import types
@@ -235,7 +96,7 @@ class GeminiLiveVoiceBridge:
         config: dict = {
             "response_modalities": ["AUDIO"],
             "system_instruction": self._build_system_prompt(),
-            "tools": _build_tool_declarations(),
+            "tools": build_tool_declarations(),
             "context_window_compression": types.ContextWindowCompressionConfig(
                 sliding_window=types.SlidingWindow(),
             ),
@@ -455,8 +316,10 @@ class GeminiLiveVoiceBridge:
         for fc in tool_call.function_calls:
             logger.info("Gemini tool call: %s(%s)", fc.name, fc.args)
 
+            # Resolve aliases (close_window -> manage_window, etc.)
+            real_name, real_args = resolve_tool_call(fc.name, fc.args or {})
             try:
-                result = await tool_executor(fc.name, fc.args or {})
+                result = await tool_executor(real_name, real_args)
                 function_responses.append(
                     types.FunctionResponse(
                         id=fc.id,

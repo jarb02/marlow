@@ -90,7 +90,8 @@ class TelegramSettings:
 @dataclass
 class GeminiSettings:
     api_key_env: str = "GEMINI_API_KEY"
-    model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+    model: str = "gemini-2.5-flash-native-audio-preview-12-2025"  # voice (Live API)
+    text_model: str = "gemini-2.5-flash"  # text interaction (regular API)
     voice: str = ""  # empty = default, or: Puck, Kore, Charon, Aoede, etc.
     language: str = "es"
 

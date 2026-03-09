@@ -3,6 +3,12 @@
 Runs as a systemd service or standalone process. Exposes an HTTP API
 on localhost:8420 for submitting goals, checking status, and history.
 
+Architecture:
+    ALL user interaction (sidebar, console, telegram) -> Gemini API (with tools)
+    Voice -> Gemini Live (streaming audio, separate daemon)
+    Gemini decides: greet, answer, or call desktop tools via function calling.
+    Fallback: GoalEngine + templates if Gemini unavailable.
+
 Usage:
     python3 -m marlow.daemon_linux
 
@@ -24,8 +30,6 @@ from dataclasses import asdict, dataclass, field
 from typing import Optional
 
 from aiohttp import web
-
-from marlow.kernel.cognition import create_provider, LLMProviderError
 
 # ─────────────────────────────────────────────────────────────
 # Constants
@@ -62,93 +66,6 @@ class GoalRecord:
 
 
 # ─────────────────────────────────────────────────────────────
-# Intent classification — keyword routing only
-# ─────────────────────────────────────────────────────────────
-
-# Default routing keywords. Override via [intent] in config.toml.
-_DEFAULT_KEYWORDS = {
-    "greetings": [
-        "hola", "hey", "hi", "hello", "buenos dias", "buenas tardes",
-        "buenas noches", "que tal", "que onda", "saludos",
-    ],
-    "questions": [
-        "qué", "que es", "cómo", "como", "por qué", "porque",
-        "cuánto", "cuanto", "dónde", "donde", "cuándo", "cuando",
-        "quién", "quien", "what", "how", "why", "where", "when", "who",
-        "puedes", "sabes", "conoces", "explica", "dime",
-    ],
-    "actions": [
-        "busca", "search", "abre", "open", "cierra", "close",
-        "captura", "screenshot", "muestra", "show", "escribe", "write",
-        "ejecuta", "run", "instala", "install", "mueve", "move",
-        "minimiza", "minimize", "maximiza", "maximize", "mata", "kill",
-        "crea", "create", "borra", "delete", "copia", "copy",
-    ],
-}
-
-# Map ISO codes to LLM-friendly language names
-_LANG_NAMES = {
-    "es": "Spanish", "en": "English", "pt": "Portuguese",
-    "fr": "French", "de": "German", "it": "Italian",
-    "ja": "Japanese", "zh": "Chinese", "ko": "Korean",
-}
-
-
-def _load_intent_keywords() -> dict[str, list[str]]:
-    """Load intent routing keywords from config, with defaults."""
-    keywords = dict(_DEFAULT_KEYWORDS)
-    try:
-        import tomllib
-        config_path = os.path.expanduser("~/.config/marlow/config.toml")
-        if os.path.exists(config_path):
-            with open(config_path, "rb") as f:
-                config = tomllib.load(f)
-            intent = config.get("intent", {})
-            for key in ("greetings", "questions", "actions"):
-                if key in intent:
-                    keywords[key] = intent[key]
-    except Exception:
-        pass
-    return keywords
-
-
-def classify_intent(text: str) -> str:
-    """Classify user input as 'greeting', 'question', or 'action'.
-
-    Only for routing — the LLM handles all natural language generation.
-    """
-    keywords = _load_intent_keywords()
-    lower = text.lower().strip().rstrip("?!.,")
-    words = lower.split()
-
-    if not words:
-        return "greeting"
-
-    # Check greetings (usually at the start)
-    for g in keywords["greetings"]:
-        if lower == g or lower.startswith(g + " ") or lower.startswith(g + ","):
-            return "greeting"
-
-    # Check action keywords (anywhere in text)
-    for a in keywords["actions"]:
-        if a in words:
-            return "action"
-
-    # Check question words (usually at start)
-    first = words[0]
-    for q in keywords["questions"]:
-        if first == q or lower.startswith(q + " "):
-            return "question"
-
-    # Trailing ? is likely a question
-    if text.strip().endswith("?"):
-        return "question"
-
-    # Default to conversational (let LLM handle it)
-    return "question"
-
-
-# ─────────────────────────────────────────────────────────────
 # Environment auto-detection for Sway/Wayland
 # ─────────────────────────────────────────────────────────────
 
@@ -171,7 +88,6 @@ def _ensure_sway_env():
             os.environ["SWAYSOCK"] = socks[0]
 
     if "WAYLAND_DISPLAY" not in os.environ:
-        # Check for wayland socket in runtime dir
         for name in ("wayland-1", "wayland-0"):
             if os.path.exists(os.path.join(runtime_dir, name)):
                 os.environ["WAYLAND_DISPLAY"] = name
@@ -210,12 +126,16 @@ logger = logging.getLogger("marlow.daemon")
 # ─────────────────────────────────────────────────────────────
 
 class MarlowDaemon:
-    """Persistent daemon wrapping AutonomousMarlow with an HTTP API."""
+    """Persistent daemon wrapping AutonomousMarlow with an HTTP API.
+
+    Primary path: ALL text -> Gemini API (with function calling tools).
+    Fallback path: GoalEngine with templates (if Gemini unavailable).
+    """
 
     def __init__(self):
         self._marlow = None
         self._start_time: float = 0.0
-        self._state: str = "starting"  # starting | idle | executing | planning | stopped
+        self._state: str = "starting"
         self._current_goal: Optional[str] = None
         self._current_task: Optional[asyncio.Task] = None
         self._goal_queue: asyncio.Queue = asyncio.Queue()
@@ -224,17 +144,17 @@ class MarlowDaemon:
         self._stop_requested: bool = False
         self._shutdown_event: asyncio.Event = asyncio.Event()
         self._ws_clients: list = []
-        self._transcripts: list[dict] = []  # Voice conversation transcripts
-        self._telegram = None  # WebSocket connections from sidebar
+        self._transcripts: list[dict] = []
+        self._telegram = None
         self._queue_worker: Optional[asyncio.Task] = None
-        self._llm = None  # LLM provider for conversational responses
+        self._gemini_text = None  # GeminiTextBridge for all text interaction
         self._user_name: str = ""
-        self._language: str = "Spanish"  # Full name for LLM prompts
+        self._language: str = "es"
 
     # ── Lifecycle ──
 
     def _init_marlow(self) -> dict:
-        """Initialize AutonomousMarlow with LLM provider from environment."""
+        """Initialize AutonomousMarlow (tools + GoalEngine for fallback)."""
         from marlow.kernel.integration_linux import AutonomousMarlow
 
         provider = os.environ.get("MARLOW_LLM_PROVIDER", "anthropic")
@@ -253,8 +173,8 @@ class MarlowDaemon:
         self._state = "idle"
         self._load_user_prefs()
         logger.info(
-            "AutonomousMarlow ready: %d tools, provider=%s, user=%s, lang=%s",
-            self._tools_count, provider, self._user_name, self._language,
+            "AutonomousMarlow ready: %d tools, user=%s, lang=%s",
+            self._tools_count, self._user_name, self._language,
         )
         return result
 
@@ -264,83 +184,74 @@ class MarlowDaemon:
             from marlow.core.settings import get_settings
             s = get_settings()
             self._user_name = s.user.name or "User"
-            lang_code = getattr(s.user, "language", "es")
-            self._language = _LANG_NAMES.get(lang_code, lang_code)
+            self._language = getattr(s.user, "language", "es")
         except Exception:
             self._user_name = "User"
-            self._language = "Spanish"
+            self._language = "es"
 
-    def _ensure_llm(self):
-        """Lazy-init LLM provider for conversational responses."""
-        if self._llm is not None:
+    def _init_gemini_text(self):
+        """Initialize GeminiTextBridge for all text interaction."""
+        try:
+            from marlow.core.settings import get_settings
+            settings = get_settings()
+        except Exception:
+            logger.warning("Cannot load settings for Gemini text bridge")
             return
-        provider = os.environ.get("MARLOW_LLM_PROVIDER", "anthropic")
-        model = os.environ.get("MARLOW_LLM_MODEL", "")
+
+        # Get API key
+        api_key = settings.secrets.gemini_api_key
+        if not api_key:
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+        if not api_key:
+            api_key = os.environ.get("MARLOW_GEMINI_API_KEY", "")
+
+        if not api_key:
+            logger.warning(
+                "No Gemini API key configured — text will use fallback "
+                "(GoalEngine + templates). Set gemini.api_key in secrets.toml."
+            )
+            return
+
+        # Get text model (separate from audio model)
+        text_model = getattr(settings.gemini, "text_model", "") or "gemini-2.5-flash"
+
         try:
-            self._llm = create_provider(provider, model=model, timeout=30.0)
-            logger.info("Conversational LLM ready: %s", provider)
+            from marlow.bridges.gemini_text import GeminiTextBridge
+
+            self._gemini_text = GeminiTextBridge(
+                api_key=api_key,
+                tool_executor=self._execute_tool_direct,
+                user_name=self._user_name,
+                language=self._language,
+                model=text_model,
+            )
+            logger.info(
+                "Gemini text bridge ready: model=%s, user=%s",
+                text_model, self._user_name,
+            )
         except Exception as e:
-            logger.warning("Failed to init conversational LLM: %s", e)
+            logger.error("Failed to init Gemini text bridge: %s", e)
+            self._gemini_text = None
 
-    async def _llm_chat(self, text: str) -> str:
-        """Generate a conversational response via LLM."""
-        self._ensure_llm()
-        if not self._llm:
-            return ""
+    async def _execute_tool_direct(self, tool_name: str, args: dict) -> dict:
+        """Execute a tool directly from the daemon tool map.
 
-        system = (
-            f"You are Marlow, a desktop assistant. "
-            f"The user's name is {self._user_name}. "
-            f"Respond in {self._language}. "
-            f"Be concise, natural, and helpful. Max 1-2 sentences."
-        )
+        Used by GeminiTextBridge as tool_executor callback.
+        Same tools available as the voice path (via /tool endpoint).
+        """
+        if not self._marlow or tool_name not in self._marlow._tool_map:
+            return {"success": False, "error": f"Unknown tool: {tool_name}"}
+
         try:
-            return (await self._llm.generate(
-                messages=[{"role": "user", "content": text}],
-                system=system,
-                max_tokens=150,
-                temperature=0.7,
-            )).strip()
+            func = self._marlow._tool_map[tool_name]
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, lambda: func(**args))
+            if isinstance(result, dict):
+                return result
+            return {"success": True, "result": str(result)}
         except Exception as e:
-            logger.error("LLM chat error: %s", e)
-            return ""
-
-    async def _llm_format_result(self, original_message: str, result: dict) -> str:
-        """Format a GoalEngine result into natural language via LLM."""
-        self._ensure_llm()
-        if not self._llm:
-            # Fallback without LLM
-            if result.get("success"):
-                return result.get("result_summary") or "Done."
-            errs = result.get("errors", [])
-            return errs[0][:150] if errs else "Failed."
-
-        compact = {
-            "success": result.get("success"),
-            "steps": result.get("steps_completed"),
-            "errors": result.get("errors", [])[:2],
-            "summary": result.get("result_summary", ""),
-        }
-
-        system = (
-            f"The user asked: \"{original_message}\"\n"
-            f"The result was: {json.dumps(compact)}\n"
-            f"Summarize the outcome naturally in {self._language} in 1 sentence. "
-            f"Do not include technical details like JSON or field names."
-        )
-        try:
-            return (await self._llm.generate(
-                messages=[{"role": "user", "content": "Summarize this result."}],
-                system=system,
-                max_tokens=100,
-                temperature=0.5,
-            )).strip()
-        except Exception as e:
-            logger.error("LLM format error: %s", e)
-            if result.get("success"):
-                return result.get("result_summary") or ""
-            errs = result.get("errors", [])
-            return errs[0][:150] if errs else ""
+            logger.error("Tool execution error (%s): %s", tool_name, e)
+            return {"success": False, "error": str(e)}
 
     @staticmethod
     def _is_gemini_active() -> bool:
@@ -365,10 +276,10 @@ class MarlowDaemon:
             self._marlow = None
         logger.info("Marlow daemon stopped.")
 
-    # ── Goal execution ──
+    # ── Goal execution (fallback path) ──
 
     async def _execute_goal(self, record: GoalRecord):
-        """Execute a single goal via AutonomousMarlow."""
+        """Execute a single goal via AutonomousMarlow (fallback path)."""
         self._state = "executing"
         self._current_goal = record.goal
         self._stop_requested = False
@@ -412,7 +323,7 @@ class MarlowDaemon:
             )
 
     async def _queue_worker_loop(self):
-        """Process goals from the queue sequentially."""
+        """Process goals from the queue sequentially (fallback path)."""
         while not self._shutdown_event.is_set():
             try:
                 record = await asyncio.wait_for(
@@ -430,8 +341,53 @@ class MarlowDaemon:
             except asyncio.CancelledError:
                 pass
 
-    # ── HTTP Handlers ──
+    # ── Fallback handling (no Gemini) ──
 
+    async def _handle_fallback(self, goal_text: str, channel: str) -> dict:
+        """Handle a goal without Gemini — use GoalEngine + templates.
+
+        Reduced capabilities: template planner for known actions,
+        generic responses for everything else.
+        """
+        logger.info("Fallback path for: %s (channel=%s)", goal_text[:60], channel)
+
+        # Queue the goal for GoalEngine execution
+        record = GoalRecord(goal=goal_text, channel=channel)
+        queue_size = self._goal_queue.qsize()
+        await self._goal_queue.put(record)
+
+        if queue_size > 0:
+            return {
+                "success": True,
+                "status": "queued",
+                "goal": goal_text,
+                "response": f"En cola, posicion {queue_size + 1}.",
+                "result_summary": f"Queued at position {queue_size + 1}.",
+            }
+
+        # Wait for execution to complete
+        for _ in range(600):  # 10 min max
+            await asyncio.sleep(1.0)
+            if record.status in ("completed", "failed", "stopped"):
+                result = record.to_dict()
+                # Simple response formatting (no LLM)
+                if record.success:
+                    response = record.result_summary or "Listo."
+                else:
+                    errors = record.errors
+                    response = errors[0][:200] if errors else "No pude completar la tarea."
+                result["response"] = response
+                if not result.get("result_summary"):
+                    result["result_summary"] = response
+                return result
+
+        return {
+            "status": "timeout",
+            "goal": goal_text,
+            "response": "La tarea sigue ejecutandose despues de 10 minutos.",
+        }
+
+    # ── HTTP Handlers ──
 
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         """WebSocket /ws — real-time updates for sidebar."""
@@ -448,9 +404,15 @@ class MarlowDaemon:
                         if data.get("type") == "goal":
                             goal_text = data.get("text", "").strip()
                             if goal_text:
-                                record = GoalRecord(goal=goal_text, channel="sidebar")
-                                await self._goal_queue.put(record)
-                                await ws.send_json({"type": "ack", "goal": goal_text})
+                                # Route through Gemini (same as POST /goal)
+                                response = await self._process_text(
+                                    goal_text, "sidebar",
+                                )
+                                await ws.send_json({
+                                    "type": "response",
+                                    "text": response.get("response", ""),
+                                    "success": response.get("success", False),
+                                })
                     except json.JSONDecodeError:
                         pass
                 elif msg.type == web.WSMsgType.ERROR:
@@ -474,11 +436,55 @@ class MarlowDaemon:
                 if ws in self._ws_clients:
                     self._ws_clients.remove(ws)
 
-    async def handle_goal(self, request: web.Request) -> web.Response:
-        """POST /goal — Submit a goal for execution.
+    async def _process_text(self, goal_text: str, channel: str) -> dict:
+        """Process text through Gemini (primary) or fallback.
 
-        Routes greetings/questions to LLM, actions to GoalEngine.
-        All natural language is generated by the LLM (language from config).
+        This is the unified entry point for ALL text interaction.
+        Gemini decides everything: greet, answer, or call tools.
+        """
+        logger.info("Processing text: '%s' (channel=%s)", goal_text[:60], channel)
+
+        # Primary path: Gemini with tools
+        if self._gemini_text:
+            try:
+                response_text = await self._gemini_text.send_message(goal_text)
+                logger.info("Gemini response: %s", response_text[:100])
+
+                result = {
+                    "success": True,
+                    "status": "completed",
+                    "goal": goal_text,
+                    "response": response_text,
+                    "result_summary": response_text,
+                    "engine": "gemini",
+                }
+
+                # Add to history
+                record = GoalRecord(
+                    goal=goal_text, channel=channel,
+                    status="completed", success=True,
+                    result_summary=response_text,
+                    started_at=time.time(),
+                    finished_at=time.time(),
+                )
+                self._history.append(record)
+
+                return result
+
+            except Exception as e:
+                logger.error("Gemini text error: %s", e)
+                # Fall through to fallback
+                logger.info("Falling back to GoalEngine for: %s", goal_text[:60])
+
+        # Fallback path: GoalEngine + templates
+        return await self._handle_fallback(goal_text, channel)
+
+    async def handle_goal(self, request: web.Request) -> web.Response:
+        """POST /goal — Submit text for processing.
+
+        All text goes to Gemini (with tools). Gemini decides:
+        greet naturally, answer questions, or call tools for desktop actions.
+        Falls back to GoalEngine if Gemini unavailable.
         """
         try:
             body = await request.json()
@@ -496,54 +502,8 @@ class MarlowDaemon:
             )
 
         channel = body.get("channel", "console")
-        intent = classify_intent(goal_text)
-        logger.info("Intent: %s for '%s' (channel=%s)", intent, goal_text[:60], channel)
-
-        # ── Conversational intents: LLM responds directly ──
-        if intent in ("greeting", "question"):
-            response_text = await self._llm_chat(goal_text)
-            if not response_text:
-                response_text = goal_text  # Echo if LLM unavailable
-            return web.json_response({
-                "success": True,
-                "status": "completed",
-                "goal": goal_text,
-                "response": response_text,
-                "result_summary": response_text,
-                "intent": intent,
-            })
-
-        # ── Action intent: GoalEngine executes ──
-        record = GoalRecord(goal=goal_text, channel=channel)
-        queue_size = self._goal_queue.qsize()
-
-        await self._goal_queue.put(record)
-
-        if queue_size > 0:
-            return web.json_response({
-                "status": "queued",
-                "goal": goal_text,
-                "position": queue_size + 1,
-                "response": f"Queued at position {queue_size + 1}.",
-            })
-
-        # Wait for execution to complete
-        for _ in range(600):  # 10 min max
-            await asyncio.sleep(1.0)
-            if record.status in ("completed", "failed", "stopped"):
-                result = record.to_dict()
-                # Format result with LLM
-                response_text = await self._llm_format_result(goal_text, result)
-                result["response"] = response_text
-                if not result.get("result_summary"):
-                    result["result_summary"] = response_text
-                return web.json_response(result)
-
-        return web.json_response({
-            "status": "timeout",
-            "goal": goal_text,
-            "response": "Still executing after 10 minutes.",
-        })
+        result = await self._process_text(goal_text, channel)
+        return web.json_response(result)
 
     async def handle_status(self, request: web.Request) -> web.Response:
         """GET /status — Current agent status."""
@@ -554,6 +514,7 @@ class MarlowDaemon:
             "queue_size": self._goal_queue.qsize(),
             "uptime_s": round(time.time() - self._start_time, 1),
             "tools_registered": self._tools_count,
+            "gemini_active": self._gemini_text is not None,
             "recent_goals": [r.to_dict() for r in recent],
         })
 
@@ -576,6 +537,7 @@ class MarlowDaemon:
         return web.json_response({
             "status": "ok",
             "uptime": round(time.time() - self._start_time, 1),
+            "gemini": self._gemini_text is not None,
         })
 
     async def handle_tool(self, request: web.Request) -> web.Response:
@@ -591,21 +553,14 @@ class MarlowDaemon:
         if not tool_name:
             return web.json_response({"error": "Missing 'tool' field"}, status=400)
 
-        if not self._marlow or tool_name not in self._marlow._tool_map:
-            return web.json_response(
-                {"error": f"Unknown tool: {tool_name}"}, status=400,
-            )
+        # Resolve aliases
+        from marlow.bridges.tools_schema import resolve_tool_call
+        real_name, real_params = resolve_tool_call(tool_name, params)
 
-        try:
-            func = self._marlow._tool_map[tool_name]
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, lambda: func(**params))
-            if isinstance(result, dict):
-                return web.json_response(result)
-            return web.json_response({"success": True, "result": str(result)})
-        except Exception as e:
-            logger.error("Tool execution error (%s): %s", tool_name, e)
-            return web.json_response({"success": False, "error": str(e)})
+        result = await self._execute_tool_direct(real_name, real_params)
+        if isinstance(result, dict):
+            return web.json_response(result)
+        return web.json_response({"success": True, "result": str(result)})
 
     async def handle_transcript(self, request: web.Request) -> web.Response:
         """POST /transcript — Add a voice conversation transcript entry."""
@@ -633,7 +588,7 @@ class MarlowDaemon:
         return web.json_response({"ok": True})
 
     async def handle_get_transcripts(self, request: web.Request) -> web.Response:
-        """GET /transcripts — Get recent voice transcripts (with ?since= filter)."""
+        """GET /transcripts — Get recent voice transcripts."""
         since = float(request.query.get("since", 0))
         recent = [t for t in self._transcripts if t["time"] > since]
         return web.json_response({"transcripts": recent})
@@ -648,13 +603,13 @@ class MarlowDaemon:
     # ── Server ──
 
     async def run(self):
-        """Start the daemon: init Marlow, start queue worker, serve HTTP."""
+        """Start the daemon: init Marlow, init Gemini, serve HTTP."""
         _setup_logging()
         _ensure_sway_env()
 
         logger.info("Marlow Daemon starting on %s:%d", HOST, PORT)
 
-        # Initialize AutonomousMarlow
+        # Initialize AutonomousMarlow (tools + GoalEngine for fallback)
         try:
             setup_result = self._init_marlow()
             failed = len(setup_result.get("failed", []))
@@ -664,9 +619,11 @@ class MarlowDaemon:
             logger.error("Failed to initialize AutonomousMarlow: %s", e)
             sys.exit(1)
 
-        # Start goal queue worker
-        self._queue_worker = asyncio.create_task(self._queue_worker_loop())
+        # Initialize Gemini text bridge (primary path for all text)
+        self._init_gemini_text()
 
+        # Start goal queue worker (for fallback path)
+        self._queue_worker = asyncio.create_task(self._queue_worker_loop())
 
         # Start Telegram bridge if configured
         try:
@@ -677,14 +634,7 @@ class MarlowDaemon:
                 self._telegram = TelegramBridge()
 
                 async def _tg_goal(text, channel):
-                    record = GoalRecord(goal=text, channel=channel)
-                    await self._goal_queue.put(record)
-                    # Wait for result (simplified)
-                    for _ in range(600):
-                        await asyncio.sleep(1.0)
-                        if record.status in ("completed", "failed", "stopped"):
-                            return record.to_dict()
-                    return {"success": False, "errors": ["timeout"]}
+                    return await self._process_text(text, channel)
 
                 asyncio.create_task(self._telegram.start(_tg_goal))
                 logger.info("Telegram bridge started")
@@ -713,9 +663,10 @@ class MarlowDaemon:
         site = web.TCPSite(runner, HOST, PORT)
         await site.start()
 
+        engine = "Gemini" if self._gemini_text else "fallback (GoalEngine)"
         logger.info(
-            "Marlow Daemon ready — %d tools, listening on http://%s:%d",
-            self._tools_count, HOST, PORT,
+            "Marlow Daemon ready — %d tools, engine=%s, http://%s:%d",
+            self._tools_count, engine, HOST, PORT,
         )
 
         # Wait for shutdown signal
