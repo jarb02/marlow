@@ -82,13 +82,26 @@ def _get_gemini_api_key(settings) -> str:
 # Gemini Live mode
 # ─────────────────────────────────────────────────────────────
 
+STATE_FILE = "/tmp/marlow-voice-state"
+TEXT_FILE = "/tmp/marlow-voice-text"
+
+
+def _set_voice_state(state: str):
+    """Write voice state for other processes (daemon, sidebar)."""
+    try:
+        with open(STATE_FILE, "w") as f:
+            f.write(state)
+    except Exception:
+        pass
+
+
 async def _run_gemini_mode(settings):
     """Run voice daemon in Gemini Live mode.
 
     Loop: wait for activation -> open Gemini session -> conversation -> repeat.
     """
     from marlow.bridges.voice.gemini_live import GeminiLiveVoiceBridge
-    from marlow.platform.linux.tts import generate_clips, play_clip
+    from marlow.platform.linux.tts import generate_clips
 
     user_name = settings.user.name or ""
     language = settings.user.language
@@ -117,11 +130,12 @@ async def _run_gemini_mode(settings):
 
     boot_time = time.monotonic()
     running = True
+    _set_voice_state("idle")
 
     while running:
-        # Wait for activation
-        activated = await _wait_for_activation(
-            wake_word, boot_time, play_clip,
+        # Wait for activation (NO local TTS — Gemini will greet naturally)
+        activated = await _wait_for_activation_silent(
+            wake_word, boot_time,
         )
         if not activated:
             continue
@@ -136,10 +150,13 @@ async def _run_gemini_mode(settings):
             on_transcript=_post_transcript,
         )
 
-        # Monitor trigger file for "release" (sidebar mic off)
-        async def _monitor_stop():
+        _set_voice_state("gemini-active")
+
+        # Monitor trigger file + text injection file
+        async def _monitor():
             trigger = "/tmp/marlow-voice-trigger"
             while bridge.is_active:
+                # Check mic off
                 try:
                     if os.path.exists(trigger):
                         with open(trigger) as f:
@@ -151,28 +168,48 @@ async def _run_gemini_mode(settings):
                             return
                 except Exception:
                     pass
+
+                # Check text injection from sidebar
+                try:
+                    if os.path.exists(TEXT_FILE):
+                        with open(TEXT_FILE) as f:
+                            text = f.read().strip()
+                        os.unlink(TEXT_FILE)
+                        if text:
+                            logger.info("Text injection: %s", text[:60])
+                            await bridge.send_text(text)
+                except Exception:
+                    pass
+
                 await asyncio.sleep(0.1)
 
-        monitor = asyncio.create_task(_monitor_stop())
+        monitor = asyncio.create_task(_monitor())
 
         try:
             await bridge.run_session(_execute_tool)
         except Exception as e:
             logger.error("Gemini session error: %s", e)
         finally:
+            _set_voice_state("idle")
             monitor.cancel()
             try:
                 await monitor
             except asyncio.CancelledError:
                 pass
+            # Clean up text file
+            try:
+                os.unlink(TEXT_FILE)
+            except FileNotFoundError:
+                pass
 
         logger.info("Session ended, returning to wake word listening")
 
 
-async def _wait_for_activation(wake_word, boot_time, play_clip) -> bool:
-    """Wait for wake word, trigger file, or Super+V.
+async def _wait_for_activation_silent(wake_word, boot_time) -> bool:
+    """Wait for activation without playing local TTS clips.
 
-    Returns True when activated, False on shutdown.
+    For Gemini mode: Gemini itself will greet the user once the session opens.
+    No local TTS = no voice mismatch.
     """
     import numpy as np
 
@@ -185,7 +222,7 @@ async def _wait_for_activation(wake_word, boot_time, play_clip) -> bool:
                 state = f.read().strip()
             if state == "press":
                 os.unlink(trigger)
-                await play_clip("en_que_te_ayudo")
+                # No play_clip here — Gemini will speak first
                 return True
         except Exception:
             pass
@@ -196,6 +233,72 @@ async def _wait_for_activation(wake_word, boot_time, play_clip) -> bool:
         return False
 
     # Wake word detection
+    if wake_word and wake_word.available:
+        import pyaudio
+        from marlow.platform.linux.wake_word import WAKEWORD_CHUNK_SAMPLES
+
+        pya = pyaudio.PyAudio()
+        try:
+            mic_info = pya.get_default_input_device_info()
+            stream = pya.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=16000,
+                input=True,
+                input_device_index=int(mic_info["index"]),
+                frames_per_buffer=WAKEWORD_CHUNK_SAMPLES,
+            )
+
+            loop = asyncio.get_event_loop()
+            chunk_bytes = await loop.run_in_executor(
+                None, stream.read, WAKEWORD_CHUNK_SAMPLES, False,
+            )
+            chunk = np.frombuffer(chunk_bytes, dtype=np.int16)
+
+            if wake_word.process_chunk(chunk):
+                stream.stop_stream()
+                stream.close()
+                pya.terminate()
+                # No play_clip here — Gemini will greet
+                return True
+
+            stream.stop_stream()
+            stream.close()
+        except Exception:
+            pass
+        finally:
+            try:
+                pya.terminate()
+            except Exception:
+                pass
+    else:
+        # No wake word — poll trigger file only
+        await asyncio.sleep(0.05)
+
+    return False
+
+
+async def _wait_for_activation(wake_word, boot_time, play_clip) -> bool:
+    """Wait for activation WITH local TTS clips (for local mode)."""
+    import numpy as np
+
+    trigger = "/tmp/marlow-voice-trigger"
+
+    if os.path.exists(trigger):
+        try:
+            with open(trigger) as f:
+                state = f.read().strip()
+            if state == "press":
+                os.unlink(trigger)
+                await play_clip("en_que_te_ayudo")
+                return True
+        except Exception:
+            pass
+
+    if time.monotonic() - boot_time < 10:
+        await asyncio.sleep(0.1)
+        return False
+
     if wake_word and wake_word.available:
         import pyaudio
         from marlow.platform.linux.wake_word import WAKEWORD_CHUNK_SAMPLES
@@ -235,7 +338,6 @@ async def _wait_for_activation(wake_word, boot_time, play_clip) -> bool:
             except Exception:
                 pass
     else:
-        # No wake word — poll trigger file only
         await asyncio.sleep(0.05)
 
     return False

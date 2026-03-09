@@ -342,6 +342,18 @@ class MarlowDaemon:
             errs = result.get("errors", [])
             return errs[0][:150] if errs else ""
 
+    @staticmethod
+    def _is_gemini_active() -> bool:
+        """Check if a Gemini Live voice session is currently active."""
+        state_file = "/tmp/marlow-voice-state"
+        try:
+            if os.path.exists(state_file):
+                with open(state_file) as f:
+                    return f.read().strip() == "gemini-active"
+        except Exception:
+            pass
+        return False
+
     def _teardown(self):
         """Clean shutdown of AutonomousMarlow."""
         self._state = "stopped"
@@ -501,7 +513,28 @@ class MarlowDaemon:
                 "intent": intent,
             })
 
-        # ── Action intent: GoalEngine executes, LLM formats result ──
+        # ── Action intent ──
+        # If a Gemini Live voice session is active, inject text into it
+        # so Gemini handles it with function calls (same brain for voice + text)
+        if self._is_gemini_active():
+            text_file = "/tmp/marlow-voice-text"
+            try:
+                with open(text_file, "w") as f:
+                    f.write(goal_text)
+                logger.info("Action forwarded to Gemini session: %s", goal_text[:60])
+                return web.json_response({
+                    "success": True,
+                    "status": "completed",
+                    "goal": goal_text,
+                    "response": "",
+                    "result_summary": "",
+                    "intent": "action-via-gemini",
+                })
+            except Exception as e:
+                logger.warning("Failed to forward to Gemini: %s", e)
+                # Fall through to GoalEngine
+
+        # GoalEngine executes, LLM formats result
         record = GoalRecord(goal=goal_text, channel=channel)
         queue_size = self._goal_queue.qsize()
 

@@ -195,6 +195,8 @@ class GeminiLiveVoiceBridge:
         self._session = None
         self._is_active = False
         self._audio_out_queue: asyncio.Queue = asyncio.Queue()
+        self._is_outputting = False  # True while playing audio (echo suppression)
+        self._output_end_time = 0.0  # timestamp when output stopped + buffer
 
     def _build_system_prompt(self) -> str:
         lang_map = {
@@ -316,12 +318,16 @@ class GeminiLiveVoiceBridge:
         )
 
         async def send_audio():
-            """Stream mic audio to Gemini."""
+            """Stream mic audio to Gemini (with echo suppression)."""
             while self._is_active:
                 try:
                     data = await asyncio.to_thread(
                         mic_stream.read, CHUNK_SIZE, False,
                     )
+                    # Echo suppression: skip sending while Gemini audio is playing
+                    # (plus 300ms buffer after output stops)
+                    if self._is_outputting or time.monotonic() < self._output_end_time:
+                        continue
                     await session.send_realtime_input(
                         audio={"data": data, "mime_type": "audio/pcm"},
                     )
@@ -387,16 +393,25 @@ class GeminiLiveVoiceBridge:
                     break
 
         async def play_audio():
-            """Play audio from Gemini through speakers."""
+            """Play audio from Gemini through speakers (sets echo suppression flag)."""
             while self._is_active:
                 try:
                     data = await asyncio.wait_for(
                         self._audio_out_queue.get(), timeout=0.5,
                     )
+                    self._is_outputting = True
                     await asyncio.to_thread(speaker_stream.write, data)
+                    # If queue is empty after this chunk, mark output as stopped
+                    if self._audio_out_queue.empty():
+                        self._is_outputting = False
+                        self._output_end_time = time.monotonic() + 0.3  # 300ms buffer
                 except asyncio.TimeoutError:
+                    if self._is_outputting:
+                        self._is_outputting = False
+                        self._output_end_time = time.monotonic() + 0.3
                     continue
                 except Exception as e:
+                    self._is_outputting = False
                     if self._is_active:
                         logger.error("Play audio error: %s", e)
                     break
