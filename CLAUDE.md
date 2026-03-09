@@ -4,8 +4,37 @@
 - Python autonomous agent with 101 tools on Linux (Fedora 43 + Sway or Marlow Compositor)
 - Kernel: HSM, GoalEngine (13 states), GOAP planner, LLM planner (Claude Sonnet), EventBus, ActionScorer
 - Platform layer auto-detects: compositor backend (IPC) > Sway backend (i3ipc/wtype/grim) > Windows
-- Daemon on localhost:8420 with HTTP API (POST /goal, GET /status, /health, /history)
+- Daemon on localhost:8420 with HTTP API + WebSocket (POST /goal, GET /status, /health, /history, /ws)
 - Entry points: server_linux.py (MCP), daemon_linux.py (HTTP), autonomous_linux.py (CLI)
+
+## Phase 9.5: Bridges Architecture
+All interaction channels implement BridgeBase ABC in marlow/bridges/:
+- **voice/bridge.py** — VoiceBridge: mic -> wake word/PTT -> VAD -> ASR -> goal -> TTS
+- **sidebar/app.py** — GTK4+WebKit6 sidebar chat window, connects via HTTP+WebSocket
+- **sidebar/onboarding.py** — First-boot wizard (name, API key, Telegram setup)
+- **telegram/bridge.py** — TelegramBridge: text/voice messages -> goals -> bot responses
+- **console/bridge.py** — ConsoleBridge: terminal output + mako notifications
+- **manager.py** — BridgeManager routes responses to correct channel
+
+### Conversation FSM (voice/conversation_state.py)
+7 states: IDLE -> LISTENING -> PROCESSING -> RESPONDING -> FOLLOW_UP -> DISAMBIGUATING -> ERROR
+Key feature: FOLLOW_UP mode allows conversation without wake word (30s timeout).
+
+### Config (core/settings.py)
+TOML-based: ~/.config/marlow/config.toml (settings) + secrets.toml (API keys, chmod 600).
+get_settings() singleton. Env vars override file values. Sections: user, voice, tts, whisper, sidebar, telegram, privacy.
+
+### TTS Chain (platform/linux/tts.py)
+1. Piper es_MX-claude-high (offline, ~1.4s for long sentence)
+2. edge-tts Jorge (online, better quality when internet available)
+3. espeak-ng (emergency fallback)
+Pre-generated clips in ~/.config/marlow/voice_clips/ for instant feedback.
+
+### Wake Word (platform/linux/wake_word.py)
+OpenWakeWord with hey_jarvis as phonetic proxy. Custom model at ~/.config/marlow/models/marlow.onnx.
+
+### OCR Summary (kernel/ocr_summary.py)
+Intent-aware LLM prompt for natural Spanish TTS-ready summaries of screen content.
 
 ## Development Rules
 - Think through the problem before writing code. Understand root cause first.
@@ -27,27 +56,8 @@
 - Push to: git@github.com:jarb02/marlow.git (linux-mvp branch)
 
 ## StepContext (b7e4b07)
-GoalEngine passes runtime values between steps using $variable references:
-- After each successful step, scalar outputs are stored in _step_context
-- Later steps reference them: {"window_id": "$window_id"}
-- _resolve_params() substitutes $variables before tool execution
-- _step_context resets per goal (isolation between goals)
-- Replan includes step_context for the LLM to reference available variables
+GoalEngine passes runtime values between steps using $variable references.
 
 ## Shadow Mode Interaction (Phase 7)
-Two patterns in the planner prompt:
-- Pattern A (quick URL search): launch_in_shadow + move_to_user (2 steps)
-- Pattern B (interactive): launch → focus → interact → screenshot → OCR → move_to_user
-
-Key fixes:
-- Compositor input routing: SendKey/SendText/SendHotkey now focus target window_id
-  via focus_agent_window() before sending input (previously ignored window_id)
-- Screenshot provider: _find_window_id searches both user_space AND shadow_space
-  (was only searching user_space, and used wrong dict key "id" instead of "window_id")
-- manage_window: implemented via IPC (CloseWindow/MinimizeWindow/MaximizeWindow)
-- Planner prompt: expanded shadow mode section with Pattern A/B documentation
-
-## Live Test
-~/test_shadow_interaction.py — runs 8 tests against compositor IPC:
-  launch → shadow list → focus → seat status → type_text → screenshot → move_to_user → close
-Requires compositor running.
+Two patterns: A (quick URL) and B (interactive) via launch_in_shadow.
+Compositor input routing focuses target window_id on agent_seat before input.
