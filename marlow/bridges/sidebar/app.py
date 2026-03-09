@@ -23,17 +23,20 @@ import time
 from pathlib import Path
 
 import gi
-gi.require_version("Gtk", "4.0")
-gi.require_version("WebKit", "6.0")
-from gi.repository import Gtk, WebKit, GLib, Gdk
 
-# Layer shell for proper sidebar anchoring (wayland compositor integration)
+# IMPORTANT: Gtk4LayerShell MUST be imported BEFORE Gtk4.
+# It hooks into libwayland during library load; if Gtk loads first,
+# the Wayland connection is already established and layer-shell fails.
 try:
     gi.require_version("Gtk4LayerShell", "1.0")
     from gi.repository import Gtk4LayerShell
     HAS_LAYER_SHELL = True
 except (ValueError, ImportError):
     HAS_LAYER_SHELL = False
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("WebKit", "6.0")
+from gi.repository import Gtk, WebKit, GLib, Gdk
 
 logger = logging.getLogger("marlow.sidebar")
 
