@@ -291,6 +291,7 @@ class VoiceBridge(BridgeBase):
             Sends a goal to the kernel and returns the result.
         """
         self._running = True
+        self._boot_time = time.monotonic()
         from marlow.platform.linux.tts import play_clip
 
         logger.info("VoiceBridge running (state: %s)", self.context.state.value)
@@ -358,6 +359,11 @@ class VoiceBridge(BridgeBase):
                 pass
 
         # Wake word detection (if available)
+        # Grace period: skip wake word for 10s after boot to avoid false triggers
+        if hasattr(self, '_boot_time') and time.monotonic() - self._boot_time < 10:
+            await asyncio.sleep(0.1)
+            return
+
         if self._wake_word and self._wake_word.available:
             self._open_mic()
             loop = asyncio.get_event_loop()

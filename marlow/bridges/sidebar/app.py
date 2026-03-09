@@ -65,9 +65,10 @@ CHAT_HTML = """<!DOCTYPE html>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
     font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-    background: #1a1a2e;
+    background: #0f1320;
     color: #e0e0e0;
     height: 100vh;
+    border-left: 1px solid #2a3a5a;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -182,7 +183,7 @@ body {
 
 #text-input {
     flex: 1;
-    background: #1a1a2e;
+    background: #0a0e18;
     border: 1px solid #2a2a4a;
     border-radius: 20px;
     padding: 8px 16px;
@@ -319,7 +320,8 @@ class MarlowSidebar(Gtk.Application):
             Gtk4LayerShell.set_anchor(self._window, Gtk4LayerShell.Edge.BOTTOM, True)
             Gtk4LayerShell.set_exclusive_zone(self._window, SIDEBAR_WIDTH)
             Gtk4LayerShell.set_margin(self._window, Gtk4LayerShell.Edge.TOP, 0)
-            logger.info("Sidebar using layer-shell (anchored right, %dpx)", SIDEBAR_WIDTH)
+            Gtk4LayerShell.set_keyboard_mode(self._window, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
+            logger.info("Sidebar using layer-shell (anchored right, %dpx, keyboard=on_demand)", SIDEBAR_WIDTH)
         else:
             logger.warning("gtk4-layer-shell not available, sidebar will be a regular window")
 
