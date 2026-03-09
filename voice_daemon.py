@@ -81,16 +81,7 @@ async def run_voice_daemon():
     print(f"  Hardware: {info.get('cores', '?')} cores, {info.get('ram_gb', '?')}GB RAM")
     print()
 
-    # Notify via mako
-    try:
-        import subprocess
-        subprocess.run(
-            ["notify-send", "-a", "Marlow", "Marlow Voice",
-             f"Modo: {info.get('mode', '?')}"],
-            capture_output=True, timeout=3,
-        )
-    except Exception:
-        pass
+
 
     # Goal callback for the voice bridge
     async def goal_callback(text: str, channel: str) -> dict:
