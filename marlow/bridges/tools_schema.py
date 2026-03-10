@@ -298,3 +298,216 @@ def build_tool_declarations():
             ),
         ])
     ]
+
+
+def build_anthropic_tools() -> list[dict]:
+    """Build tool declarations in Anthropic format (same tools as Gemini).
+
+    Used by Claude Sonnet fallback in daemon_linux.py.
+    """
+    return [
+        {
+            "name": "launch_in_shadow",
+            "description": (
+                "Launch an application in shadow mode (invisible to user). "
+                "Use for web searches, opening apps in background. "
+                "Example: firefox https://google.com/search?q=weather+miami"
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Command to launch, e.g. firefox https://google.com/search?q=weather",
+                    },
+                },
+                "required": ["command"],
+            },
+        },
+        {
+            "name": "move_to_user",
+            "description": "Move a shadow window to the user visible screen.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "window_id": {
+                        "type": "integer",
+                        "description": "Window ID to promote to visible screen",
+                    },
+                },
+                "required": ["window_id"],
+            },
+        },
+        {
+            "name": "open_application",
+            "description": "Open an application on the user desktop.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "app_name": {
+                        "type": "string",
+                        "description": "Application name or command: firefox, foot, nautilus, etc.",
+                    },
+                },
+                "required": ["app_name"],
+            },
+        },
+        {
+            "name": "close_window",
+            "description": "Close a window on the desktop.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "window_id": {
+                        "type": "integer",
+                        "description": "Window ID to close (get from list_windows)",
+                    },
+                },
+                "required": ["window_id"],
+            },
+        },
+        {
+            "name": "list_windows",
+            "description": "List all open windows on the desktop with their IDs, titles, and app names.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+        {
+            "name": "focus_window",
+            "description": "Focus/activate a window by its title or part of title.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "window_title": {
+                        "type": "string",
+                        "description": "Window title or substring to match",
+                    },
+                },
+                "required": ["window_title"],
+            },
+        },
+        {
+            "name": "take_screenshot",
+            "description": "Take a screenshot of a window or the full screen.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "window_title": {
+                        "type": "string",
+                        "description": "Window title to capture. Omit for full screen.",
+                    },
+                    "window_id": {
+                        "type": "integer",
+                        "description": "Window ID for shadow windows (from launch_in_shadow).",
+                    },
+                },
+            },
+        },
+        {
+            "name": "run_command",
+            "description": "Run a shell command on the system and return its output.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to execute",
+                    },
+                },
+                "required": ["command"],
+            },
+        },
+        {
+            "name": "type_text",
+            "description": "Type text into the currently focused window using virtual keyboard.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Text to type",
+                    },
+                },
+                "required": ["text"],
+            },
+        },
+        {
+            "name": "press_key",
+            "description": "Press a single key (Return, Escape, Tab, BackSpace, etc.).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Key name: Return, Escape, Tab, BackSpace, Up, Down, Left, Right, etc.",
+                    },
+                },
+                "required": ["key"],
+            },
+        },
+        {
+            "name": "get_shadow_windows",
+            "description": (
+                "List all windows in shadow (invisible) space with their "
+                "window_id, title, and app_id."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+        {
+            "name": "ocr_region",
+            "description": (
+                "Read text from the screen or a specific window using OCR. "
+                "Extracts visible text content. Works with shadow windows via window_id."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "window_title": {
+                        "type": "string",
+                        "description": "Window title to OCR. Omit for full screen.",
+                    },
+                    "window_id": {
+                        "type": "integer",
+                        "description": "Window ID for shadow windows (from launch_in_shadow).",
+                    },
+                },
+            },
+        },
+        {
+            "name": "execute_complex_goal",
+            "description": (
+                "Delegate a complex multi-step task to the advanced AI planner. "
+                "Use for tasks requiring 4+ steps, multi-page interaction, "
+                "document creation, or workflows beyond simple open/search/close."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "goal": {
+                        "type": "string",
+                        "description": "Full description of the task to accomplish.",
+                    },
+                },
+                "required": ["goal"],
+            },
+        },
+        {
+            "name": "hotkey",
+            "description": "Press a keyboard shortcut (e.g. ctrl+c, alt+F4, super+e).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "keys": {
+                        "type": "string",
+                        "description": "Key combination, e.g. ctrl+c, alt+F4, super+e",
+                    },
+                },
+                "required": ["keys"],
+            },
+        },
+    ]

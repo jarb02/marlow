@@ -7,7 +7,7 @@ Architecture:
     ALL user interaction (sidebar, console, telegram) -> Gemini API (with tools)
     Voice -> Gemini Live (streaming audio, separate daemon)
     Gemini decides: greet, answer, or call desktop tools via function calling.
-    Fallback: GoalEngine + templates if Gemini unavailable.
+    Fallback chain: Gemini (3 retries) -> Claude Sonnet -> clean error.
 
 Usage:
     python3 -m marlow.daemon_linux
@@ -129,7 +129,7 @@ class MarlowDaemon:
     """Persistent daemon wrapping AutonomousMarlow with an HTTP API.
 
     Primary path: ALL text -> Gemini API (with function calling tools).
-    Fallback path: GoalEngine with templates (if Gemini unavailable).
+    Fallback: Claude Sonnet with same tools (if Gemini unavailable).
     """
 
     def __init__(self):
@@ -150,11 +150,12 @@ class MarlowDaemon:
         self._gemini_text = None  # GeminiTextBridge for all text interaction
         self._user_name: str = ""
         self._language: str = "es"
+        self._claude_client = None  # Anthropic fallback
 
     # ── Lifecycle ──
 
     def _init_marlow(self) -> dict:
-        """Initialize AutonomousMarlow (tools + GoalEngine for fallback)."""
+        """Initialize AutonomousMarlow (tools + GoalEngine for complex goals)."""
         from marlow.kernel.integration_linux import AutonomousMarlow
 
         provider = os.environ.get("MARLOW_LLM_PROVIDER", "anthropic")
@@ -232,6 +233,32 @@ class MarlowDaemon:
         except Exception as e:
             logger.error("Failed to init Gemini text bridge: %s", e)
             self._gemini_text = None
+
+    def _init_claude_fallback(self):
+        """Initialize Claude Sonnet as fallback when Gemini is unavailable."""
+        try:
+            from marlow.core.settings import get_settings
+            settings = get_settings()
+        except Exception:
+            logger.warning("Cannot load settings for Claude fallback")
+            return
+
+        api_key = settings.secrets.anthropic_api_key
+        if not api_key:
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            logger.info(
+                "No Anthropic API key — Claude fallback disabled"
+            )
+            return
+
+        try:
+            import anthropic
+            self._claude_client = anthropic.Anthropic(api_key=api_key)
+            logger.info("Claude fallback ready (claude-sonnet-4-20250514)")
+        except Exception as e:
+            logger.error("Failed to init Claude fallback: %s", e)
+            self._claude_client = None
 
     async def _execute_tool_direct(self, tool_name: str, args: dict) -> dict:
         """Execute a tool directly from the daemon tool map.
@@ -386,52 +413,6 @@ class MarlowDaemon:
             except asyncio.CancelledError:
                 pass
 
-    # ── Fallback handling (no Gemini) ──
-
-    async def _handle_fallback(self, goal_text: str, channel: str) -> dict:
-        """Handle a goal without Gemini — use GoalEngine + templates.
-
-        Reduced capabilities: template planner for known actions,
-        generic responses for everything else.
-        """
-        logger.info("Fallback path for: %s (channel=%s)", goal_text[:60], channel)
-
-        # Queue the goal for GoalEngine execution
-        record = GoalRecord(goal=goal_text, channel=channel)
-        queue_size = self._goal_queue.qsize()
-        await self._goal_queue.put(record)
-
-        if queue_size > 0:
-            return {
-                "success": True,
-                "status": "queued",
-                "goal": goal_text,
-                "response": f"En cola, posicion {queue_size + 1}.",
-                "result_summary": f"Queued at position {queue_size + 1}.",
-            }
-
-        # Wait for execution to complete
-        for _ in range(600):  # 10 min max
-            await asyncio.sleep(1.0)
-            if record.status in ("completed", "failed", "stopped"):
-                result = record.to_dict()
-                # Simple response formatting (no LLM)
-                if record.success:
-                    response = record.result_summary or "Listo."
-                else:
-                    response = self._sanitize_error(record.errors)
-                result["response"] = response
-                if not result.get("result_summary"):
-                    result["result_summary"] = response
-                return result
-
-        return {
-            "status": "timeout",
-            "goal": goal_text,
-            "response": "La tarea sigue ejecutandose despues de 10 minutos.",
-        }
-
-
     @staticmethod
     def _sanitize_error(errors: list[str]) -> str:
         """Convert internal errors to user-friendly messages.
@@ -515,54 +496,182 @@ class MarlowDaemon:
                     self._ws_clients.remove(ws)
 
     async def _process_text(self, goal_text: str, channel: str) -> dict:
-        """Process text through Gemini (primary) or fallback.
+        """Process text: Gemini (3 retries) -> Claude Sonnet -> clean error.
 
-        This is the unified entry point for ALL text interaction.
-        Gemini decides everything: greet, answer, or call tools.
+        Unified entry point for ALL text interaction.
+        Never returns raw JSON or GoalEngine output to the user.
         """
         logger.info("Processing text: '%s' (channel=%s)", goal_text[:60], channel)
 
-        # Primary path: Gemini with tools
+        # ── Primary: Gemini with tools (3 attempts with backoff) ──
         if self._gemini_text:
+            backoff = [1, 3, 6]
+            for attempt in range(3):
+                try:
+                    response_text = await self._gemini_text.send_message(goal_text)
+                    if response_text:
+                        logger.info(
+                            "Gemini response (attempt %d): %s",
+                            attempt + 1, response_text[:100],
+                        )
+                        self._history.append(GoalRecord(
+                            goal=goal_text, channel=channel,
+                            status="completed", success=True,
+                            result_summary=response_text,
+                            started_at=time.time(), finished_at=time.time(),
+                        ))
+                        return {
+                            "success": True, "status": "completed",
+                            "goal": goal_text, "response": response_text,
+                            "result_summary": response_text, "engine": "gemini",
+                        }
+                except Exception as e:
+                    err_str = str(e).lower()
+                    transient = any(k in err_str for k in (
+                        "503", "unavailable", "overloaded",
+                        "429", "resource_exhausted", "timeout", "connection",
+                    ))
+                    if transient and attempt < 2:
+                        wait = backoff[attempt]
+                        logger.warning(
+                            "Gemini attempt %d/3 failed (%s), retry in %ds...",
+                            attempt + 1, type(e).__name__, wait,
+                        )
+                        await asyncio.sleep(wait)
+                    else:
+                        logger.error(
+                            "Gemini error (attempt %d): %s", attempt + 1, e,
+                        )
+                        break
+
+            logger.info("Gemini exhausted, trying Claude fallback...")
+
+        # ── Fallback: Claude Sonnet with function calling ──
+        if self._claude_client:
             try:
-                response_text = await self._gemini_text.send_message(goal_text)
-                logger.info("Gemini response: %s", response_text[:100])
-
-                result = {
-                    "success": True,
-                    "status": "completed",
-                    "goal": goal_text,
-                    "response": response_text,
-                    "result_summary": response_text,
-                    "engine": "gemini",
-                }
-
-                # Add to history
-                record = GoalRecord(
-                    goal=goal_text, channel=channel,
-                    status="completed", success=True,
-                    result_summary=response_text,
-                    started_at=time.time(),
-                    finished_at=time.time(),
-                )
-                self._history.append(record)
-
-                return result
-
+                response_text = await self._claude_fallback(goal_text)
+                if response_text:
+                    logger.info("Claude response: %s", response_text[:100])
+                    self._history.append(GoalRecord(
+                        goal=goal_text, channel=channel,
+                        status="completed", success=True,
+                        result_summary=response_text,
+                        started_at=time.time(), finished_at=time.time(),
+                    ))
+                    return {
+                        "success": True, "status": "completed",
+                        "goal": goal_text, "response": response_text,
+                        "result_summary": response_text, "engine": "claude",
+                    }
             except Exception as e:
-                logger.error("Gemini text error: %s", e)
-                # Fall through to fallback
-                logger.info("Falling back to GoalEngine for: %s", goal_text[:60])
+                logger.error("Claude fallback failed: %s", e)
 
-        # Fallback path: GoalEngine + templates
-        return await self._handle_fallback(goal_text, channel)
+        # ── Last resort: clean error (never JSON, never GoalEngine) ──
+        error_msg = {
+            "es": ("Lo siento, no puedo procesar tu solicitud en este momento. "
+                   "Intenta de nuevo en unos segundos."),
+            "en": ("Sorry, I can't process your request right now. "
+                   "Please try again in a few seconds."),
+        }.get(self._language, "Sorry, I can't process your request right now.")
+
+        self._history.append(GoalRecord(
+            goal=goal_text, channel=channel,
+            status="failed", success=False,
+            result_summary=error_msg,
+            started_at=time.time(), finished_at=time.time(),
+        ))
+        return {
+            "success": False, "status": "failed",
+            "goal": goal_text, "response": error_msg, "engine": "none",
+        }
+
+    async def _claude_fallback(self, text: str) -> str:
+        """Fallback to Claude Sonnet with full function calling.
+
+        Same tools and system prompt as Gemini. Max 8 rounds.
+        """
+        from marlow.bridges.tools_schema import (
+            build_system_prompt, build_anthropic_tools, resolve_tool_call,
+        )
+
+        system_prompt = build_system_prompt(self._user_name, self._language)
+        tools = build_anthropic_tools()
+        messages = [{"role": "user", "content": text}]
+
+        for round_num in range(8):
+            response = await asyncio.to_thread(
+                self._claude_client.messages.create,
+                model="claude-sonnet-4-20250514",
+                max_tokens=500,
+                system=system_prompt,
+                tools=tools,
+                messages=messages,
+            )
+
+            # Check for tool use
+            tool_blocks = [b for b in response.content if b.type == "tool_use"]
+            if not tool_blocks:
+                parts = [
+                    b.text for b in response.content
+                    if hasattr(b, "text") and b.text
+                ]
+                return " ".join(parts) or (
+                    "Listo." if self._language == "es" else "Done."
+                )
+
+            # Execute tools and continue conversation
+            messages.append({"role": "assistant", "content": response.content})
+            tool_results = []
+
+            for tb in tool_blocks:
+                real_name, real_args = resolve_tool_call(
+                    tb.name, dict(tb.input or {}),
+                )
+                logger.info(
+                    "Claude tool [round %d]: %s(%s)",
+                    round_num + 1, tb.name, tb.input,
+                )
+                try:
+                    result = await self._execute_tool_direct(real_name, real_args)
+                except Exception as e:
+                    result = {"success": False, "error": str(e)}
+
+                compact = self._compact_tool_result(result)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tb.id,
+                    "content": json.dumps(compact),
+                })
+
+            messages.append({"role": "user", "content": tool_results})
+
+        return "Listo." if self._language == "es" else "Done."
+
+    @staticmethod
+    def _compact_tool_result(result: dict) -> dict:
+        """Compact a tool result for LLM consumption."""
+        compact = {"success": result.get("success", False)}
+        for key in ("error", "pid", "output", "windows", "result",
+                     "window_id", "launched", "note", "text"):
+            if key in result:
+                val = result[key]
+                if isinstance(val, str) and len(val) > 500:
+                    val = val[:500] + "..."
+                compact[key] = val
+        if "windows" in compact and isinstance(compact["windows"], list):
+            compact["windows"] = [
+                {"id": w.get("id"), "title": w.get("title", "")[:80],
+                 "app": w.get("app_id", "")}
+                for w in compact["windows"][:20]
+            ]
+        return compact
 
     async def handle_goal(self, request: web.Request) -> web.Response:
         """POST /goal — Submit text for processing.
 
         All text goes to Gemini (with tools). Gemini decides:
         greet naturally, answer questions, or call tools for desktop actions.
-        Falls back to GoalEngine if Gemini unavailable.
+        Falls back to Claude Sonnet if Gemini unavailable.
         """
         try:
             body = await request.json()
@@ -687,7 +796,7 @@ class MarlowDaemon:
 
         logger.info("Marlow Daemon starting on %s:%d", HOST, PORT)
 
-        # Initialize AutonomousMarlow (tools + GoalEngine for fallback)
+        # Initialize AutonomousMarlow (tools + GoalEngine for complex goals)
         try:
             setup_result = self._init_marlow()
             failed = len(setup_result.get("failed", []))
@@ -700,7 +809,10 @@ class MarlowDaemon:
         # Initialize Gemini text bridge (primary path for all text)
         self._init_gemini_text()
 
-        # Start goal queue worker (for fallback path)
+        # Initialize Claude Sonnet fallback
+        self._init_claude_fallback()
+
+        # Start goal queue worker (for execute_complex_goal)
         self._queue_worker = asyncio.create_task(self._queue_worker_loop())
 
         # Start Telegram bridge if configured
@@ -741,7 +853,7 @@ class MarlowDaemon:
         site = web.TCPSite(runner, HOST, PORT)
         await site.start()
 
-        engine = "Gemini" if self._gemini_text else "fallback (GoalEngine)"
+        engine = "Gemini" if self._gemini_text else ("Claude" if self._claude_client else "none")
         logger.info(
             "Marlow Daemon ready — %d tools, engine=%s, http://%s:%d",
             self._tools_count, engine, HOST, PORT,
