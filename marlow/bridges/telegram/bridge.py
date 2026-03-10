@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import tempfile
 from typing import Optional
 
@@ -29,6 +30,7 @@ class TelegramBridge(BridgeBase):
         self._security = None
         self._goal_callback = None
         self._active_chat_id: Optional[int] = None
+        self._whisper_model = None
 
     @property
     def channel_name(self) -> str:
@@ -204,7 +206,10 @@ class TelegramBridge(BridgeBase):
                 f"Goal actual: {goal or 'ninguno'}"
             )
         except Exception as e:
-            await update.message.reply_text(f"Daemon no disponible: {e}")
+            logger.error("Status check failed: %s", e)
+            await update.message.reply_text(
+                "El daemon no esta disponible en este momento."
+            )
 
     async def _cmd_screenshot(self, update, context):
         """Handle /screenshot command."""
@@ -212,15 +217,34 @@ class TelegramBridge(BridgeBase):
             return
         chat_id = update.effective_chat.id
         self._active_chat_id = chat_id
+        await self._take_and_send_screenshot(chat_id, context)
 
-        await update.message.reply_text("Tomando captura...")
-        result = await self._goal_callback("captura de pantalla", "telegram")
-
-        # The goal should produce a screenshot file
-        if result.get("success"):
-            await update.message.reply_text("Captura tomada")
-        else:
-            await update.message.reply_text("No pude tomar la captura")
+    async def _take_and_send_screenshot(self, chat_id, context):
+        """Take a screenshot via grim and send it as a photo."""
+        tmp_path = os.path.join(tempfile.gettempdir(), "marlow_tg_screenshot.png")
+        try:
+            result = subprocess.run(
+                ["grim", tmp_path], capture_output=True, timeout=10,
+            )
+            if result.returncode == 0 and os.path.exists(tmp_path):
+                with open(tmp_path, "rb") as f:
+                    await context.bot.send_photo(
+                        chat_id, f, caption="Captura de pantalla",
+                    )
+            else:
+                await context.bot.send_message(
+                    chat_id, "No pude tomar la captura.",
+                )
+        except Exception as e:
+            logger.error("Screenshot failed: %s", e)
+            await context.bot.send_message(
+                chat_id, "No pude tomar la captura.",
+            )
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except FileNotFoundError:
+                pass
 
     async def _cmd_menu(self, update, context):
         """Handle /menu — show inline keyboard with main actions."""
@@ -269,24 +293,19 @@ class TelegramBridge(BridgeBase):
 
         try:
             result = await self._goal_callback(text, "telegram")
-            success = result.get("success", False)
-            summary = result.get("result_summary", "")
-            status = result.get("status", "unknown")
-
-            if success and summary:
-                response = summary
-            elif success:
-                response = "Listo"
-            else:
-                errors = result.get("errors", [])
-                response = errors[0] if errors else f"Estado: {status}"
-
+            response = (
+                result.get("response")
+                or result.get("result_summary")
+                or ("Listo." if result.get("success") else "No pude completar la tarea.")
+            )
             await context.bot.edit_message_text(
                 response, chat_id, msg.message_id,
             )
         except Exception as e:
+            logger.error("Telegram message handler failed: %s", e)
             await context.bot.edit_message_text(
-                f"Error: {e}", chat_id, msg.message_id,
+                "No pude procesar tu solicitud. Intenta de nuevo.",
+                chat_id, msg.message_id,
             )
 
     async def _handle_voice(self, update, context):
@@ -300,50 +319,55 @@ class TelegramBridge(BridgeBase):
         self._active_chat_id = chat_id
         await update.message.reply_text("Escuchando nota de voz...")
 
+        tmp_path = None
+        wav_path = None
         try:
             voice = update.message.voice or update.message.audio
             file = await context.bot.get_file(voice.file_id)
 
-            # Download to temp file
             with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
                 await file.download_to_drive(tmp.name)
                 tmp_path = tmp.name
 
-            # Transcribe
-            import numpy as np
-            import subprocess
-
-            # Convert OGG to WAV using ffmpeg
             wav_path = tmp_path.replace(".ogg", ".wav")
             subprocess.run(
                 ["ffmpeg", "-y", "-i", tmp_path, "-ar", "16000", "-ac", "1", wav_path],
                 capture_output=True, timeout=30,
             )
 
-            if os.path.exists(wav_path):
-                from faster_whisper import WhisperModel
-                model = WhisperModel("base", device="cpu", compute_type="int8")
-                segments, _ = model.transcribe(wav_path, language="es", beam_size=5)
-                text = " ".join(s.text for s in segments).strip()
+            if not os.path.exists(wav_path):
+                await update.message.reply_text("No pude procesar el audio.")
+                return
 
-                # Cleanup
-                os.unlink(tmp_path)
-                os.unlink(wav_path)
+            model = self._get_whisper_model()
+            segments, _ = model.transcribe(wav_path, language="es", beam_size=5)
+            text = " ".join(s.text for s in segments).strip()
 
-                if text and len(text) >= 3:
-                    await update.message.reply_text(f'Escuche: "{text}"')
-                    result = await self._goal_callback(text, "telegram")
-                    summary = result.get("result_summary", "Listo" if result.get("success") else "Error")
-                    await update.message.reply_text(summary)
-                else:
-                    await update.message.reply_text("No pude entender la nota de voz.")
-            else:
-                await update.message.reply_text("Error al procesar audio.")
-                os.unlink(tmp_path)
+            if not text or len(text) < 3:
+                await update.message.reply_text("No pude entender la nota de voz.")
+                return
+
+            await update.message.reply_text(f'Escuche: "{text}"')
+            result = await self._goal_callback(text, "telegram")
+            response = (
+                result.get("response")
+                or result.get("result_summary")
+                or ("Listo." if result.get("success") else "No pude completar la tarea.")
+            )
+            await update.message.reply_text(response)
 
         except Exception as e:
             logger.error("Voice note error: %s", e)
-            await update.message.reply_text(f"Error: {e}")
+            await update.message.reply_text(
+                "No pude procesar la nota de voz. Intenta de nuevo.",
+            )
+        finally:
+            for f in [tmp_path, wav_path]:
+                if f:
+                    try:
+                        os.unlink(f)
+                    except FileNotFoundError:
+                        pass
 
     async def _handle_callback(self, update, context):
         """Handle inline keyboard callbacks."""
@@ -355,22 +379,46 @@ class TelegramBridge(BridgeBase):
         self._active_chat_id = chat_id
 
         if data == "menu_status":
-            await self._cmd_status(update, context)
+            import urllib.request
+            try:
+                with urllib.request.urlopen(
+                    "http://localhost:8420/status", timeout=5,
+                ) as r:
+                    d = json.loads(r.read())
+                await query.message.reply_text(
+                    f"Estado: {d.get('state', '?')}"  # noqa
+                    f"\nUptime: {d.get('uptime_s', 0):.0f}s"
+                    f"\nTools: {d.get('tools_registered', 0)}"
+                )
+            except Exception:
+                await query.message.reply_text("Daemon no disponible.")
         elif data == "menu_screenshot":
-            # Fake update for screenshot handler
-            update.message = query.message
-            await self._cmd_screenshot(update, context)
+            await self._take_and_send_screenshot(chat_id, context)
         elif data == "menu_windows":
             result = await self._goal_callback("lista de ventanas abiertas", "telegram")
-            summary = result.get("result_summary", "No pude obtener la lista")
-            await query.message.reply_text(summary)
+            response = (
+                result.get("response")
+                or result.get("result_summary")
+                or "No pude obtener la lista."
+            )
+            await query.message.reply_text(response)
         elif data == "cancel":
             await query.message.reply_text("Cancelado")
         elif data.startswith("opt_"):
             idx = int(data.split("_")[1])
             await query.message.reply_text(f"Seleccionaste opcion {idx + 1}")
 
-    # ── Auth helpers ──
+    # ── Helpers ──
+
+    def _get_whisper_model(self):
+        """Lazy-load whisper model (reused across voice notes)."""
+        if self._whisper_model is None:
+            from faster_whisper import WhisperModel
+            logger.info("Loading whisper model for Telegram voice notes...")
+            self._whisper_model = WhisperModel(
+                "base", device="cpu", compute_type="int8",
+            )
+        return self._whisper_model
 
     def _check_auth(self, update) -> bool:
         """Check if message sender is authorized."""

@@ -34,6 +34,10 @@ class TelegramSecurity:
     def is_authorized(self, chat_id: int) -> bool:
         """Check if a chat_id is in the whitelist."""
         if not self.authorized_ids:
+            logger.warning(
+                "No Telegram whitelist configured -- accepting chat_id %d",
+                chat_id,
+            )
             return True  # No whitelist = accept all (first-time setup)
         return chat_id in self.authorized_ids
 
