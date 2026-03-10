@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from typing import Optional, Callable, Awaitable
 
@@ -86,6 +87,7 @@ class GeminiLiveVoiceBridge:
         self._audio_out_queue: asyncio.Queue = asyncio.Queue()
         self._is_outputting = False  # True while playing audio (echo suppression)
         self._output_end_time = 0.0  # timestamp when output stopped + buffer
+        self._stop_audio = threading.Event()
 
     def _build_system_prompt(self) -> str:
         return build_system_prompt(self._user_name, self._language)
@@ -138,6 +140,7 @@ class GeminiLiveVoiceBridge:
         ) as session:
             self._session = session
             self._is_active = True
+            self._stop_audio.clear()
 
             try:
                 await self._stream_audio(session, tool_executor)
@@ -183,8 +186,10 @@ class GeminiLiveVoiceBridge:
             while self._is_active:
                 try:
                     data = await asyncio.to_thread(
-                        mic_stream.read, CHUNK_SIZE, False,
+                        self._read_mic_safe, mic_stream,
                     )
+                    if data is None:
+                        break
                     # Echo suppression: skip sending while Gemini audio is playing
                     # (plus 300ms buffer after output stops)
                     if self._is_outputting or time.monotonic() < self._output_end_time:
@@ -289,10 +294,13 @@ class GeminiLiveVoiceBridge:
             )
             # If receive ended (session closed), stop everything
             self._is_active = False
+            self._stop_audio.set()
             for t in pending:
                 t.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
         finally:
+            # Wait for mic reader thread to exit before closing stream
+            await asyncio.sleep(0.2)
             try:
                 mic_stream.stop_stream()
                 mic_stream.close()
@@ -307,6 +315,15 @@ class GeminiLiveVoiceBridge:
                 pya.terminate()
             except Exception:
                 pass
+
+    def _read_mic_safe(self, stream):
+        """Thread-safe mic read -- returns None when stop is signaled."""
+        if self._stop_audio.is_set():
+            return None
+        try:
+            return stream.read(CHUNK_SIZE, exception_on_overflow=False)
+        except Exception:
+            return None
 
     async def _handle_tool_calls(self, session, tool_call, tool_executor: Callable):
         """Execute function calls and return results to Gemini."""
@@ -373,6 +390,7 @@ class GeminiLiveVoiceBridge:
     def stop(self):
         """Signal the session to end."""
         self._is_active = False
+        self._stop_audio.set()
 
     @property
     def is_active(self) -> bool:

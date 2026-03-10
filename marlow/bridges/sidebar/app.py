@@ -280,8 +280,15 @@ function sendMessage() {
 
 function toggleMic() {
     const btn = document.getElementById('mic-btn');
+    const isActive = btn.classList.contains('active');
+    document.title = 'MIC:' + (isActive ? 'off' : 'on');
     btn.classList.toggle('active');
-    document.title = 'MIC:' + (btn.classList.contains('active') ? 'on' : 'off');
+}
+
+function updateMicState(isActive) {
+    const btn = document.getElementById('mic-btn');
+    if (isActive) btn.classList.add('active');
+    else btn.classList.remove('active');
 }
 
 addSystemMessage('Marlow listo');
@@ -424,10 +431,13 @@ class MarlowSidebar(Gtk.Application):
         self._run_js("setStatus('processing')")
 
     def _toggle_mic(self, state: str):
-        """Toggle mic via trigger file."""
+        """Toggle mic via trigger file, with state validation."""
         trigger = "/tmp/marlow-voice-trigger"
         try:
             if state == "on":
+                voice_state = self._read_voice_state()
+                if voice_state == "gemini-active":
+                    return  # Already active
                 with open(trigger, "w") as f:
                     f.write("press")
             else:
@@ -435,6 +445,15 @@ class MarlowSidebar(Gtk.Application):
                     f.write("release")
         except Exception as e:
             logger.warning("Mic toggle failed: %s", e)
+
+    @staticmethod
+    def _read_voice_state() -> str:
+        """Read current voice daemon state from state file."""
+        try:
+            with open("/tmp/marlow-voice-state") as f:
+                return f.read().strip()
+        except FileNotFoundError:
+            return "idle"
 
     def _add_marlow_message(self, text: str):
         """Add a Marlow response message (called from GLib main thread)."""
@@ -466,6 +485,8 @@ class MarlowSidebar(Gtk.Application):
 
         threading.Thread(target=_do, daemon=True).start()
         self._check_voice_liveness()
+        voice_active = self._read_voice_state() == "gemini-active"
+        self._run_js(f"updateMicState({str(voice_active).lower()})")
         return True  # Continue polling
 
     def _poll_transcripts(self) -> bool:

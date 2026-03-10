@@ -243,6 +243,8 @@ async def _wait_for_activation_silent(wake_word, boot_time) -> bool:
                 os.unlink(trigger)
                 # No play_clip here — Gemini will speak first
                 return True
+            elif state == "release":
+                os.unlink(trigger)
         except Exception:
             pass
 
@@ -311,6 +313,8 @@ async def _wait_for_activation(wake_word, boot_time, play_clip) -> bool:
                 os.unlink(trigger)
                 await play_clip("en_que_te_ayudo")
                 return True
+            elif state == "release":
+                os.unlink(trigger)
         except Exception:
             pass
 
