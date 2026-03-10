@@ -224,3 +224,18 @@ class CompositorWindowManager(WindowManager):
         except Exception as e:
             logger.error("move_to_shadow error: %s", e)
             return {"success": False, "error": str(e)}
+
+    def request_screenshot(self, window_id: int = None, timeout: float = 5.0) -> bytes | None:
+        """Request a screenshot via compositor IPC. Returns PNG bytes or None."""
+        import base64
+
+        try:
+            async def _screenshot(client):
+                return await client.request_screenshot(window_id=window_id, timeout=timeout)
+            b64_data = _run_async(self._with_client(_screenshot))
+            if b64_data:
+                return base64.b64decode(b64_data)
+            return None
+        except Exception as e:
+            logger.error("request_screenshot error: %s", e)
+            return None

@@ -89,7 +89,7 @@ def get_platform() -> Platform:
 
     try:
         from .ocr import TesseractOCRProvider
-        ocr = TesseractOCRProvider()
+        ocr = TesseractOCRProvider(screen_provider=screen_provider)
     except Exception as e:
         logger.debug("OCR provider not available: %s", e)
 

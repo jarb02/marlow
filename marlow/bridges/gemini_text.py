@@ -169,8 +169,8 @@ class GeminiTextBridge:
                     result = {"success": False, "error": str(e)}
 
                 logger.info(
-                    "Tool result: %s -> success=%s",
-                    tool_name, result.get("success", "?"),
+                    "Tool result: %s -> %s",
+                    tool_name, {k: v for k, v in result.items() if k != "screenshot_path"},
                 )
 
                 # Build function response
@@ -248,7 +248,7 @@ class GeminiTextBridge:
         compact = {"success": result.get("success", False)}
 
         # Include key fields
-        for key in ("error", "pid", "output", "windows", "result",
+        for key in ("error", "pid", "output", "windows", "result", "window_id", "launched", "note",
                      "screenshot_path", "text"):
             if key in result:
                 val = result[key]

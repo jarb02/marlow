@@ -68,16 +68,21 @@ def build_system_prompt(user_name: str = "", language: str = "es") -> str:
         f"- On failure, explain simply and offer alternatives.\n"
         f"- Maintain multi-turn context within this session.\n"
         f"- Never expose technical details (window IDs, JSON, APIs).\n\n"
-        f"Shadow workflow for searches:\n"
-        f"1. launch_in_shadow to open the browser invisibly.\n"
-        f"2. Use the window_id from the response for subsequent operations.\n"
-        f"3. take_screenshot then ocr_region to read the page content.\n"
-        f"4. Respond with the extracted information.\n"
-        f"5. Only move_to_user if the user explicitly asks to see the window.\n"
-        f"Never fabricate a window_id — use the one from launch_in_shadow.\n\n"
+        f"MANDATORY shadow workflow for any search or web lookup:\n"
+        f"You MUST complete ALL steps before responding to the user.\n"
+        f"Step 1: launch_in_shadow(command='firefox <url>') — save the window_id from the response.\n"
+        f"Step 2: Wait for page load, then call take_screenshot(window_id=<id>).\n"
+        f"Step 3: Call ocr_region(window_id=<id>) to extract the text.\n"
+        f"Step 4: Read the OCR result and compose your answer from it.\n"
+        f"Step 5: Only call move_to_user if the user explicitly asks to see the window.\n"
+        f"DO NOT respond after step 1 alone. You MUST continue to steps 2—4.\n"
+        f"DO NOT fabricate information — only report what OCR returns.\n"
+        f"The window_id from launch_in_shadow works directly with take_screenshot "
+        f"and ocr_region — pass it as the window_id parameter.\n\n"
         f"For complex tasks (4+ steps, multi-page, document creation), "
         f"call execute_complex_goal instead of handling step by step.\n"
     )
+
 
 
 # ─────────────────────────────────────────────────────────────
@@ -182,6 +187,10 @@ def build_tool_declarations():
                             type=types.Type.STRING,
                             description="Window title to capture. Omit for full screen.",
                         ),
+                        "window_id": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Window ID for shadow windows (from launch_in_shadow).",
+                        ),
                     },
                 ),
             ),
@@ -239,7 +248,7 @@ def build_tool_declarations():
                 name="ocr_region",
                 description=(
                     "Read text from the screen or a specific window using OCR. "
-                    "Use after take_screenshot to extract visible text content."
+                    "Extracts visible text content. Works with shadow windows via window_id."
                 ),
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
@@ -247,6 +256,10 @@ def build_tool_declarations():
                         "window_title": types.Schema(
                             type=types.Type.STRING,
                             description="Window title to OCR. Omit for full screen.",
+                        ),
+                        "window_id": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Window ID for shadow windows (from launch_in_shadow).",
                         ),
                     },
                 ),

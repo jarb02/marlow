@@ -304,10 +304,21 @@ class AutonomousMarlow:
         )
 
         # -- Core: Screenshot --
-        tools["take_screenshot"] = lambda **kw: p.screen.screenshot(
-            window_title=kw.get("window_title"),
-            region=kw.get("region"),
-        )
+        def _take_screenshot_handler(**kw):
+            wid = kw.get("window_id")
+            if wid is not None and p.windows and hasattr(p.windows, "request_screenshot"):
+                # Wait for page content to load before capturing
+                import time as _time
+                _time.sleep(4)
+                png = p.windows.request_screenshot(window_id=wid)
+                if png:
+                    return {"success": True, "screenshot_taken": True, "window_id": wid, "size_bytes": len(png)}
+                logger.warning("Compositor screenshot failed for wid=%s, falling back to grim", wid)
+            return p.screen.screenshot(
+                window_title=kw.get("window_title"),
+                region=kw.get("region"),
+            )
+        tools["take_screenshot"] = _take_screenshot_handler
 
         # -- Core: Input --
         tools["click"] = lambda **kw: _wrap_bool(
@@ -365,11 +376,57 @@ class AutonomousMarlow:
 
         # -- Advanced: OCR --
         if p.ocr:
-            tools["ocr_region"] = lambda **kw: p.ocr.ocr_region(
-                window_title=kw.get("window_title"),
-                region=kw.get("region"),
-                language=kw.get("language", "eng"),
-            )
+            # Ensure OCR has a screen provider
+            if not getattr(p.ocr, "_screen", None):
+                p.ocr._screen = p.screen
+            def _ocr_region_handler(**kw):
+                wid = kw.get("window_id")
+                if wid is not None and p.windows and hasattr(p.windows, "request_screenshot"):
+                    png = p.windows.request_screenshot(window_id=wid)
+                    if png:
+                        try:
+                            import io
+                            import pytesseract
+                            from PIL import Image
+                            img = Image.open(io.BytesIO(png))
+                            data = pytesseract.image_to_data(
+                                img, lang=kw.get("language", "eng"),
+                                output_type=pytesseract.Output.DICT,
+                            )
+                            words = []
+                            text_parts = []
+                            for i in range(len(data.get("text", []))):
+                                text = data["text"][i].strip()
+                                conf = int(data["conf"][i])
+                                if not text or conf < 0:
+                                    continue
+                                words.append({
+                                    "text": text,
+                                    "x": data["left"][i],
+                                    "y": data["top"][i],
+                                    "width": data["width"][i],
+                                    "height": data["height"][i],
+                                    "confidence": conf,
+                                })
+                                text_parts.append(text)
+                            return {
+                                "success": True,
+                                "text": " ".join(text_parts),
+                                "words": words,
+                                "word_count": len(words),
+                                "language": kw.get("language", "eng"),
+                                "engine": "tesseract",
+                                "source": "compositor",
+                                "image_size": {"width": img.width, "height": img.height},
+                            }
+                        except Exception as e:
+                            logger.warning("Compositor OCR failed: %s, falling back", e)
+                return p.ocr.ocr_region(
+                    window_title=kw.get("window_title"),
+                    region=kw.get("region"),
+                    language=kw.get("language", "eng"),
+                )
+            tools["ocr_region"] = _ocr_region_handler
             tools["list_ocr_languages"] = lambda **kw: {
                 "success": True,
                 "languages": p.ocr.list_languages(),

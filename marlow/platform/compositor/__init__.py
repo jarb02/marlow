@@ -51,7 +51,8 @@ def get_platform(socket_path: str = None) -> Platform:
 
     try:
         from marlow.platform.linux.ocr import TesseractOCRProvider
-        ocr = TesseractOCRProvider()
+        screen_cap = CompositorScreenCapture(socket_path=socket_path)
+        ocr = TesseractOCRProvider(screen_provider=screen_cap)
     except Exception as e:
         logger.debug("OCR provider not available: %s", e)
 

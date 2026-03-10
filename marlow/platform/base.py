@@ -407,6 +407,23 @@ class AccessibilityProvider(ABC):
         """
 
 
+class OCRProvider(ABC):
+    """Base class for OCR providers."""
+
+    @abstractmethod
+    def ocr_region(
+        self,
+        window_title: str | None = None,
+        region: tuple[int, int, int, int] | None = None,
+        language: str = "eng",
+    ) -> dict:
+        ...
+
+    @abstractmethod
+    def list_languages(self) -> list[str]:
+        ...
+
+
 class AudioProvider(ABC):
     """Capture audio from system output and microphone.
 

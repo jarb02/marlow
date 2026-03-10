@@ -260,6 +260,29 @@ class CompositorWindowManager(WindowManager):
         logger.warning("move_to_shadow failed: %s", msg)
         return {"success": False, "error": msg}
 
+    def request_screenshot(self, window_id: int = None, timeout: float = 3.0) -> bytes | None:
+        '''Request a screenshot via compositor IPC. Returns PNG bytes or None.'''
+        import base64
+        import time as _time
+
+        req = {"type": "RequestScreenshot"}
+        if window_id is not None:
+            req["window_id"] = window_id
+
+        deadline = _time.time() + timeout
+        while _time.time() < deadline:
+            resp = self._send(req)
+            if not resp or resp.get("status") != "ok":
+                return None
+            data = resp.get("data", {})
+            if isinstance(data, dict) and data.get("pending"):
+                _time.sleep(0.1)
+                continue
+            if isinstance(data, dict) and "image" in data:
+                return base64.b64decode(data["image"])
+            return None
+        return None
+
     # ── Helpers ──
 
     @staticmethod
