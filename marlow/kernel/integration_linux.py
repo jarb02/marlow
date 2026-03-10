@@ -313,7 +313,8 @@ class AutonomousMarlow:
                 png = p.windows.request_screenshot(window_id=wid)
                 if png:
                     return {"success": True, "screenshot_taken": True, "window_id": wid, "size_bytes": len(png)}
-                logger.warning("Compositor screenshot failed for wid=%s, falling back to grim", wid)
+                logger.warning("Compositor screenshot failed for wid=%s", wid)
+                return {"success": False, "error": "Shadow screenshot failed, retry in a moment"}
             return p.screen.screenshot(
                 window_title=kw.get("window_title"),
                 region=kw.get("region"),
@@ -420,7 +421,10 @@ class AutonomousMarlow:
                                 "image_size": {"width": img.width, "height": img.height},
                             }
                         except Exception as e:
-                            logger.warning("Compositor OCR failed: %s, falling back", e)
+                            logger.warning("Compositor OCR failed: %s", e)
+                            return {"success": False, "error": f"OCR processing failed: {e}"}
+                    # Shadow screenshot returned None — don't fall to grim
+                    return {"success": False, "error": "Shadow screenshot failed, retry in a moment"}
                 return p.ocr.ocr_region(
                     window_title=kw.get("window_title"),
                     region=kw.get("region"),

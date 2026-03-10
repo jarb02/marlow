@@ -47,7 +47,10 @@ class MarlowCompositorClient:
             self._reader = None
 
     async def send_request(self, request: dict) -> dict:
-        """Send a request and wait for response."""
+        """Send a request and wait for response.
+
+        Handles large payloads (screenshots) that may arrive in chunks.
+        """
         if not self._writer:
             raise RuntimeError("Not connected")
 
@@ -58,7 +61,15 @@ class MarlowCompositorClient:
 
         len_buf = await self._reader.readexactly(4)
         msg_len = struct.unpack("<I", len_buf)[0]
-        payload = await self._reader.readexactly(msg_len)
+        try:
+            payload = await asyncio.wait_for(
+                self._reader.readexactly(msg_len), timeout=10.0,
+            )
+        except asyncio.IncompleteReadError as e:
+            raise IOError(
+                f"{len(e.partial)} bytes read on a total of "
+                f"{e.expected} expected bytes"
+            ) from e
         return msgpack.unpackb(payload, raw=False)
 
     # ─── Core commands ───

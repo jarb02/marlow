@@ -226,16 +226,26 @@ class CompositorWindowManager(WindowManager):
             return {"success": False, "error": str(e)}
 
     def request_screenshot(self, window_id: int = None, timeout: float = 5.0) -> bytes | None:
-        """Request a screenshot via compositor IPC. Returns PNG bytes or None."""
+        """Request a screenshot via compositor IPC. Returns PNG bytes or None.
+
+        Retries once on partial read (large payloads may exceed IPC buffer).
+        """
         import base64
 
-        try:
-            async def _screenshot(client):
-                return await client.request_screenshot(window_id=window_id, timeout=timeout)
-            b64_data = _run_async(self._with_client(_screenshot))
-            if b64_data:
-                return base64.b64decode(b64_data)
-            return None
-        except Exception as e:
-            logger.error("request_screenshot error: %s", e)
-            return None
+        for attempt in range(2):
+            try:
+                async def _screenshot(client):
+                    return await client.request_screenshot(window_id=window_id, timeout=timeout)
+                b64_data = _run_async(self._with_client(_screenshot))
+                if b64_data:
+                    return base64.b64decode(b64_data)
+                return None
+            except Exception as e:
+                if attempt == 0 and "bytes read" in str(e):
+                    logger.warning("Screenshot partial read, retrying...")
+                    import time as _time
+                    _time.sleep(0.2)
+                    continue
+                logger.error("request_screenshot error: %s", e)
+                return None
+        return None
