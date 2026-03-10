@@ -412,7 +412,11 @@ class MarlowSidebar(Gtk.Application):
 
                     GLib.idle_add(self._add_marlow_message, response_text)
             except Exception as e:
-                GLib.idle_add(self._add_marlow_message, f"Error: {e}")
+                logger.error("Goal request failed: %s", e)
+                GLib.idle_add(
+                    self._add_marlow_message,
+                    "No pude procesar tu solicitud. \xbfPodr\xedas intentarlo de nuevo?",
+                )
 
         threading.Thread(target=_do, daemon=True).start()
 
@@ -461,6 +465,7 @@ class MarlowSidebar(Gtk.Application):
                 pass  # Daemon not running — don't spam errors
 
         threading.Thread(target=_do, daemon=True).start()
+        self._check_voice_liveness()
         return True  # Continue polling
 
     def _poll_transcripts(self) -> bool:
@@ -496,6 +501,31 @@ class MarlowSidebar(Gtk.Application):
         safe = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
         self._run_js(f"addMessage('{safe}', '{role}', 'voice')")
         return False
+
+    def _check_voice_liveness(self):
+        """Detect dead voice daemon: if state is gemini-active but stale, reset."""
+        state_file = "/tmp/marlow-voice-state"
+        trigger_file = "/tmp/marlow-voice-trigger"
+        try:
+            if not os.path.exists(state_file):
+                return
+            mtime = os.path.getmtime(state_file)
+            with open(state_file) as f:
+                state = f.read().strip()
+            if state == "gemini-active" and (time.time() - mtime) > 60:
+                logger.warning("Voice daemon appears dead (stale state), resetting")
+                with open(state_file, "w") as f:
+                    f.write("idle")
+                try:
+                    os.unlink(trigger_file)
+                except FileNotFoundError:
+                    pass
+                GLib.idle_add(
+                    self._run_js,
+                    "document.getElementById('mic-btn').classList.remove('active')",
+                )
+        except Exception:
+            pass
 
     def _run_js(self, js: str):
         """Execute JavaScript in the webview."""

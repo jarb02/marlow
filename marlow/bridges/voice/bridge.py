@@ -427,9 +427,8 @@ class VoiceBridge(BridgeBase):
         else:
             error_msg = result.get("errors", [""])[0] if result.get("errors") else ""
             if error_msg:
-                await speak(f"No pude hacerlo. {error_msg[:100]}")
-            else:
-                await play_clip("no_pude")
+                logger.error("Goal execution error: %s", error_msg)
+            await speak("No pude completar esa tarea. \xbfQuieres que lo intente de nuevo?")
             self.context.on_response_spoken(needs_follow_up=False)
 
     async def _handle_follow_up(self, goal_callback):

@@ -14,12 +14,31 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import logging
 import os
+import signal
 import sys
 import time
 
 logger = logging.getLogger("marlow.voice_daemon")
+
+
+def _cleanup_voice_state():
+    """Emergency cleanup -- runs on crash, exit, or signal."""
+    try:
+        with open("/tmp/marlow-voice-state", "w") as f:
+            f.write("idle")
+    except Exception:
+        pass
+    try:
+        os.unlink("/tmp/marlow-voice-trigger")
+    except FileNotFoundError:
+        pass
+
+
+atexit.register(_cleanup_voice_state)
+signal.signal(signal.SIGTERM, lambda *_: (_cleanup_voice_state(), sys.exit(0)))
 
 
 async def _send_goal(text: str, channel: str = "voice") -> dict:

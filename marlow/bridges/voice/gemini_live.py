@@ -337,7 +337,10 @@ class GeminiLiveVoiceBridge:
                     types.FunctionResponse(
                         id=fc.id,
                         name=fc.name,
-                        response={"error": str(e)},
+                        response={
+                            "success": False,
+                            "error": "The operation could not be completed. Try again.",
+                        },
                     ),
                 )
 
