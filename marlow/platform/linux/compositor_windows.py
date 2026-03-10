@@ -213,7 +213,19 @@ class CompositorWindowManager(WindowManager):
         if resp and resp.get("status") == "ok":
             data = resp.get("data", {})
             logger.info("launch_in_shadow: %s -> %s", command, data)
-            return {"success": True, **data}
+            result = {"success": True, **data}
+            # Resolve window_id: compositor assigns it async when the
+            # surface maps, so poll shadow_space briefly.
+            import time as _time
+            for _ in range(6):
+                _time.sleep(0.5)
+                shadow_resp = self._send({"type": "GetShadowWindows"})
+                if shadow_resp and shadow_resp.get("status") == "ok":
+                    windows = shadow_resp.get("data", [])
+                    if windows:
+                        result["window_id"] = windows[-1].get("window_id", 0)
+                        break
+            return result
         msg = resp.get("message", "IPC failed") if resp else "Compositor not available"
         logger.warning("launch_in_shadow failed: %s", msg)
         return {"success": False, "error": msg}

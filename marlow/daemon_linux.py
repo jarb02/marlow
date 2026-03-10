@@ -239,6 +239,10 @@ class MarlowDaemon:
         Used by GeminiTextBridge as tool_executor callback.
         Same tools available as the voice path (via /tool endpoint).
         """
+        # execute_complex_goal delegates to GoalEngine
+        if tool_name == "execute_complex_goal":
+            return await self._execute_complex_goal(args.get("goal", ""))
+
         if not self._marlow or tool_name not in self._marlow._tool_map:
             return {"success": False, "error": f"Unknown tool: {tool_name}"}
 
@@ -268,6 +272,30 @@ class MarlowDaemon:
             return {"success": True, "result": str(result)}
         except Exception as e:
             logger.error("Tool execution error (%s): %s", tool_name, e)
+            return {"success": False, "error": str(e)}
+
+    async def _execute_complex_goal(self, goal_text: str) -> dict:
+        """Delegate a complex goal to GoalEngine (Claude planner)."""
+        if not self._marlow:
+            return {"success": False, "error": "Agent not initialized"}
+        if not goal_text:
+            return {"success": False, "error": "No goal provided"}
+
+        logger.info("Delegating to GoalEngine: %s", goal_text[:80])
+        try:
+            result = await self._marlow.execute(goal_text)
+            return {
+                "success": result.success,
+                "steps_completed": result.steps_completed,
+                "steps_total": result.steps_total,
+                "duration_s": round(result.duration_s, 1),
+                "summary": result.result_summary or (
+                    "Task completed." if result.success else "Task failed."
+                ),
+                "errors": result.errors[:3] if result.errors else [],
+            }
+        except Exception as e:
+            logger.error("GoalEngine delegation error: %s", e)
             return {"success": False, "error": str(e)}
 
     @staticmethod

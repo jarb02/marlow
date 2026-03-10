@@ -67,8 +67,16 @@ def build_system_prompt(user_name: str = "", language: str = "es") -> str:
         f"- After an action, summarize the result naturally.\n"
         f"- On failure, explain simply and offer alternatives.\n"
         f"- Maintain multi-turn context within this session.\n"
-        f"- To show shadow-mode content, use move_to_user.\n"
-        f"- Never expose technical details (window IDs, JSON, APIs).\n"
+        f"- Never expose technical details (window IDs, JSON, APIs).\n\n"
+        f"Shadow workflow for searches:\n"
+        f"1. launch_in_shadow to open the browser invisibly.\n"
+        f"2. Use the window_id from the response for subsequent operations.\n"
+        f"3. take_screenshot then ocr_region to read the page content.\n"
+        f"4. Respond with the extracted information.\n"
+        f"5. Only move_to_user if the user explicitly asks to see the window.\n"
+        f"Never fabricate a window_id — use the one from launch_in_shadow.\n\n"
+        f"For complex tasks (4+ steps, multi-page, document creation), "
+        f"call execute_complex_goal instead of handling step by step.\n"
     )
 
 
@@ -217,6 +225,48 @@ def build_tool_declarations():
                         ),
                     },
                     required=["key"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="get_shadow_windows",
+                description=(
+                    "List all windows in shadow (invisible) space with their "
+                    "window_id, title, and app_id."
+                ),
+                parameters=types.Schema(type=types.Type.OBJECT, properties={}),
+            ),
+            types.FunctionDeclaration(
+                name="ocr_region",
+                description=(
+                    "Read text from the screen or a specific window using OCR. "
+                    "Use after take_screenshot to extract visible text content."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "window_title": types.Schema(
+                            type=types.Type.STRING,
+                            description="Window title to OCR. Omit for full screen.",
+                        ),
+                    },
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="execute_complex_goal",
+                description=(
+                    "Delegate a complex multi-step task to the advanced AI planner. "
+                    "Use for tasks requiring 4+ steps, multi-page interaction, "
+                    "document creation, or workflows beyond simple open/search/close."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "goal": types.Schema(
+                            type=types.Type.STRING,
+                            description="Full description of the task to accomplish.",
+                        ),
+                    },
+                    required=["goal"],
                 ),
             ),
             types.FunctionDeclaration(
