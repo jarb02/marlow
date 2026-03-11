@@ -46,6 +46,7 @@ from .planning.goap import GOAPPlanner
 from .scoring.pre_scorer import PreActionScorer
 from .security.plan_reviewer import PlanReviewer
 from .window_tracker import WindowTracker
+from .execution_pipeline import ExecutionPipeline
 
 logger = logging.getLogger("marlow.integration.linux")
 
@@ -163,6 +164,7 @@ class AutonomousMarlow:
         self._granularity = PlanGranularityAdapter()
         self._blackboard = Blackboard()
         self._current_gran_config = None
+        self._pipeline: Optional[ExecutionPipeline] = None
         self._ready = False
 
         # Platform layer (lazy init)
@@ -237,6 +239,9 @@ class AutonomousMarlow:
             available_tools=self._executor.available_tools,
         )
 
+        # 6. Create unified ExecutionPipeline
+        self._init_pipeline()
+
         self._ready = True
         logger.info(
             "AutonomousMarlow Linux ready: %d tools registered, %d failed",
@@ -265,6 +270,39 @@ class AutonomousMarlow:
         if self._executor:
             self._executor.shutdown()
         self._ready = False
+
+    def _init_pipeline(self):
+        """Create the unified ExecutionPipeline.
+
+        Wires all subsystems (EventBus, PreActionScorer, DesktopWeather, etc.)
+        into the pipeline. SecurityGate is initialized with SecurityManager.
+        """
+        security_gate = None
+        try:
+            from .security.gate import SecurityGate
+            from .security.manager import SecurityManager
+            security_gate = SecurityGate(
+                security_manager=SecurityManager(autonomous_mode=True),
+            )
+        except Exception as e:
+            logger.warning("SecurityGate init failed: %s", e)
+
+        self._pipeline = ExecutionPipeline(
+            tool_map=self._tool_map,
+            security_gate=security_gate,
+            event_bus=self._event_bus,
+            pre_scorer=self._pre_scorer,
+            desktop_weather=self._weather,
+            blackboard=self._blackboard,
+            window_tracker=self._window_tracker,
+            interrupt_manager=self._interrupt_manager,
+            memory=self._memory,
+            knowledge=self._knowledge,
+            adaptive_waits=self._adaptive_waits,
+            focus_handler=self._ensure_focus,
+            snapshot_handler=self._take_window_snapshot,
+        )
+        logger.info("ExecutionPipeline initialized for GoalEngine")
 
     # ── Tool Registration ──
 
@@ -1012,130 +1050,34 @@ class AutonomousMarlow:
     async def _execute_tool(
         self, tool_name: str, params: dict,
     ) -> ToolResult:
-        """Execute a tool with focus management and post-action verification."""
-        # Pre-execution: adaptive granularity
+        """Execute a tool through the unified ExecutionPipeline.
+
+        GoalEngine-specific logic (PlanGranularityAdapter) stays here.
+        All shared logic (security, events, memory, knowledge, weather,
+        scoring, snapshots, interrupts) lives in ExecutionPipeline.
+        """
+        # GoalEngine-specific: adaptive granularity config
         app_name = params.get(
             "expected_app", params.get("name", params.get("app", "")),
         )
         self._current_gran_config = self._granularity.get_config(
             app_name, tool_name,
         )
-        self._blackboard.set("world.active_tool", tool_name, source="integration")
-        self._blackboard.set("world.active_app", app_name, source="integration")
 
-        # Pre-execution: check desktop weather
-        _weather_report = self._weather.get_report()
-        if _weather_report.should_pause:
-            logger.warning("Desktop in TORMENTA — pausing 2s before %s", tool_name)
-            await asyncio.sleep(2.0)
-
-        # Pre-execution: snapshot
-        if tool_name not in self._READ_ONLY_TOOLS:
-            await self._take_window_snapshot()
-
-        # Pre-execution: score
-        pre_context = {
-            "target_app": params.get("window_title", params.get("app_name", "")),
-            "element_type": params.get("control_type", ""),
-            "estimated_tokens": 0,
-            "estimated_ms": 0,
-        }
-        pre_score = self._pre_scorer.score(
-            tool_name=tool_name,
-            context=pre_context,
-            app_name=params.get("window_title", params.get("app_name", "")),
-        )
-        logger.debug(
-            "PreActionScore: %s -> %.2f (rel=%.2f urg=%.2f rel=%.2f cost=%.2f)",
-            tool_name, pre_score.composite, pre_score.reliability,
-            pre_score.urgency, pre_score.relevance, pre_score.cost,
-        )
-
-        # Publish ActionStarting
-        try:
-            await self._event_bus.publish(ActionStarting(
-                tool_name=tool_name, source="integration",
-                pre_score=pre_score.composite,
-            ))
-        except Exception:
-            pass
-
-        # Focus target window for input tools
-        if tool_name in _INPUT_TOOLS:
-            await self._ensure_focus(tool_name, params)
-
-        # Execute
-        _start = _time.time()
-        result = await self._executor.execute(tool_name, params)
-        _duration_ms = (_time.time() - _start) * 1000
-
-        # Publish result event
-        try:
-            if result.success:
-                await self._event_bus.publish(ActionCompleted(
-                    tool_name=tool_name, source="integration",
-                    success=True, duration_ms=round(_duration_ms, 1),
-                ))
-            else:
-                await self._event_bus.publish(ActionFailed(
-                    tool_name=tool_name, source="integration",
-                    error=str(result.error) if result.error else "",
-                ))
-                self._weather.record_error()
-        except Exception:
-            pass
-
-        # Post-action: remember in short-term memory
-        if self._memory:
-            self._memory.remember_short(
-                {
-                    "tool": tool_name,
-                    "success": result.success,
-                    "duration_ms": round(_duration_ms),
-                },
-                category="action",
-                tool_name=tool_name,
+        # Delegate to unified pipeline
+        if self._pipeline:
+            pipeline_result = await self._pipeline.execute(
+                tool_name, params, origin="goal_engine",
+            )
+            # Convert PipelineResult back to ToolResult for GoalEngine
+            return ToolResult(
+                success=pipeline_result.success,
+                data=pipeline_result.data if pipeline_result.success else None,
+                error=pipeline_result.error if not pipeline_result.success else None,
             )
 
-        # Post-action: learn app reliability
-        if self._knowledge and app_name:
-            try:
-                await self._knowledge.record_action(
-                    app_name=app_name, success=result.success,
-                )
-                if not result.success and result.error:
-                    await self._knowledge.record_error(
-                        app_name=app_name,
-                        tool_name=tool_name,
-                        error_type="execution_error",
-                        error_message=str(result.error),
-                    )
-            except Exception as e:
-                logger.debug("Knowledge record error: %s", e)
-
-        # Post-execution: adaptive wait after launch
-        if tool_name == "open_application" and result.success:
-            app_name = params.get("app_name") or params.get("name") or ""
-            wait_time = self._adaptive_waits.get_wait(app_name)
-            logger.info("Waiting %.1fs for %s (adaptive)", wait_time, app_name)
-            await asyncio.sleep(wait_time)
-
-        # Post-action: snapshot and detect window changes
-        if tool_name not in self._READ_ONLY_TOOLS:
-            await self._take_window_snapshot()
-            changes = self._window_tracker.detect_changes()
-            for change in changes:
-                self._weather.record_window_change()
-                try:
-                    await self._event_bus.publish(WindowChanged(
-                        change_type=change.change_type,
-                        window_title=change.window_title,
-                        source="integration",
-                    ))
-                except Exception:
-                    pass
-
-        return result
+        # Fallback: direct execution via SmartExecutor (pipeline not ready)
+        return await self._executor.execute(tool_name, params)
 
     async def _ensure_focus(
         self, tool_name: str, params: dict,

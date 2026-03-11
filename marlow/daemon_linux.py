@@ -157,6 +157,7 @@ class MarlowDaemon:
         self._app_knowledge = None   # AppKnowledgeManager
         self._log_repo = None        # LogRepository
         self._maintenance = None     # DatabaseMaintenance
+        self._pipeline = None        # ExecutionPipeline (unified tool execution)
 
     # ── Lifecycle ──
 
@@ -186,6 +187,44 @@ class MarlowDaemon:
             self._tools_count, self._user_name, self._language,
         )
         return result
+
+    def _init_pipeline(self):
+        """Initialize the unified ExecutionPipeline.
+
+        Wires SecurityManager, EventBus, PreActionScorer, DesktopWeather,
+        Memory, Knowledge, Blackboard, WindowTracker, InterruptManager,
+        and AdaptiveWaits from AutonomousMarlow into a single pipeline.
+        """
+        if not self._marlow:
+            return
+
+        from marlow.kernel.execution_pipeline import ExecutionPipeline
+
+        # Import SecurityGate (with optional SecurityManager)
+        security_gate = None
+        try:
+            from marlow.kernel.security.gate import SecurityGate
+            from marlow.kernel.security.manager import SecurityManager
+            security_gate = SecurityGate(
+                security_manager=SecurityManager(autonomous_mode=True),
+            )
+        except Exception as e:
+            logger.warning("SecurityGate init failed: %s", e)
+
+        self._pipeline = ExecutionPipeline(
+            tool_map=self._marlow._tool_map,
+            security_gate=security_gate,
+            event_bus=getattr(self._marlow, "_event_bus", None),
+            pre_scorer=getattr(self._marlow, "_pre_scorer", None),
+            desktop_weather=getattr(self._marlow, "_weather", None),
+            blackboard=getattr(self._marlow, "_blackboard", None),
+            window_tracker=getattr(self._marlow, "_window_tracker", None),
+            interrupt_manager=getattr(self._marlow, "_interrupt_manager", None),
+            memory=self._memory_system,
+            knowledge=self._app_knowledge,
+            adaptive_waits=getattr(self._marlow, "_adaptive_waits", None),
+        )
+        logger.info("ExecutionPipeline initialized with %d tools", len(self._marlow._tool_map))
 
     def _load_user_prefs(self):
         """Load user name and language from settings."""
@@ -473,43 +512,40 @@ class MarlowDaemon:
             logger.error("Failed to init Claude fallback: %s", e)
             self._claude_client = None
 
-    async def _execute_tool_direct(self, tool_name: str, args: dict) -> dict:
-        """Execute a tool directly from the daemon tool map.
+    async def _execute_tool_direct(
+        self, tool_name: str, args: dict, origin: str = "gemini",
+    ) -> dict:
+        """Execute a tool through the unified ExecutionPipeline.
 
-        Used by GeminiTextBridge as tool_executor callback.
+        Used by GeminiTextBridge and Claude fallback as tool_executor callback.
         Same tools available as the voice path (via /tool endpoint).
+
+        The pipeline provides: SecurityGate, EventBus, PreActionScorer,
+        DesktopWeather, Memory, Knowledge, Blackboard, WindowTracker,
+        InterruptManager, AdaptiveWaits, and launch_in_shadow fallback.
         """
-        # execute_complex_goal delegates to GoalEngine
+        # execute_complex_goal delegates to GoalEngine (not through pipeline)
         if tool_name == "execute_complex_goal":
             return await self._execute_complex_goal(args.get("goal", ""))
 
+        # Use pipeline if available, otherwise fall back to direct execution
+        if self._pipeline:
+            result = await self._pipeline.execute(
+                tool_name, args, origin=origin,
+            )
+            return result.to_dict()
+
+        # Fallback: direct execution (pipeline not initialized)
         if not self._marlow or tool_name not in self._marlow._tool_map:
             return {"success": False, "error": f"Unknown tool: {tool_name}"}
 
         try:
             func = self._marlow._tool_map[tool_name]
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, lambda: func(**args))
-            if isinstance(result, dict):
-                # Fallback: if launch_in_shadow failed (no compositor),
-                # try open_application instead so Sway mode still works.
-                if (tool_name == "launch_in_shadow"
-                        and not result.get("success")
-                        and "open_application" in self._marlow._tool_map):
-                    command = args.get("command", "")
-                    logger.info(
-                        "launch_in_shadow failed, falling back to "
-                        "open_application: %s", command,
-                    )
-                    func2 = self._marlow._tool_map["open_application"]
-                    result = await loop.run_in_executor(
-                        None, lambda: func2(app_name=command),
-                    )
-                    if isinstance(result, dict):
-                        result["note"] = "Opened visibly (shadow mode unavailable)"
-                        return result
-                return result
-            return {"success": True, "result": str(result)}
+            raw = await loop.run_in_executor(None, lambda: func(**args))
+            if isinstance(raw, dict):
+                return raw
+            return {"success": True, "result": str(raw)}
         except Exception as e:
             logger.error("Tool execution error (%s): %s", tool_name, e)
             return {"success": False, "error": str(e)}
@@ -849,7 +885,9 @@ class MarlowDaemon:
                     round_num + 1, tb.name, tb.input,
                 )
                 try:
-                    result = await self._execute_tool_direct(real_name, real_args)
+                    result = await self._execute_tool_direct(
+                        real_name, real_args, origin="claude",
+                    )
                 except Exception as e:
                     result = {"success": False, "error": str(e)}
 
@@ -1025,6 +1063,9 @@ class MarlowDaemon:
         except Exception as e:
             logger.error("Failed to initialize AutonomousMarlow: %s", e)
             sys.exit(1)
+
+        # Initialize unified ExecutionPipeline (security + observability)
+        self._init_pipeline()
 
         # Initialize dynamic context builder (feeds live state to LLM)
         self._init_context_builder()
