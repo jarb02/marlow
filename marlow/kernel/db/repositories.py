@@ -348,6 +348,53 @@ class MemoryRepository:
             (factor,),
         )
         await self._conn.commit()
+    async def get_by_id(self, memory_id: str) -> Optional[Memory]:
+        """Get a single memory entry by ID."""
+        cursor = await self._conn.execute(
+            """SELECT id, tier, category, content, relevance, access_count,
+                      created_at, expires_at, last_accessed, tags
+               FROM memory WHERE id = ?""",
+            (memory_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return Memory(
+            id=row[0], tier=row[1], category=row[2],
+            content=json.loads(row[3]),
+            relevance=row[4], access_count=row[5],
+            created_at=row[6], expires_at=row[7],
+            last_accessed=row[8],
+            tags=json.loads(row[9]) if row[9] else [],
+        )
+
+    async def delete_by_id(self, memory_id: str) -> bool:
+        """Delete a memory entry by ID. Returns True if deleted."""
+        cursor = await self._conn.execute(
+            "DELETE FROM memory WHERE id = ?", (memory_id,),
+        )
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def list_ids_by_category(
+        self, category: str, tier: str = "long",
+    ) -> list[str]:
+        """List memory IDs in a category."""
+        cursor = await self._conn.execute(
+            "SELECT id FROM memory WHERE tier = ? AND category = ? ORDER BY id",
+            (tier, category),
+        )
+        return [row[0] for row in await cursor.fetchall()]
+
+    async def list_categories(self, tier: str = "long") -> dict[str, int]:
+        """List categories with entry counts."""
+        cursor = await self._conn.execute(
+            "SELECT category, COUNT(*) FROM memory WHERE tier = ? GROUP BY category",
+            (tier,),
+        )
+        return {row[0]: row[1] for row in await cursor.fetchall()}
+
+
 
 
 class KnowledgeRepository:

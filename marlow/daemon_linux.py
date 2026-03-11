@@ -152,6 +152,11 @@ class MarlowDaemon:
         self._language: str = "es"
         self._claude_client = None  # Anthropic fallback
         self._context_builder = None  # Dynamic context for LLM prompts
+        self._db = None              # DatabaseManager
+        self._memory_system = None   # MemorySystem (3-tier)
+        self._app_knowledge = None   # AppKnowledgeManager
+        self._log_repo = None        # LogRepository
+        self._maintenance = None     # DatabaseMaintenance
 
     # ── Lifecycle ──
 
@@ -167,6 +172,8 @@ class MarlowDaemon:
             llm_model=model,
             auto_confirm=True,
             timeout=30.0,
+            memory=self._memory_system,
+            knowledge=self._app_knowledge,
         )
 
         result = self._marlow.setup()
@@ -235,6 +242,136 @@ class MarlowDaemon:
             except Exception as e:
                 logger.debug("Context build error: %s", e)
         return ""
+
+    async def _init_database(self):
+        """Initialize SQLite persistence layer.
+
+        Creates state.db and logs.db, repositories, MemorySystem,
+        AppKnowledgeManager, and runs one-time JSON migration.
+        """
+        try:
+            from marlow.kernel.db.manager import DatabaseManager
+            from marlow.kernel.db.repositories import (
+                MemoryRepository, KnowledgeRepository, LogRepository,
+            )
+            from marlow.kernel.memory import MemorySystem
+            from marlow.kernel.knowledge import AppKnowledgeManager
+
+            db_dir = os.path.join(MARLOW_DIR, "db")
+            self._db = DatabaseManager(data_dir=db_dir)
+            await self._db.initialize()
+
+            # Create repositories
+            memory_repo = MemoryRepository(self._db.state)
+            knowledge_repo = KnowledgeRepository(self._db.state)
+            self._log_repo = LogRepository(self._db.logs)
+
+            # Create high-level managers
+            self._memory_system = MemorySystem(memory_repo)
+            self._app_knowledge = AppKnowledgeManager(knowledge_repo)
+
+            # Switch ErrorJournal to SQLite
+            from marlow.core import error_journal
+            state_db_path = os.path.join(db_dir, "state.db")
+            error_journal.init_sqlite(state_db_path)
+
+            # Switch memory tools to SQLite
+            from marlow.tools import memory as memory_tools
+            memory_tools.init_sqlite(state_db_path)
+
+            # One-time JSON migration
+            await self._migrate_json_data(state_db_path)
+
+            logger.info(
+                "Database initialized: %s (state.db + logs.db)",
+                db_dir,
+            )
+        except Exception as e:
+            logger.error("Failed to init database: %s", e)
+            # Non-fatal: daemon still works with JSON fallbacks
+
+    async def _migrate_json_data(self, state_db_path: str):
+        """One-time migration of JSON data to SQLite.
+
+        Imports existing JSON files and renames them to .json.migrated.
+        """
+        from pathlib import Path
+        migrated = 0
+
+        # 1. Error journal JSON
+        journal_json = Path(MARLOW_DIR) / "memory" / "error_journal.json"
+        if journal_json.exists():
+            try:
+                from marlow.core.error_journal import _journal
+                import json
+                data = json.loads(journal_json.read_text(encoding="utf-8"))
+                if isinstance(data, list) and data:
+                    count = _journal.import_json_entries(data)
+                    journal_json.rename(
+                        journal_json.with_suffix(".json.migrated"),
+                    )
+                    logger.info(
+                        "Migrated error_journal.json: %d entries", count,
+                    )
+                    migrated += count
+            except Exception as e:
+                logger.warning("Error journal migration failed: %s", e)
+
+        # 2. Memory category JSON files
+        from marlow.tools.memory import import_json_to_sqlite, MEMORY_DIR
+        for cat in ("general", "preferences", "projects", "tasks"):
+            cat_file = MEMORY_DIR / f"{cat}.json"
+            if cat_file.exists():
+                try:
+                    count = import_json_to_sqlite(state_db_path)
+                    # Rename all category files after successful import
+                    for c2 in ("general", "preferences", "projects", "tasks"):
+                        f2 = MEMORY_DIR / f"{c2}.json"
+                        if f2.exists():
+                            f2.rename(f2.with_suffix(".json.migrated"))
+                    logger.info(
+                        "Migrated memory JSON files: %d entries", count,
+                    )
+                    migrated += count
+                    break  # import_json_to_sqlite handles all categories
+                except Exception as e:
+                    logger.warning("Memory migration failed: %s", e)
+                    break
+
+        # 3. CDP knowledge JSON
+        cdp_json = Path(MARLOW_DIR) / "cdp_knowledge.json"
+        if cdp_json.exists() and self._app_knowledge:
+            try:
+                import json
+                cdp_data = json.loads(cdp_json.read_text(encoding="utf-8"))
+                if cdp_data:
+                    count = await self._app_knowledge.import_from_cdp_knowledge(
+                        cdp_data,
+                    )
+                    cdp_json.rename(
+                        cdp_json.with_suffix(".json.migrated"),
+                    )
+                    logger.info(
+                        "Migrated cdp_knowledge.json: %d apps", count,
+                    )
+                    migrated += count
+            except Exception as e:
+                logger.warning("CDP knowledge migration failed: %s", e)
+
+        if migrated:
+            logger.info("Total JSON->SQLite migration: %d entries", migrated)
+
+    async def _start_maintenance(self):
+        """Start periodic database maintenance background task."""
+        if not self._db or not self._db.is_initialized:
+            return
+        try:
+            from marlow.kernel.db.maintenance import DatabaseMaintenance
+            self._maintenance = DatabaseMaintenance(self._db)
+            await self._maintenance.start_background(interval_minutes=5)
+            logger.info("Database maintenance started (every 5 min)")
+        except Exception as e:
+            logger.warning("Failed to start DB maintenance: %s", e)
 
     def _init_gemini_text(self):
         """Initialize GeminiTextBridge for all text interaction."""
@@ -847,6 +984,9 @@ class MarlowDaemon:
 
         logger.info("Marlow Daemon starting on %s:%d", HOST, PORT)
 
+        # Initialize SQLite persistence layer
+        await self._init_database()
+
         # Initialize AutonomousMarlow (tools + GoalEngine for complex goals)
         try:
             setup_result = self._init_marlow()
@@ -865,6 +1005,9 @@ class MarlowDaemon:
 
         # Initialize Claude Sonnet fallback
         self._init_claude_fallback()
+
+        # Start database maintenance background task
+        await self._start_maintenance()
 
         # Start goal queue worker (for execute_complex_goal)
         self._queue_worker = asyncio.create_task(self._queue_worker_loop())
@@ -933,6 +1076,19 @@ class MarlowDaemon:
                 pass
 
         await runner.cleanup()
+
+        # Close database connections
+        if self._maintenance:
+            try:
+                await self._maintenance.stop()
+            except Exception:
+                pass
+        if self._db:
+            try:
+                await self._db.close()
+            except Exception as e:
+                logger.warning("DB close error: %s", e)
+
         self._teardown()
 
     def _handle_signal(self):

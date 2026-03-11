@@ -136,11 +136,15 @@ class AutonomousMarlow:
         auto_confirm: bool = True,
         llm_provider: str = None,
         llm_model: str = "",
+        memory=None,
+        knowledge=None,
     ):
         self._timeout = timeout
         self._auto_confirm = auto_confirm
         self._llm_provider_name = llm_provider
         self._llm_model = llm_model
+        self._memory = memory          # MemorySystem (3-tier)
+        self._knowledge = knowledge    # AppKnowledgeManager
 
         # Components (initialized in setup())
         self._executor: Optional[SmartExecutor] = None
@@ -247,6 +251,17 @@ class AutonomousMarlow:
 
     def teardown(self):
         """Clean up resources."""
+        # Persist short-term memory to mid-term before shutdown
+        if self._memory:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self._memory.persist_short_term())
+                else:
+                    loop.run_until_complete(self._memory.persist_short_term())
+            except Exception as e:
+                logger.debug("Memory persist on teardown: %s", e)
         if self._executor:
             self._executor.shutdown()
         self._ready = False
@@ -1069,6 +1084,34 @@ class AutonomousMarlow:
                 self._weather.record_error()
         except Exception:
             pass
+
+        # Post-action: remember in short-term memory
+        if self._memory:
+            self._memory.remember_short(
+                {
+                    "tool": tool_name,
+                    "success": result.success,
+                    "duration_ms": round(_duration_ms),
+                },
+                category="action",
+                tool_name=tool_name,
+            )
+
+        # Post-action: learn app reliability
+        if self._knowledge and app_name:
+            try:
+                await self._knowledge.record_action(
+                    app_name=app_name, success=result.success,
+                )
+                if not result.success and result.error:
+                    await self._knowledge.record_error(
+                        app_name=app_name,
+                        tool_name=tool_name,
+                        error_type="execution_error",
+                        error_message=str(result.error),
+                    )
+            except Exception as e:
+                logger.debug("Knowledge record error: %s", e)
 
         # Post-execution: adaptive wait after launch
         if tool_name == "open_application" and result.success:

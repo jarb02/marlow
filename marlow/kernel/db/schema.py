@@ -5,7 +5,7 @@ Two separate databases:
 - logs.db: action logs, UIA events (append-heavy, periodic cleanup)
 """
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 STATE_SCHEMA = """
 -- Schema version tracking
@@ -177,6 +177,26 @@ CREATE TABLE IF NOT EXISTS snapshots (
     goals_json  TEXT,
     size_bytes  INTEGER
 );
+
+-- Method selection journal (migrated from error_journal.json)
+CREATE TABLE IF NOT EXISTS method_journal (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool            TEXT NOT NULL,
+    app             TEXT NOT NULL,
+    window          TEXT,
+    method_failed   TEXT NOT NULL,
+    method_worked   TEXT,
+    error_message   TEXT,
+    params          TEXT,
+    success_count   INTEGER DEFAULT 0,
+    failure_count   INTEGER DEFAULT 1,
+    first_seen      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    last_seen       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE(tool, app, method_failed)
+);
+
+CREATE INDEX IF NOT EXISTS idx_method_journal_lookup
+    ON method_journal(tool, app);
 """
 
 LOGS_SCHEMA = """

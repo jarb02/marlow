@@ -142,14 +142,14 @@ class DatabaseMaintenance:
             return 0
 
     async def _update_metrics_hourly(self) -> bool:
-        """Aggregate recent action_logs into metrics_hourly."""
+        """Aggregate recent action_logs into metrics_hourly.
+
+        Reads from logs.db, writes to state.db (two separate connections).
+        """
         try:
-            await self._db.state.execute(
-                """INSERT OR REPLACE INTO metrics_hourly
-                       (period_start, tool_name, app_name,
-                        total_actions, success_count, failure_count,
-                        avg_score, avg_duration_ms, p95_duration_ms)
-                   SELECT
+            # Query aggregated data from logs.db
+            cursor = await self._db.logs.execute(
+                """SELECT
                        strftime('%Y-%m-%dT%H:00:00Z', l.timestamp) as period,
                        l.tool_name,
                        COALESCE(l.app_name, ''),
@@ -157,17 +157,27 @@ class DatabaseMaintenance:
                        SUM(CASE WHEN l.success = 1 THEN 1 ELSE 0 END),
                        SUM(CASE WHEN l.success = 0 THEN 1 ELSE 0 END),
                        AVG(l.score),
-                       AVG(l.duration_ms),
-                       NULL
+                       AVG(l.duration_ms)
                    FROM action_logs l
                    WHERE l.timestamp > strftime('%Y-%m-%dT%H:%M:%fZ',
                                                 'now', '-2 hours')
                    GROUP BY period, l.tool_name, COALESCE(l.app_name, '')"""
             )
+            rows = await cursor.fetchall()
+            if not rows:
+                return True
+
+            # Insert aggregated metrics into state.db
+            await self._db.state.executemany(
+                """INSERT OR REPLACE INTO metrics_hourly
+                       (period_start, tool_name, app_name,
+                        total_actions, success_count, failure_count,
+                        avg_score, avg_duration_ms, p95_duration_ms)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+                rows,
+            )
             await self._db.state.commit()
             return True
         except Exception as e:
-            # action_logs is in logs.db but metrics_hourly is in state.db
-            # Cross-db aggregation requires ATTACH — skip for now
-            logger.debug("metrics aggregation skipped (cross-db): %s", e)
+            logger.warning("metrics aggregation failed: %s", e)
             return False
