@@ -160,6 +160,10 @@ class MarlowDaemon:
         self._pipeline = None        # ExecutionPipeline (unified tool execution)
         self._observer = None        # DesktopObserver (continuous desktop model)
         self._observer_task = None   # asyncio.Task for observer.run()
+        self._pattern_detector = None  # PatternDetector (behavioral analysis)
+        self._proactive_engine = None  # ProactiveEngine (autonomous actions)
+        self._pattern_task = None      # asyncio.Task for pattern_detector.run()
+        self._proactive_task = None    # asyncio.Task for proactive_engine.run()
 
     # ── Lifecycle ──
 
@@ -304,6 +308,50 @@ class MarlowDaemon:
             logger.info("DesktopObserver initialized")
         except Exception as e:
             logger.warning("Failed to init DesktopObserver: %s", e)
+
+    def _init_proactive(self):
+        """Initialize PatternDetector and ProactiveEngine."""
+        try:
+            from marlow.kernel.pattern_detector import PatternDetector
+            from marlow.kernel.proactive_engine import ProactiveEngine, ProactiveConfig
+            from marlow.core.settings import get_settings
+
+            settings = get_settings()
+            proactive_cfg = getattr(settings, "proactive", None)
+
+            # Build ProactiveConfig from settings
+            config = ProactiveConfig()
+            if proactive_cfg:
+                config.enabled = getattr(proactive_cfg, "enabled", False)
+                config.cooldown_seconds = getattr(proactive_cfg, "cooldown_seconds", 120)
+                config.max_per_hour = getattr(proactive_cfg, "max_per_hour", 5)
+                config.max_per_day = getattr(proactive_cfg, "max_per_day", 20)
+                config.idle_minutes = getattr(proactive_cfg, "idle_minutes", 5.0)
+                config.confidence_threshold = getattr(proactive_cfg, "confidence_threshold", 0.9)
+
+            self._pattern_detector = PatternDetector(
+                log_repo=self._log_repo,
+                memory=self._memory_system,
+                confidence_threshold=config.confidence_threshold,
+            )
+
+            event_bus = self._marlow.event_bus if self._marlow else None
+            security_gate = getattr(self._pipeline, "_gate", None) if self._pipeline else None
+
+            self._proactive_engine = ProactiveEngine(
+                pattern_detector=self._pattern_detector,
+                desktop_observer=self._observer,
+                pipeline=self._pipeline,
+                security_gate=security_gate,
+                event_bus=event_bus,
+                config=config,
+            )
+            logger.info(
+                "Proactive system initialized (enabled=%s, threshold=%.2f)",
+                config.enabled, config.confidence_threshold,
+            )
+        except Exception as e:
+            logger.warning("Failed to init proactive system: %s", e)
 
     def _get_dynamic_context(self) -> str:
         """Get current dynamic context string (safe to call anytime)."""
@@ -1113,6 +1161,15 @@ class MarlowDaemon:
             self._observer_task = asyncio.create_task(self._observer.run())
             logger.info("DesktopObserver background task started")
 
+        # Initialize and start proactive system (PatternDetector + ProactiveEngine)
+        self._init_proactive()
+        if self._pattern_detector:
+            self._pattern_task = asyncio.create_task(self._pattern_detector.run())
+            logger.info("PatternDetector background task started")
+        if self._proactive_engine:
+            self._proactive_task = asyncio.create_task(self._proactive_engine.run())
+            logger.info("ProactiveEngine background task started")
+
         # Initialize Gemini text bridge (primary path for all text)
         self._init_gemini_text()
 
@@ -1178,6 +1235,24 @@ class MarlowDaemon:
             self._current_task.cancel()
             try:
                 await asyncio.wait_for(self._current_task, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
+        # Stop proactive system
+        if self._proactive_engine:
+            self._proactive_engine.stop()
+        if self._proactive_task and not self._proactive_task.done():
+            self._proactive_task.cancel()
+            try:
+                await asyncio.wait_for(self._proactive_task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+        if self._pattern_detector:
+            self._pattern_detector.stop()
+        if self._pattern_task and not self._pattern_task.done():
+            self._pattern_task.cancel()
+            try:
+                await asyncio.wait_for(self._pattern_task, timeout=3.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 

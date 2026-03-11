@@ -103,6 +103,16 @@ class LocationSettings:
     timezone: str = ""
 
 @dataclass
+class ProactiveSettings:
+    enabled: bool = False  # disabled until enough data (7+ days)
+    cooldown_seconds: int = 120
+    max_per_hour: int = 5
+    max_per_day: int = 20
+    idle_minutes: float = 5.0
+    confidence_threshold: float = 0.9
+
+
+@dataclass
 class PrivacySettings:
     ambient_awareness: bool = False
     excluded_windows: list[str] = field(default_factory=list)
@@ -131,6 +141,7 @@ class MarlowSettings:
     gemini: GeminiSettings = field(default_factory=GeminiSettings)
     location: LocationSettings = field(default_factory=LocationSettings)
     privacy: PrivacySettings = field(default_factory=PrivacySettings)
+    proactive: ProactiveSettings = field(default_factory=ProactiveSettings)
     secrets: Secrets = field(default_factory=Secrets)
 
     @property
@@ -274,6 +285,8 @@ def load_settings() -> MarlowSettings:
         settings.location = _populate_dataclass(LocationSettings, config["location"])
     if "privacy" in config:
         settings.privacy = _populate_dataclass(PrivacySettings, config["privacy"])
+    if "proactive" in config:
+        settings.proactive = _populate_dataclass(ProactiveSettings, config["proactive"])
 
     # Load secrets (TOML file)
     anthropic = secrets_data.get("anthropic", {})
