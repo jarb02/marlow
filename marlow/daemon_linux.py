@@ -151,6 +151,7 @@ class MarlowDaemon:
         self._user_name: str = ""
         self._language: str = "es"
         self._claude_client = None  # Anthropic fallback
+        self._context_builder = None  # Dynamic context for LLM prompts
 
     # ── Lifecycle ──
 
@@ -190,6 +191,51 @@ class MarlowDaemon:
             self._user_name = "User"
             self._language = "es"
 
+    def _init_context_builder(self):
+        """Initialize the dynamic context builder for LLM prompts."""
+        try:
+            from marlow.kernel.context_builder import ContextBuilder
+            from marlow.core.settings import get_settings
+
+            settings = get_settings()
+            location = {}
+            if hasattr(settings, "location"):
+                loc = settings.location
+                location = {
+                    "city": getattr(loc, "city", ""),
+                    "state": getattr(loc, "state", ""),
+                    "country": getattr(loc, "country", ""),
+                    "timezone": getattr(loc, "timezone", ""),
+                }
+
+            # Get platform from AutonomousMarlow if available
+            platform = None
+            blackboard = None
+            weather = None
+            if self._marlow:
+                platform = getattr(self._marlow, "_platform", None)
+                blackboard = getattr(self._marlow, "_blackboard", None)
+                weather = getattr(self._marlow, "_weather", None)
+
+            self._context_builder = ContextBuilder(
+                platform=platform,
+                blackboard=blackboard,
+                desktop_weather=weather,
+                location=location,
+            )
+            logger.info("Context builder initialized")
+        except Exception as e:
+            logger.warning("Failed to init context builder: %s", e)
+
+    def _get_dynamic_context(self) -> str:
+        """Get current dynamic context string (safe to call anytime)."""
+        if self._context_builder:
+            try:
+                return self._context_builder.build()
+            except Exception as e:
+                logger.debug("Context build error: %s", e)
+        return ""
+
     def _init_gemini_text(self):
         """Initialize GeminiTextBridge for all text interaction."""
         try:
@@ -225,6 +271,7 @@ class MarlowDaemon:
                 user_name=self._user_name,
                 language=self._language,
                 model=text_model,
+                context_builder=self._get_dynamic_context,
             )
             logger.info(
                 "Gemini text bridge ready: model=%s, user=%s",
@@ -594,7 +641,10 @@ class MarlowDaemon:
             build_system_prompt, build_anthropic_tools, resolve_tool_call,
         )
 
-        system_prompt = build_system_prompt(self._user_name, self._language)
+        dynamic_ctx = self._get_dynamic_context()
+        system_prompt = build_system_prompt(
+            self._user_name, self._language, dynamic_context=dynamic_ctx,
+        )
         tools = build_anthropic_tools()
         messages = [{"role": "user", "content": text}]
 
@@ -805,6 +855,9 @@ class MarlowDaemon:
         except Exception as e:
             logger.error("Failed to initialize AutonomousMarlow: %s", e)
             sys.exit(1)
+
+        # Initialize dynamic context builder (feeds live state to LLM)
+        self._init_context_builder()
 
         # Initialize Gemini text bridge (primary path for all text)
         self._init_gemini_text()

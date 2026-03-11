@@ -96,6 +96,13 @@ class GeminiSettings:
     language: str = "es"
 
 @dataclass
+class LocationSettings:
+    city: str = ""
+    state: str = ""
+    country: str = ""
+    timezone: str = ""
+
+@dataclass
 class PrivacySettings:
     ambient_awareness: bool = False
     excluded_windows: list[str] = field(default_factory=list)
@@ -122,6 +129,7 @@ class MarlowSettings:
     sidebar: SidebarSettings = field(default_factory=SidebarSettings)
     telegram: TelegramSettings = field(default_factory=TelegramSettings)
     gemini: GeminiSettings = field(default_factory=GeminiSettings)
+    location: LocationSettings = field(default_factory=LocationSettings)
     privacy: PrivacySettings = field(default_factory=PrivacySettings)
     secrets: Secrets = field(default_factory=Secrets)
 
@@ -262,6 +270,8 @@ def load_settings() -> MarlowSettings:
             )
     if "gemini" in config:
         settings.gemini = _populate_dataclass(GeminiSettings, config["gemini"])
+    if "location" in config:
+        settings.location = _populate_dataclass(LocationSettings, config["location"])
     if "privacy" in config:
         settings.privacy = _populate_dataclass(PrivacySettings, config["privacy"])
 

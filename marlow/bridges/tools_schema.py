@@ -21,9 +21,9 @@ from marlow.kernel.registry import TOOL_ALIASES, resolve_tool_call  # noqa: F401
 # ─────────────────────────────────────────────────────────────
 
 
-def build_system_prompt(user_name: str = "", language: str = "es") -> str:
-    """Build the Marlow system prompt for Gemini."""
-    return (
+def build_system_prompt(user_name: str = "", language: str = "es", dynamic_context: str = "") -> str:
+    """Build the Marlow system prompt with optional dynamic context."""
+    prompt = (
         f"You are Marlow, a desktop AI assistant for Marlow OS (Linux).\n"
         f"The user's name is {user_name or 'amigo'}. "
         f"Always respond to the user in {language}.\n\n"
@@ -65,6 +65,9 @@ def build_system_prompt(user_name: str = "", language: str = "es") -> str:
         f"For complex tasks (4+ steps, multi-page, document creation), "
         f"call execute_complex_goal instead of handling step by step.\n"
     )
+    if dynamic_context:
+        prompt += "\n--- Current context ---\n" + dynamic_context + "\n"
+    return prompt
 
 
 # ─────────────────────────────────────────────────────────────

@@ -42,6 +42,7 @@ class GeminiTextBridge:
         user_name: str = "",
         language: str = "es",
         model: str = "",
+        context_builder: Optional[Callable[[], str]] = None,
     ):
         """
         Parameters
@@ -56,6 +57,8 @@ class GeminiTextBridge:
             ISO language code (es, en, etc.).
         model : str
             Gemini model ID. Default: gemini-2.5-flash.
+        context_builder : callable or None
+            A ``() -> str`` that returns dynamic context. Called per-request.
         """
         from google import genai
 
@@ -64,6 +67,7 @@ class GeminiTextBridge:
         self._model = model or "gemini-2.5-flash"
         self._user_name = user_name
         self._language = language
+        self._context_builder = context_builder
         self._chat = None
         self._last_activity: float = 0.0
 
@@ -113,8 +117,22 @@ class GeminiTextBridge:
 
         self._ensure_chat()
 
+        # Inject dynamic context as a preamble to the user message
+        enriched = text
+        if self._context_builder:
+            try:
+                ctx = self._context_builder()
+                if ctx:
+                    enriched = (
+                        "[System context — NOT part of the user's message, "
+                        "do not repeat this back to the user]\n"
+                        + ctx + "\n\n[User message]\n" + text
+                    )
+            except Exception as e:
+                logger.debug("Context builder error: %s", e)
+
         try:
-            response = await self._chat.send_message(text)
+            response = await self._chat.send_message(enriched)
         except Exception as e:
             err_str = str(e)
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
