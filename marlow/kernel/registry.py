@@ -1558,7 +1558,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
 
     "scrape_url": {
         "description": "Extract content from a URL. Formats: text, links, tables, html.",
-        "category": "automation",
+        "category": "system",
         "params": {
             "url": {
                 "type": "string",

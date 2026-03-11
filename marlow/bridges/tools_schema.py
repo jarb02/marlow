@@ -33,8 +33,11 @@ def build_system_prompt(user_name: str = "", language: str = "es") -> str:
         f"- Window management (open, close, focus, minimize, maximize, list, shadow mode)\n"
         f"- Input control (click, type, press keys, hotkeys, mouse movement)\n"
         f"- Screen reading (screenshots, OCR, accessibility tree, UI element inspection)\n"
-        f"- System operations (run commands, clipboard, file operations)\n"
-        f"- Automation (wait for elements, scheduled tasks, workflows)\n\n"
+        f"- System operations (run commands, clipboard, file operations, scrape URLs)\n"
+        f"- Memory (save and recall facts across sessions)\n"
+        f"- Smart waits (wait for elements, text, windows, idle state)\n"
+        f"- Visual diff (before/after screenshot comparison)\n"
+        f"- Clipboard (get/set, history)\n\n"
         f"Use the most appropriate tool for each task. For accessibility tree operations, "
         f"prefer find_elements and get_ui_tree over OCR when interacting with app content.\n\n"
         f"Guidelines:\n"
@@ -71,7 +74,7 @@ def build_system_prompt(user_name: str = "", language: str = "es") -> str:
 # Categories exposed to Gemini voice/text bridges
 _GEMINI_CATEGORIES = [
     "input", "windows", "shadow", "accessibility", "screenshot",
-    "ocr", "system", "meta",
+    "ocr", "system", "meta", "memory", "waits", "visual", "clipboard",
 ]
 
 # Tools excluded from Gemini (too noisy, admin-only, or dangerous)
