@@ -106,6 +106,11 @@ class LLMPlanner:
             additional = f"User home directory: {os.path.expanduser('~')}\n"
             if context.get("app_framework"):
                 additional += f"App framework: {context['app_framework']}\n"
+            if context.get("previous_goals"):
+                additional += (
+                    f"Previous similar goals and results:\n"
+                    f"{context['previous_goals']}\n"
+                )
 
             user_msg = PLAN_USER.format(
                 goal_text=goal_text,

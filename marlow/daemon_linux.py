@@ -211,6 +211,14 @@ class MarlowDaemon:
         except Exception as e:
             logger.warning("SecurityGate init failed: %s", e)
 
+        # Get error_journal singleton
+        error_journal = None
+        try:
+            from marlow.core.error_journal import _journal
+            error_journal = _journal
+        except Exception:
+            pass
+
         self._pipeline = ExecutionPipeline(
             tool_map=self._marlow._tool_map,
             security_gate=security_gate,
@@ -223,6 +231,7 @@ class MarlowDaemon:
             memory=self._memory_system,
             knowledge=self._app_knowledge,
             adaptive_waits=getattr(self._marlow, "_adaptive_waits", None),
+            error_journal=error_journal,
         )
         logger.info("ExecutionPipeline initialized with %d tools", len(self._marlow._tool_map))
 
@@ -268,6 +277,8 @@ class MarlowDaemon:
                 blackboard=blackboard,
                 desktop_weather=weather,
                 location=location,
+                app_knowledge=self._app_knowledge,
+                memory=self._memory_system,
             )
             logger.info("Context builder initialized")
         except Exception as e:

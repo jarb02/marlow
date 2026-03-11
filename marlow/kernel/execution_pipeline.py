@@ -125,6 +125,9 @@ class ExecutionPipeline:
         Signature: async snapshot_handler() -> None
     """
 
+    # Reliability threshold: below this, proactive actions are blocked
+    RELIABILITY_BLOCK_THRESHOLD = 0.3
+
     def __init__(
         self,
         tool_map: dict[str, Callable],
@@ -138,6 +141,7 @@ class ExecutionPipeline:
         memory=None,
         knowledge=None,
         adaptive_waits=None,
+        error_journal=None,
         focus_handler: Optional[Callable] = None,
         snapshot_handler: Optional[Callable] = None,
     ):
@@ -152,6 +156,7 @@ class ExecutionPipeline:
         self._memory = memory
         self._knowledge = knowledge
         self._adaptive_waits = adaptive_waits
+        self._error_journal = error_journal
         self._focus_handler = focus_handler
         self._snapshot_handler = snapshot_handler
 
@@ -256,7 +261,7 @@ class ExecutionPipeline:
             except Exception as e:
                 logger.debug("Pre-snapshot error: %s", e)
 
-        # 5. PreActionScorer
+        # 5. PreActionScorer + reliability gate
         pre_score_value = 0.0
         if self._pre_scorer:
             try:
@@ -276,6 +281,29 @@ class ExecutionPipeline:
                     ),
                 )
                 pre_score_value = pre_score.composite
+                rel_score = pre_score.reliability
+
+                if rel_score < self.RELIABILITY_BLOCK_THRESHOLD:
+                    if origin == "proactive":
+                        logger.warning(
+                            "Proactive blocked: %s has low reliability (%.2f)",
+                            tool_name, rel_score,
+                        )
+                        return PipelineResult(
+                            success=False,
+                            error=(
+                                f"Tool {tool_name} has low reliability "
+                                f"({rel_score:.2f}), skipping proactive execution"
+                            ),
+                            tool_name=tool_name,
+                            origin=origin,
+                        )
+                    else:
+                        logger.warning(
+                            "Low reliability tool: %s score=%.2f",
+                            tool_name, rel_score,
+                        )
+
                 if pre_score_value < 0.3:
                     logger.warning(
                         "Low pre-score for %s: %.2f", tool_name, pre_score_value,
@@ -286,6 +314,20 @@ class ExecutionPipeline:
                     )
             except Exception as e:
                 logger.debug("PreActionScorer error: %s", e)
+
+        # 5b. ErrorJournal: check for known solutions before executing
+        if self._error_journal:
+            try:
+                best_method = self._error_journal.get_best_method(
+                    tool_name, params.get("window_title", params.get("app_name")),
+                )
+                if best_method:
+                    logger.info(
+                        "Known error pattern for %s: preferred method=%s",
+                        tool_name, best_method,
+                    )
+            except Exception as e:
+                logger.debug("ErrorJournal pre-check error: %s", e)
 
         # 6. EventBus: ActionStarting
         if self._event_bus:
@@ -321,7 +363,7 @@ class ExecutionPipeline:
             logger.error("Tool execution error (%s): %s", tool_name, e)
 
             # Post-error: publish failure
-            await self._post_failure(tool_name, origin, str(e), duration_ms, app_name)
+            await self._post_failure(tool_name, origin, str(e), duration_ms, app_name, params)
 
             return PipelineResult(
                 success=False,
@@ -375,7 +417,7 @@ class ExecutionPipeline:
             )
         else:
             await self._post_failure(
-                tool_name, origin, error, duration_ms, app_name,
+                tool_name, origin, error, duration_ms, app_name, params,
             )
 
         # 13-14. Window changes + interrupt detection
@@ -466,6 +508,7 @@ class ExecutionPipeline:
         error: str,
         duration_ms: float,
         app_name: str,
+        params: dict = None,
     ):
         """Post-execution steps for failed tool runs."""
         # 9. EventBus: ActionFailed
@@ -517,6 +560,22 @@ class ExecutionPipeline:
                 )
             except Exception as e:
                 logger.debug("Knowledge record error: %s", e)
+
+        # 12b. ErrorJournal: record failure for learning
+        if self._error_journal:
+            try:
+                self._error_journal.record_failure(
+                    tool=tool_name,
+                    window=app_name or None,
+                    method=tool_name,
+                    error=error[:500],
+                    params={
+                        k: v for k, v in (params or {}).items()
+                        if k in ("element_name", "window_title", "app_name", "target")
+                    } if params else None,
+                )
+            except Exception as e:
+                logger.debug("ErrorJournal record_failure error: %s", e)
 
     async def _post_window_check(
         self,

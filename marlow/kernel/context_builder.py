@@ -40,13 +40,20 @@ class ContextBuilder:
         blackboard: Any = None,
         desktop_weather: Any = None,
         location: Optional[dict] = None,
+        app_knowledge: Any = None,
+        memory: Any = None,
     ):
         self._platform = platform
         self._blackboard = blackboard
         self._weather = desktop_weather
         self._location = location or {}
+        self._app_knowledge = app_knowledge
+        self._memory = memory
         self._recent_events: list[dict] = []
         self._max_recent_events = 10
+        # Async knowledge cache (updated periodically or on focus change)
+        self._app_knowledge_cache: dict = {}
+        self._knowledge_cache_app: str = ""  # which app the cache is for
 
     def build(self) -> str:
         """Build the dynamic context string. Safe to call every request."""
@@ -69,6 +76,14 @@ class ContextBuilder:
             sections.append(ctx)
 
         ctx = self._blackboard_context()
+        if ctx:
+            sections.append(ctx)
+
+        ctx = self._recent_actions_context()
+        if ctx:
+            sections.append(ctx)
+
+        ctx = self._app_knowledge_context()
         if ctx:
             sections.append(ctx)
 
@@ -178,6 +193,105 @@ class ContextBuilder:
             logger.debug("blackboard_context error: %s", e)
         return None
 
+    def _recent_actions_context(self) -> Optional[str]:
+        """Last 5 actions from MemorySystem short-term."""
+        try:
+            if not self._memory:
+                return None
+            recent = self._memory.get_recent_actions(5)
+            if not recent:
+                return None
+            lines = []
+            for entry in recent:
+                tool = entry.content.get("tool", "?")
+                success = entry.content.get("success", "?")
+                dur = entry.content.get("duration_ms", "?")
+                status = "OK" if success else "FAIL"
+                err = entry.content.get("error", "")
+                line = f"  - {tool}: {status} ({dur}ms)"
+                if err:
+                    line += f" — {err[:60]}"
+                lines.append(line)
+            return "Recent actions:\n%s" % "\n".join(lines)
+        except Exception as e:
+            logger.debug("recent_actions_context error: %s", e)
+            return None
+
+    def _app_knowledge_context(self) -> Optional[str]:
+        """App knowledge for the focused window (from cache)."""
+        try:
+            if not self._app_knowledge_cache:
+                return None
+            cache = self._app_knowledge_cache
+            lines = []
+
+            # Reliability
+            rel = cache.get("reliability")
+            if rel is not None:
+                lines.append(f"  - Reliability: {rel:.2f}")
+
+            # Known elements (max 5)
+            elems = cache.get("known_elements", {})
+            if elems:
+                elem_names = list(elems.keys())[:5]
+                lines.append(f"  - Known elements: {', '.join(elem_names)}")
+
+            # Error solutions (max 3)
+            errors = cache.get("error_solutions", [])
+            for err in errors[:3]:
+                tool = err.get("tool", "?")
+                solution = err.get("solution", "?")
+                lines.append(f"  - {tool} error fix: {solution}")
+
+            if not lines:
+                return None
+            app_name = cache.get("app_name", "unknown")
+            return f"App context ({app_name}):\n" + "\n".join(lines)
+        except Exception as e:
+            logger.debug("app_knowledge_context error: %s", e)
+            return None
+
+    async def update_app_knowledge_cache(self, app_name: str) -> None:
+        """Refresh the app knowledge cache for a given app.
+
+        Called on focus change events or periodically by the daemon.
+        Safe to call from any async context — queries AppKnowledgeManager.
+        """
+        if not self._app_knowledge or not app_name:
+            return
+        if app_name == self._knowledge_cache_app and self._app_knowledge_cache:
+            return  # already cached for this app
+
+        try:
+            cache: dict = {"app_name": app_name}
+
+            rel = await self._app_knowledge.get_reliability(app_name)
+            cache["reliability"] = rel
+
+            elems = await self._app_knowledge.get_known_elements(app_name)
+            cache["known_elements"] = elems or {}
+
+            # Collect recent error solutions
+            solutions = []
+            app_info = await self._app_knowledge.get_app_info(app_name)
+            if app_info:
+                # Check common error types
+                for error_type in ("execution_error", "timeout", "element_not_found"):
+                    sol = await self._app_knowledge.get_error_solution(
+                        app_name, "", error_type,
+                    )
+                    if sol:
+                        solutions.append({
+                            "tool": error_type,
+                            "solution": sol,
+                        })
+            cache["error_solutions"] = solutions
+
+            self._app_knowledge_cache = cache
+            self._knowledge_cache_app = app_name
+        except Exception as e:
+            logger.debug("update_app_knowledge_cache error: %s", e)
+
     # ── EventBus integration ──
 
     async def on_event(self, event) -> None:
@@ -192,6 +306,27 @@ class ContextBuilder:
             self._recent_events.append({"time": ts, "summary": summary})
             if len(self._recent_events) > self._max_recent_events:
                 self._recent_events.pop(0)
+
+            # Refresh app knowledge cache on window focus changes
+            if (
+                hasattr(event, "event_type")
+                and event.event_type in (
+                    "world.window_changed", "world.focus_lost",
+                )
+                and self._app_knowledge
+            ):
+                window_title = getattr(event, "window_title", "") or ""
+                if window_title:
+                    # Extract app name from title (last part after ' - ')
+                    app = window_title.rsplit(" - ", 1)[-1].strip()
+                    if app:
+                        import asyncio
+                        try:
+                            asyncio.ensure_future(
+                                self.update_app_knowledge_cache(app),
+                            )
+                        except Exception:
+                            pass
         except Exception as e:
             logger.debug("on_event error: %s", e)
 

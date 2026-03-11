@@ -287,6 +287,14 @@ class AutonomousMarlow:
         except Exception as e:
             logger.warning("SecurityGate init failed: %s", e)
 
+        # Get error_journal singleton
+        error_journal = None
+        try:
+            from marlow.core.error_journal import _journal
+            error_journal = _journal
+        except Exception:
+            pass
+
         self._pipeline = ExecutionPipeline(
             tool_map=self._tool_map,
             security_gate=security_gate,
@@ -299,6 +307,7 @@ class AutonomousMarlow:
             memory=self._memory,
             knowledge=self._knowledge,
             adaptive_waits=self._adaptive_waits,
+            error_journal=error_journal,
             focus_handler=self._ensure_focus,
             snapshot_handler=self._take_window_snapshot,
         )
@@ -957,9 +966,35 @@ class AutonomousMarlow:
             )
         elif self._engine._plan_generator:
             logger.info("No template/GOAP match; using LLM planner")
+            # Enrich context with past goal results from long-term memory
+            plan_context = dict(context) if context else {}
+            if self._memory:
+                try:
+                    past_goals = await self._memory.recall(
+                        tier="long", category="goal_result", limit=3,
+                    )
+                    if past_goals:
+                        summaries = []
+                        for mem in past_goals:
+                            goal_t = mem.content.get("goal", "")
+                            success = mem.content.get("success", False)
+                            errors = mem.content.get("errors", [])
+                            status = "succeeded" if success else "failed"
+                            s = f"- \"{goal_t}\": {status}"
+                            if errors:
+                                s += f" (errors: {', '.join(str(e) for e in errors[:2])})"
+                            summaries.append(s)
+                        plan_context["previous_goals"] = "\n".join(summaries)
+                        logger.info(
+                            "Injected %d past goal memories into LLM context",
+                            len(past_goals),
+                        )
+                except Exception as e:
+                    logger.debug("Memory recall for planning error: %s", e)
+
             result = await self._engine.execute_goal(
                 goal_text=goal_text,
-                context=context,
+                context=plan_context,
             )
         else:
             logger.warning("No planner match for: %s", goal_text)
@@ -976,6 +1011,24 @@ class AutonomousMarlow:
             _status, result.steps_completed, result.steps_total,
             result.avg_score, result.errors,
         )
+
+        # Save goal result to long-term memory for future planning
+        if self._memory:
+            try:
+                await self._memory.remember_long(
+                    content={
+                        "goal": goal_text,
+                        "success": result.success,
+                        "steps": result.steps_completed,
+                        "errors": result.errors[:3] if result.errors else [],
+                        "score": round(result.avg_score, 2),
+                    },
+                    category="goal_result",
+                    tags=["goal", _status.lower()],
+                    relevance=1.0 if result.success else 0.8,
+                )
+            except Exception as e:
+                logger.debug("Memory save goal_result error: %s", e)
 
         # Publish goal outcome
         try:
