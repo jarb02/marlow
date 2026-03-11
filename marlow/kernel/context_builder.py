@@ -42,6 +42,7 @@ class ContextBuilder:
         location: Optional[dict] = None,
         app_knowledge: Any = None,
         memory: Any = None,
+        desktop_observer: Any = None,
     ):
         self._platform = platform
         self._blackboard = blackboard
@@ -49,6 +50,7 @@ class ContextBuilder:
         self._location = location or {}
         self._app_knowledge = app_knowledge
         self._memory = memory
+        self._observer = desktop_observer
         self._recent_events: list[dict] = []
         self._max_recent_events = 10
         # Async knowledge cache (updated periodically or on focus change)
@@ -126,8 +128,13 @@ class ContextBuilder:
             return None
 
     def _desktop_context(self) -> Optional[str]:
-        """List open windows (max 8) from the platform layer."""
+        """List open windows — from DesktopObserver cache or platform."""
         try:
+            # Fast path: read from observer's pre-cached model
+            if self._observer:
+                return self._desktop_context_from_observer()
+
+            # Fallback: sync IPC call via platform layer
             if not self._platform or not hasattr(self._platform, "windows"):
                 return None
 
@@ -150,6 +157,39 @@ class ContextBuilder:
             return ctx
         except Exception as e:
             logger.debug("desktop_context error: %s", e)
+            return None
+
+    def _desktop_context_from_observer(self) -> Optional[str]:
+        """Read desktop state from DesktopObserver model (no IPC call)."""
+        try:
+            state = self._observer.get_state()
+            windows = state.windows
+            if not windows:
+                return "Desktop: no windows open"
+
+            lines = []
+            for w in list(windows.values())[:8]:
+                title = (w.title or "")[:60]
+                app = w.app_id or ""
+                focused = " [focused]" if (
+                    state.focused_window and state.focused_window.id == w.id
+                ) else ""
+                space_tag = " (shadow)" if w.space == "shadow" else ""
+                if app and title:
+                    lines.append("  - %s: %s%s%s" % (app, title, focused, space_tag))
+                elif title:
+                    lines.append("  - %s%s%s" % (title, focused, space_tag))
+
+            ctx = "Open windows (%d):\n%s" % (len(windows), "\n".join(lines))
+            if len(windows) > 8:
+                ctx += "\n  ... and %d more" % (len(windows) - 8)
+
+            if state.user_idle:
+                ctx += "\nUser: idle"
+
+            return ctx
+        except Exception as e:
+            logger.debug("observer desktop_context error: %s", e)
             return None
 
     def _weather_context(self) -> Optional[str]:

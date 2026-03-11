@@ -158,6 +158,8 @@ class MarlowDaemon:
         self._log_repo = None        # LogRepository
         self._maintenance = None     # DatabaseMaintenance
         self._pipeline = None        # ExecutionPipeline (unified tool execution)
+        self._observer = None        # DesktopObserver (continuous desktop model)
+        self._observer_task = None   # asyncio.Task for observer.run()
 
     # ── Lifecycle ──
 
@@ -279,10 +281,29 @@ class MarlowDaemon:
                 location=location,
                 app_knowledge=self._app_knowledge,
                 memory=self._memory_system,
+                desktop_observer=self._observer,
             )
             logger.info("Context builder initialized")
         except Exception as e:
             logger.warning("Failed to init context builder: %s", e)
+
+    def _init_observer(self):
+        """Initialize DesktopObserver for continuous desktop state."""
+        try:
+            from marlow.kernel.desktop_observer import DesktopObserver
+
+            event_bus = self._marlow.event_bus if self._marlow else None
+            window_tracker = getattr(self._marlow, "_window_tracker", None)
+            weather = getattr(self._marlow, "_weather", None)
+
+            self._observer = DesktopObserver(
+                event_bus=event_bus,
+                window_tracker=window_tracker,
+                desktop_weather=weather,
+            )
+            logger.info("DesktopObserver initialized")
+        except Exception as e:
+            logger.warning("Failed to init DesktopObserver: %s", e)
 
     def _get_dynamic_context(self) -> str:
         """Get current dynamic context string (safe to call anytime)."""
@@ -1081,8 +1102,16 @@ class MarlowDaemon:
         # Initialize dynamic context builder (feeds live state to LLM)
         self._init_context_builder()
 
+        # Initialize DesktopObserver (continuous desktop model from compositor)
+        self._init_observer()
+
         # Wire EventBus subscribers (logging, context enrichment, scoring)
         self._wire_event_subscribers()
+
+        # Start DesktopObserver background task
+        if self._observer:
+            self._observer_task = asyncio.create_task(self._observer.run())
+            logger.info("DesktopObserver background task started")
 
         # Initialize Gemini text bridge (primary path for all text)
         self._init_gemini_text()
@@ -1149,6 +1178,16 @@ class MarlowDaemon:
             self._current_task.cancel()
             try:
                 await asyncio.wait_for(self._current_task, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
+        # Stop DesktopObserver
+        if self._observer:
+            self._observer.stop()
+        if self._observer_task and not self._observer_task.done():
+            self._observer_task.cancel()
+            try:
+                await asyncio.wait_for(self._observer_task, timeout=3.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 

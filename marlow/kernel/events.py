@@ -159,12 +159,42 @@ class TTSCompleted(Event):
     engine: str = ""
 
 
+
+
+# === World Events (compositor) ===
+
+@dataclass(frozen=True)
+class FocusChanged(Event):
+    event_type: str = "world.focus_changed"
+    window_title: str = ""
+
+@dataclass(frozen=True)
+class WindowMovedShadow(Event):
+    event_type: str = "world.window_moved_shadow"
+
+@dataclass(frozen=True)
+class WindowMovedUser(Event):
+    event_type: str = "world.window_moved_user"
+
+
+# === System Events (idle) ===
+
+@dataclass(frozen=True)
+class UserIdle(Event):
+    event_type: str = "system.user_idle"
+
+@dataclass(frozen=True)
+class UserActive(Event):
+    event_type: str = "system.user_active"
+
+
 # === Convenience: all event types for registration ===
 ALL_EVENT_TYPES = [
     "goal.started", "goal.completed", "goal.failed", "goal.replanning",
     "action.starting", "action.completed", "action.failed",
     "world.dialog_detected", "world.dialog_handled", "world.window_changed", "world.focus_lost",
-    "system.kill_switch", "system.interrupt",
+    "world.focus_changed", "world.window_moved_shadow", "world.window_moved_user",
+    "system.kill_switch", "system.interrupt", "system.user_idle", "system.user_active",
     "audio.speech_started", "audio.speech_ended", "audio.tts_started", "audio.tts_completed",
 ]
 
