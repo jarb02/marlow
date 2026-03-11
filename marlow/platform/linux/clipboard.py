@@ -78,3 +78,7 @@ class WaylandClipboardProvider(ClipboardProvider):
         })
         while len(self._history) > self._max_history:
             self._history.pop(0)
+
+
+# Alias for __init__.py import compatibility
+LinuxClipboardProvider = WaylandClipboardProvider

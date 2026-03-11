@@ -514,3 +514,134 @@ class SystemProvider(ABC):
         Returns:
             Dict with keys: 'os', 'cpu', 'memory', 'disk', 'display'.
         """
+
+
+# ── Optional provider ABCs (added for Linux platform) ──
+
+
+class WaitProvider(ABC):
+    """Poll-based wait for UI elements, text, windows, or idle state."""
+
+    @abstractmethod
+    async def wait_for_element(
+        self,
+        name: Optional[str] = None,
+        role: Optional[str] = None,
+        window_title: Optional[str] = None,
+        timeout: float = 10,
+        interval: float = 0.5,
+    ) -> dict: ...
+
+    @abstractmethod
+    async def wait_for_text(
+        self,
+        text: str,
+        window_title: Optional[str] = None,
+        timeout: float = 10,
+        interval: float = 0.5,
+    ) -> dict: ...
+
+    @abstractmethod
+    async def wait_for_window(
+        self,
+        title: str,
+        timeout: float = 10,
+        interval: float = 0.5,
+    ) -> dict: ...
+
+    @abstractmethod
+    async def wait_for_idle(
+        self,
+        window_title: Optional[str] = None,
+        timeout: float = 10,
+        threshold: float = 0.95,
+    ) -> dict: ...
+
+
+class VisualDiffProvider(ABC):
+    """Before/after screenshot comparison."""
+
+    @abstractmethod
+    def capture_before(
+        self,
+        window_title: Optional[str] = None,
+        label: Optional[str] = None,
+    ) -> dict: ...
+
+    @abstractmethod
+    def compare(
+        self,
+        diff_id: str,
+        window_title: Optional[str] = None,
+    ) -> dict: ...
+
+
+class SoMProvider(ABC):
+    """Set-of-Mark: numbered labels on screenshot elements."""
+
+    @abstractmethod
+    def get_annotated_screenshot(
+        self,
+        window_title: Optional[str] = None,
+        max_depth: Optional[int] = None,
+    ) -> dict: ...
+
+    @abstractmethod
+    def som_click(self, index: int, action: str = "click") -> dict: ...
+
+
+class ClipboardProvider(ABC):
+    """Get/set clipboard and maintain history."""
+
+    @abstractmethod
+    def get_clipboard(self) -> str: ...
+
+    @abstractmethod
+    def set_clipboard(self, text: str) -> bool: ...
+
+    @abstractmethod
+    def get_clipboard_history(self) -> list[dict]: ...
+
+
+class BackgroundProvider(ABC):
+    """Background/shadow mode for agent operations."""
+
+    @abstractmethod
+    def setup_background_mode(self, preferred_mode: Optional[str] = None) -> dict: ...
+
+    @abstractmethod
+    def move_to_agent_screen(self, window_title: Optional[str] = None) -> dict: ...
+
+    @abstractmethod
+    def move_to_user_screen(self, window_title: Optional[str] = None) -> dict: ...
+
+    @abstractmethod
+    def get_agent_screen_state(self) -> dict: ...
+
+    @abstractmethod
+    def set_agent_screen_only(self, enabled: bool) -> dict: ...
+
+
+class EscalationProvider(ABC):
+    """Escalating element search: tree -> OCR -> screenshot."""
+
+    @abstractmethod
+    def smart_find(
+        self,
+        name: Optional[str] = None,
+        role: Optional[str] = None,
+        window_title: Optional[str] = None,
+    ) -> dict: ...
+
+
+class CascadeRecoveryProvider(ABC):
+    """Multi-strategy element search with progressive fallback."""
+
+    @abstractmethod
+    def cascade_find(
+        self,
+        name: Optional[str] = None,
+        role: Optional[str] = None,
+        window_title: Optional[str] = None,
+        strategies: Optional[list[str]] = None,
+    ) -> dict: ...

@@ -220,3 +220,7 @@ class SwayBackgroundProvider(BackgroundProvider):
         for child in node.get("floating_nodes", []):
             results.extend(self._collect_windows(child))
         return results
+
+
+# Alias for __init__.py import compatibility
+LinuxBackgroundProvider = SwayBackgroundProvider
