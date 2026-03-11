@@ -45,6 +45,8 @@ class ContextBuilder:
         self._blackboard = blackboard
         self._weather = desktop_weather
         self._location = location or {}
+        self._recent_events: list[dict] = []
+        self._max_recent_events = 10
 
     def build(self) -> str:
         """Build the dynamic context string. Safe to call every request."""
@@ -67,6 +69,10 @@ class ContextBuilder:
             sections.append(ctx)
 
         ctx = self._blackboard_context()
+        if ctx:
+            sections.append(ctx)
+
+        ctx = self._recent_events_context()
         if ctx:
             sections.append(ctx)
 
@@ -171,3 +177,57 @@ class ContextBuilder:
         except Exception as e:
             logger.debug("blackboard_context error: %s", e)
         return None
+
+    # ── EventBus integration ──
+
+    async def on_event(self, event) -> None:
+        """EventBus handler — stores recent goal/world events for context."""
+        try:
+            summary = self._summarize_event(event)
+            if not summary:
+                return
+            ts = datetime.datetime.fromtimestamp(
+                event.timestamp,
+            ).strftime("%H:%M:%S")
+            self._recent_events.append({"time": ts, "summary": summary})
+            if len(self._recent_events) > self._max_recent_events:
+                self._recent_events.pop(0)
+        except Exception as e:
+            logger.debug("on_event error: %s", e)
+
+    @staticmethod
+    def _summarize_event(event) -> Optional[str]:
+        """Build a short human-readable summary for an event."""
+        et = event.event_type
+        if et == "goal.started":
+            return "Goal started: %s" % (getattr(event, "goal_text", "") or "")[:80]
+        if et == "goal.completed":
+            steps = getattr(event, "steps_executed", 0)
+            return "Goal completed (%d steps)" % steps
+        if et == "goal.failed":
+            err = (getattr(event, "error", "") or "")[:60]
+            return "Goal failed: %s" % err if err else "Goal failed"
+        if et == "world.window_changed":
+            ct = getattr(event, "change_type", "")
+            title = (getattr(event, "window_title", "") or "")[:40]
+            return "Window %s: %s" % (ct, title) if title else "Window %s" % ct
+        if et == "world.focus_lost":
+            expected = getattr(event, "expected_app", "")
+            actual = getattr(event, "actual_app", "")
+            return "Focus lost: expected %s, got %s" % (expected, actual)
+        if et == "world.dialog_detected":
+            title = (getattr(event, "dialog_title", "") or "")[:40]
+            return "Dialog: %s" % title if title else "Dialog detected"
+        if et == "world.dialog_handled":
+            action = getattr(event, "action_taken", "")
+            return "Dialog handled: %s" % action if action else "Dialog handled"
+        return None
+
+    def _recent_events_context(self) -> Optional[str]:
+        """Format recent events for LLM context."""
+        if not self._recent_events:
+            return None
+        lines = []
+        for e in self._recent_events[-5:]:
+            lines.append("  - [%s] %s" % (e["time"], e["summary"]))
+        return "Recent events:\n%s" % "\n".join(lines)

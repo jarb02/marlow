@@ -232,3 +232,22 @@ class PreActionScorer:
     def reliability(self) -> ReliabilityTracker:
         """Access the shared reliability tracker."""
         return self._reliability
+
+    # ── EventBus handler ──
+
+    async def on_action_result(self, event) -> None:
+        """EventBus handler for action.completed / action.failed.
+
+        Updates the ReliabilityTracker EMA from action outcomes.
+        Completed+success -> score 1.0, failed -> score 0.0.
+        """
+        from marlow.kernel.events import ActionCompleted, ActionFailed
+
+        try:
+            if isinstance(event, ActionCompleted):
+                score = 1.0 if event.success else 0.0
+                self._reliability.record(event.tool_name, score)
+            elif isinstance(event, ActionFailed):
+                self._reliability.record(event.tool_name, 0.0)
+        except Exception:
+            pass

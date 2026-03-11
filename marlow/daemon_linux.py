@@ -243,6 +243,35 @@ class MarlowDaemon:
                 logger.debug("Context build error: %s", e)
         return ""
 
+    def _wire_event_subscribers(self):
+        """Connect EventBus subscribers for logging, context, and scoring."""
+        if not self._marlow:
+            return
+        bus = self._marlow.event_bus
+
+        # LogRepository -> action.* and goal.*
+        if self._log_repo:
+            bus.subscribe("action.*", self._log_repo.on_action_event, "log_repo")
+            bus.subscribe("goal.*", self._log_repo.on_goal_event, "log_repo")
+            logger.info("EventBus: LogRepository subscribed to action.* + goal.*")
+
+        # ContextBuilder -> goal.* and world.*
+        if self._context_builder:
+            bus.subscribe("goal.*", self._context_builder.on_event, "context_builder")
+            bus.subscribe("world.*", self._context_builder.on_event, "context_builder")
+            logger.info("EventBus: ContextBuilder subscribed to goal.* + world.*")
+
+        # PreActionScorer -> action.completed and action.failed
+        pre_scorer = getattr(self._marlow, "_pre_scorer", None)
+        if pre_scorer:
+            bus.subscribe(
+                "action.completed", pre_scorer.on_action_result, "pre_scorer",
+            )
+            bus.subscribe(
+                "action.failed", pre_scorer.on_action_result, "pre_scorer",
+            )
+            logger.info("EventBus: PreActionScorer subscribed to action results")
+
     async def _init_database(self):
         """Initialize SQLite persistence layer.
 
@@ -999,6 +1028,9 @@ class MarlowDaemon:
 
         # Initialize dynamic context builder (feeds live state to LLM)
         self._init_context_builder()
+
+        # Wire EventBus subscribers (logging, context enrichment, scoring)
+        self._wire_event_subscribers()
 
         # Initialize Gemini text bridge (primary path for all text)
         self._init_gemini_text()

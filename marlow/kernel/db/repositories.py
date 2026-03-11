@@ -672,3 +672,75 @@ class LogRepository:
             "avg_score": row[2],
             "avg_duration_ms": row[3],
         }
+
+    # ── EventBus handlers ──
+
+    async def on_action_event(self, event) -> None:
+        """EventBus handler for action.* events.
+
+        Logs ActionStarting, ActionCompleted, ActionFailed to action_logs.
+        """
+        from marlow.kernel.events import (
+            ActionStarting, ActionCompleted, ActionFailed,
+        )
+        try:
+            if isinstance(event, ActionStarting):
+                await self.log_action(ActionLog(
+                    tool_name=event.tool_name,
+                    action_type="starting",
+                    goal_id=event.correlation_id or None,
+                ))
+            elif isinstance(event, ActionCompleted):
+                await self.log_action(ActionLog(
+                    tool_name=event.tool_name,
+                    action_type="completed",
+                    success=event.success,
+                    duration_ms=round(event.duration_ms) if event.duration_ms else None,
+                    goal_id=event.correlation_id or None,
+                ))
+            elif isinstance(event, ActionFailed):
+                await self.log_action(ActionLog(
+                    tool_name=event.tool_name,
+                    action_type="failed",
+                    success=False,
+                    error_message=event.error[:500] if event.error else None,
+                    goal_id=event.correlation_id or None,
+                ))
+        except Exception:
+            pass  # circuit breaker handles repeated failures
+
+    async def on_goal_event(self, event) -> None:
+        """EventBus handler for goal.* events.
+
+        Logs GoalStarted, GoalCompleted, GoalFailed to action_logs.
+        """
+        from marlow.kernel.events import (
+            GoalStarted, GoalCompleted, GoalFailed,
+        )
+        try:
+            if isinstance(event, GoalStarted):
+                await self.log_action(ActionLog(
+                    tool_name="goal_engine",
+                    action_type="goal_started",
+                    result=event.goal_text[:200] if event.goal_text else None,
+                    goal_id=event.correlation_id or None,
+                ))
+            elif isinstance(event, GoalCompleted):
+                await self.log_action(ActionLog(
+                    tool_name="goal_engine",
+                    action_type="goal_completed",
+                    success=event.success,
+                    result=event.goal_text[:200] if event.goal_text else None,
+                    goal_id=event.correlation_id or None,
+                ))
+            elif isinstance(event, GoalFailed):
+                await self.log_action(ActionLog(
+                    tool_name="goal_engine",
+                    action_type="goal_failed",
+                    success=False,
+                    error_message=event.error[:500] if event.error else None,
+                    result=event.goal_text[:200] if event.goal_text else None,
+                    goal_id=event.correlation_id or None,
+                ))
+        except Exception:
+            pass
