@@ -744,3 +744,78 @@ class LogRepository:
                 ))
         except Exception:
             pass
+
+    async def log_proactive_action(
+        self,
+        pattern_id: str,
+        tool_name: str,
+        params: dict,
+        classification: str,
+        trust_level: int = 0,
+        approved_by: str = "",
+        result: str = "",
+        duration_ms: int = 0,
+        confidence: float = 0.0,
+    ) -> int:
+        """Log a proactive action evaluation to proactive_actions table."""
+        try:
+            cursor = await self._conn.execute(
+                """INSERT INTO proactive_actions
+                       (pattern_id, tool_name, params, trust_level,
+                        classification, approved_by, result,
+                        duration_ms, confidence, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    pattern_id,
+                    tool_name,
+                    json.dumps(params, ensure_ascii=False),
+                    trust_level,
+                    classification,
+                    approved_by,
+                    result,
+                    duration_ms,
+                    confidence,
+                    _now(),
+                ),
+            )
+            await self._conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            logger.debug("log_proactive_action error: %s", e)
+            return 0
+
+    async def get_proactive_stats(self, hours: int = 24) -> dict:
+        """Get proactive action stats for the last N hours."""
+        try:
+            cursor = await self._conn.execute(
+                """SELECT classification, result, COUNT(*) as cnt
+                   FROM proactive_actions
+                   WHERE timestamp >= strftime('%%Y-%%m-%%dT%%H:%%M:%%fZ',
+                         'now', '-%d hours')
+                   GROUP BY classification, result""" % hours,
+            )
+            rows = await cursor.fetchall()
+            stats = {
+                "hours": hours,
+                "total": 0,
+                "auto": 0,
+                "suggest": 0,
+                "skip": 0,
+                "approved": 0,
+                "rejected": 0,
+                "expired": 0,
+                "success": 0,
+                "failure": 0,
+            }
+            for classification, result, count in rows:
+                stats["total"] += count
+                classification = (classification or "").lower()
+                result = (result or "").lower()
+                if classification in stats:
+                    stats[classification] += count
+                if result in stats:
+                    stats[result] += count
+            return stats
+        except Exception as e:
+            logger.debug("get_proactive_stats error: %s", e)
+            return {"hours": hours, "total": 0}

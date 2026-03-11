@@ -184,6 +184,12 @@ class UserIdle(Event):
     event_type: str = "system.user_idle"
 
 @dataclass(frozen=True)
+class ProactivityToggle(Event):
+    event_type: str = "system.proactivity_toggle"
+    priority: EventPriority = EventPriority.HIGH
+
+
+@dataclass(frozen=True)
 class UserActive(Event):
     event_type: str = "system.user_active"
 
@@ -194,7 +200,7 @@ ALL_EVENT_TYPES = [
     "action.starting", "action.completed", "action.failed",
     "world.dialog_detected", "world.dialog_handled", "world.window_changed", "world.focus_lost",
     "world.focus_changed", "world.window_moved_shadow", "world.window_moved_user",
-    "system.kill_switch", "system.interrupt", "system.user_idle", "system.user_active",
+    "system.kill_switch", "system.interrupt", "system.user_idle", "system.user_active", "system.proactivity_toggle",
     "audio.speech_started", "audio.speech_ended", "audio.tts_started", "audio.tts_completed",
 ]
 

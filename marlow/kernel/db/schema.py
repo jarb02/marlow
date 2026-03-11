@@ -5,7 +5,7 @@ Two separate databases:
 - logs.db: action logs, UIA events (append-heavy, periodic cleanup)
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 STATE_SCHEMA = """
 -- Schema version tracking

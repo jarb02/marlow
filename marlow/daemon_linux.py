@@ -164,6 +164,8 @@ class MarlowDaemon:
         self._proactive_engine = None  # ProactiveEngine (autonomous actions)
         self._pattern_task = None      # asyncio.Task for pattern_detector.run()
         self._proactive_task = None    # asyncio.Task for proactive_engine.run()
+        self._approval_queue = None    # ApprovalQueue
+        self._rollback = None          # RollbackExecutor
 
     # ── Lifecycle ──
 
@@ -346,6 +348,25 @@ class MarlowDaemon:
                 event_bus=event_bus,
                 config=config,
             )
+            # ApprovalQueue for Tier 2+ suggestions
+            from marlow.kernel.approval_queue import ApprovalQueue
+            self._approval_queue = ApprovalQueue(
+                pipeline=self._pipeline,
+                pattern_detector=self._pattern_detector,
+                ws_broadcast=self._broadcast_ws,
+                default_timeout=60.0,
+            )
+            self._proactive_engine._approval_queue = self._approval_queue
+
+            # RollbackExecutor for undoing proactive actions
+            from marlow.kernel.rollback import RollbackExecutor
+            self._rollback = RollbackExecutor(
+                pipeline=self._pipeline,
+                desktop_observer=self._observer,
+                event_bus=event_bus,
+            )
+            self._proactive_engine._rollback = self._rollback
+
             logger.info(
                 "Proactive system initialized (enabled=%s, threshold=%.2f)",
                 config.enabled, config.confidence_threshold,
@@ -1209,6 +1230,9 @@ class MarlowDaemon:
         app.router.add_post("/transcript", self.handle_transcript)
         app.router.add_get("/transcripts", self.handle_get_transcripts)
         app.router.add_get("/ws", self.handle_ws)
+        app.router.add_post("/approve/{id}", self.handle_approve)
+        app.router.add_post("/reject/{id}", self.handle_reject)
+        app.router.add_get("/proactive/pending", self.handle_proactive_pending)
 
         # Setup signal handlers
         loop = asyncio.get_running_loop()
@@ -1239,6 +1263,8 @@ class MarlowDaemon:
                 pass
 
         # Stop proactive system
+        if self._approval_queue:
+            self._approval_queue.cancel_all()
         if self._proactive_engine:
             self._proactive_engine.stop()
         if self._proactive_task and not self._proactive_task.done():
@@ -1288,6 +1314,33 @@ class MarlowDaemon:
                 logger.warning("DB close error: %s", e)
 
         self._teardown()
+
+    async def handle_approve(self, request):
+        """HTTP POST /approve/{id} — approve a pending proactive action."""
+        approval_id = request.match_info["id"]
+        if self._approval_queue and self._approval_queue.approve(approval_id):
+            return web.json_response({"status": "approved", "id": approval_id})
+        return web.json_response(
+            {"status": "error", "message": "not found or already resolved"},
+            status=404,
+        )
+
+    async def handle_reject(self, request):
+        """HTTP POST /reject/{id} — reject a pending proactive action."""
+        approval_id = request.match_info["id"]
+        if self._approval_queue and self._approval_queue.reject(approval_id):
+            return web.json_response({"status": "rejected", "id": approval_id})
+        return web.json_response(
+            {"status": "error", "message": "not found or already resolved"},
+            status=404,
+        )
+
+    async def handle_proactive_pending(self, request):
+        """HTTP GET /proactive/pending — list pending approvals."""
+        pending = []
+        if self._approval_queue:
+            pending = self._approval_queue.get_pending()
+        return web.json_response({"pending": pending})
 
     def _handle_signal(self):
         """Handle SIGTERM/SIGINT for clean shutdown."""

@@ -75,6 +75,8 @@ class ProactiveEngine:
         self._gate = security_gate
         self._event_bus = event_bus
         self._config = config or ProactiveConfig()
+        self._approval_queue = None  # set externally or via setter
+        self._rollback = None        # RollbackExecutor, set externally
 
         # State
         self._paused = False
@@ -107,6 +109,23 @@ class ProactiveEngine:
     def resume(self):
         self._paused = False
         logger.info("ProactiveEngine resumed")
+
+    def toggle(self):
+        """Toggle proactivity on/off (kill switch)."""
+        if self._paused:
+            self.resume()
+        else:
+            self.pause()
+            # Cancel all pending approvals
+            if self._approval_queue:
+                self._approval_queue.cancel_all()
+            # Rollback last action if recent
+            if self._rollback:
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self._rollback.rollback_last())
+                except RuntimeError:
+                    pass
 
     def is_paused(self) -> bool:
         return self._paused
@@ -146,6 +165,9 @@ class ProactiveEngine:
             )
             self._event_bus.subscribe(
                 "action.completed", self._on_action_completed, "proactive_engine",
+            )
+            self._event_bus.subscribe(
+                "system.proactivity_toggle", self._on_proactivity_toggle, "proactive_engine",
             )
 
         # Keep alive until stopped
@@ -216,6 +238,12 @@ class ProactiveEngine:
                     "Implicit approval: user executed %s (pattern %s)",
                     tool, suggestion.pattern_id,
                 )
+
+    async def _on_proactivity_toggle(self, event):
+        """Handle Super+Escape kill switch from compositor."""
+        self.toggle()
+        state_msg = "pausada" if self._paused else "reanudada"
+        self._notify(f"Proactividad {state_msg}. Super+Escape para cambiar.")
 
     # ── Core evaluation ──────────────────────────────────────
 
@@ -357,10 +385,22 @@ class ProactiveEngine:
             pattern.id, pattern.tool_name, pattern.params,
         )
 
+        # Shadow-first: rewrite open_application to launch_in_shadow
+        exec_tool = pattern.tool_name
+        exec_params = dict(pattern.params)
+        if exec_tool == "open_application":
+            app = exec_params.pop("application", "")
+            exec_tool = "launch_in_shadow"
+            exec_params = {"command": app} if app else exec_params
+
+        # Record pre-action state for rollback
+        if self._rollback:
+            self._rollback.record_action(exec_tool, exec_params)
+
         try:
             result = await self._pipeline.execute(
-                pattern.tool_name,
-                pattern.params,
+                exec_tool,
+                exec_params,
                 origin="proactive",
             )
 
@@ -374,7 +414,7 @@ class ProactiveEngine:
                     self._detector.record_feedback(pattern.id, approved=True)
 
                 # Notify only if visible to user (not shadow space)
-                if pattern.tool_name not in ("launch_in_shadow",):
+                if exec_tool not in ("launch_in_shadow",):
                     self._notify(
                         f"Ejecuté {pattern.tool_name} automáticamente "
                         f"(patrón detectado, confianza {pattern.confidence:.0%})"
@@ -386,24 +426,41 @@ class ProactiveEngine:
             self._on_proactive_failure(pattern, str(e))
 
     async def _execute_suggest(self, pattern):
-        """Send a suggestion notification to the user."""
+        """Submit suggestion via ApprovalQueue or fallback to notification."""
         logger.info(
             "SUGGEST pattern %s: %s (confidence=%.2f)",
             pattern.id, pattern.tool_name, pattern.confidence,
         )
 
-        self._notify(
-            f"Parece que es hora de {self._describe_pattern(pattern)}. "
-            f"¿Lo hago? (confianza: {pattern.confidence:.0%})"
-        )
-
-        # Track as pending for implicit approval
-        self._pending_suggestions[pattern.id] = PendingSuggestion(
-            pattern_id=pattern.id,
-            tool_name=pattern.tool_name,
-            params=pattern.params,
-            suggested_at=time.time(),
-        )
+        if self._approval_queue:
+            # Use ApprovalQueue for explicit approve/reject
+            try:
+                result = await self._approval_queue.submit(
+                    tool_name=pattern.tool_name,
+                    params=pattern.params,
+                    pattern_id=pattern.id,
+                    trust_level=2,
+                    description=self._describe_pattern(pattern),
+                    confidence=pattern.confidence,
+                )
+                if result.approved:
+                    self._record_action(time.time())
+                    self._consecutive_failures = 0
+            except Exception as e:
+                logger.warning("ApprovalQueue error: %s", e)
+        else:
+            # Fallback: notify-send only (no approval flow)
+            self._notify(
+                f"Parece que es hora de {self._describe_pattern(pattern)}. "
+                f"¿Lo hago? (confianza: {pattern.confidence:.0%})"
+            )
+            # Track as pending for implicit approval
+            self._pending_suggestions[pattern.id] = PendingSuggestion(
+                pattern_id=pattern.id,
+                tool_name=pattern.tool_name,
+                params=pattern.params,
+                suggested_at=time.time(),
+            )
 
         self._total_suggest += 1
         self._executed_today.add(pattern.id)

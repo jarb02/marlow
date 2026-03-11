@@ -342,6 +342,8 @@ class DesktopObserver:
             await self._on_window_moved_user(event)
         elif event_type == "ConflictDetected":
             await self._on_conflict(event)
+        elif event_type == "ProactivityToggle":
+            await self._on_proactivity_toggle(event)
         elif event_type == "Pong":
             pass  # keepalive
         else:
@@ -481,6 +483,11 @@ class DesktopObserver:
             actual_app=window_title,
             data={"window_id": wid, "reason": reason},
         )
+
+    async def _on_proactivity_toggle(self, event: dict):
+        """Handle ProactivityToggle — Super+Escape kill switch."""
+        logger.info("ProactivityToggle received from compositor")
+        await self._publish_event("system.proactivity_toggle")
 
     # ── Idle detection ───────────────────────────────────────
 

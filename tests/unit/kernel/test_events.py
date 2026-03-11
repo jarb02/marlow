@@ -81,7 +81,7 @@ class TestSystemEvents:
 
 class TestConvenience:
     def test_all_event_types_list(self):
-        assert len(ALL_EVENT_TYPES) == 22
+        assert len(ALL_EVENT_TYPES) == 23
         assert "goal.started" in ALL_EVENT_TYPES
         assert "system.kill_switch" in ALL_EVENT_TYPES
         assert "audio.tts_completed" in ALL_EVENT_TYPES
