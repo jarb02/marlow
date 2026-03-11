@@ -640,11 +640,12 @@ class MarlowDaemon:
         from marlow.bridges.tools_schema import (
             build_system_prompt, build_anthropic_tools, resolve_tool_call,
         )
+        from marlow.kernel.adapters import inject_context_anthropic
 
+        system_prompt = build_system_prompt(self._user_name, self._language)
         dynamic_ctx = self._get_dynamic_context()
-        system_prompt = build_system_prompt(
-            self._user_name, self._language, dynamic_context=dynamic_ctx,
-        )
+        if dynamic_ctx:
+            system_prompt = inject_context_anthropic(dynamic_ctx, system_prompt)
         tools = build_anthropic_tools()
         messages = [{"role": "user", "content": text}]
 

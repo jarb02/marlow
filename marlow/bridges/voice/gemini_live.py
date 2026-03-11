@@ -58,6 +58,7 @@ class GeminiLiveVoiceBridge:
         user_name: str = "",
         language: str = "es",
         on_transcript: Optional[Callable[[str, str], Awaitable[None]]] = None,
+        context_builder: Optional[Callable[[], str]] = None,
     ):
         """
         Parameters
@@ -74,6 +75,8 @@ class GeminiLiveVoiceBridge:
             ISO language code (es, en, pt, etc.).
         on_transcript : callable
             async callback(role, text) for transcript updates.
+        context_builder : callable or None
+            A ``() -> str`` that returns dynamic context. Injected before tool calls.
         """
         self._api_key = api_key
         self._model = model or "gemini-2.5-flash-native-audio-preview-12-2025"
@@ -88,6 +91,7 @@ class GeminiLiveVoiceBridge:
         self._is_outputting = False  # True while playing audio (echo suppression)
         self._output_end_time = 0.0  # timestamp when output stopped + buffer
         self._stop_audio = threading.Event()
+        self._context_builder = context_builder
 
     def _build_system_prompt(self) -> str:
         return build_system_prompt(self._user_name, self._language)
@@ -328,6 +332,19 @@ class GeminiLiveVoiceBridge:
     async def _handle_tool_calls(self, session, tool_call, tool_executor: Callable):
         """Execute function calls and return results to Gemini."""
         from google.genai import types
+
+        # Inject dynamic context before tool execution
+        if self._context_builder:
+            try:
+                ctx = self._context_builder()
+                if ctx:
+                    from marlow.kernel.adapters import inject_context_gemini_live
+                    turns = inject_context_gemini_live(ctx)
+                    await session.send_client_content(
+                        turns=turns, turn_complete=True,
+                    )
+            except Exception as e:
+                logger.debug("Context injection error: %s", e)
 
         function_responses = []
         for fc in tool_call.function_calls:

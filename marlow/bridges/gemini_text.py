@@ -117,17 +117,14 @@ class GeminiTextBridge:
 
         self._ensure_chat()
 
-        # Inject dynamic context as a preamble to the user message
+        # Inject dynamic context via adapter (format lives in adapters.py)
         enriched = text
         if self._context_builder:
             try:
                 ctx = self._context_builder()
                 if ctx:
-                    enriched = (
-                        "[System context — NOT part of the user's message, "
-                        "do not repeat this back to the user]\n"
-                        + ctx + "\n\n[User message]\n" + text
-                    )
+                    from marlow.kernel.adapters import inject_context_gemini_text
+                    enriched = inject_context_gemini_text(ctx, text)
             except Exception as e:
                 logger.debug("Context builder error: %s", e)
 

@@ -353,3 +353,49 @@ def summary() -> dict[str, Any]:
         "categories": per_category,
         "alias_count": len(getattr(__import__("marlow.kernel.registry", fromlist=["TOOL_ALIASES"]), "TOOL_ALIASES", {})),
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# Context Injection Adapters
+# ─────────────────────────────────────────────────────────────
+
+def inject_context_gemini_text(context: str, user_message: str) -> str:
+    """Format context + user message for Gemini text chat.
+
+    Prepends context as a system preamble that Gemini should not echo back.
+    The model sees the context but knows it's not part of the user's message.
+
+    / Formatea contexto + mensaje para Gemini text.
+    """
+    return (
+        "[System context — NOT part of the user's message, "
+        "do not repeat this back to the user]\n"
+        + context + "\n\n[User message]\n" + user_message
+    )
+
+
+def inject_context_gemini_live(context: str) -> dict:
+    """Format context as a turns dict for Gemini Live send_client_content().
+
+    Returns a dict ready to be passed as the `turns` parameter.
+    The prefix makes clear this is NOT a user utterance.
+
+    / Formatea contexto como turno para Gemini Live.
+    """
+    return {
+        "role": "user",
+        "parts": [{
+            "text": (
+                "[Context update — not a user message, "
+                "internal state refresh]\n" + context
+            ),
+        }],
+    }
+
+
+def inject_context_anthropic(context: str, system_prompt: str) -> str:
+    """Append dynamic context to an Anthropic system prompt.
+
+    / Agrega contexto dinámico al system prompt de Anthropic.
+    """
+    return system_prompt + "\n\n--- Current context ---\n" + context + "\n"
