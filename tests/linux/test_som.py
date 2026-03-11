@@ -103,7 +103,7 @@ async def main():
             # Check for known Firefox buttons
             elem_names = [e["name"].lower() for e in elements]
             has_reload = any("reload" in n for n in elem_names)
-            has_buttons = any(e["role"] in ("push button", "button", "toggle button")
+            has_buttons = any(e["role"] in ("push button", "toggle button")
                              for e in elements)
             print(f"  Has 'Reload' button: {has_reload}")
             print(f"  Has button elements: {has_buttons}")
