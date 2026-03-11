@@ -1,9 +1,9 @@
-"""Shared Gemini tool declarations and system prompt for Marlow OS.
+"""Shared tool declarations and system prompt for Marlow OS.
 
-Used by both GeminiLiveVoiceBridge (audio) and GeminiTextBridge (text).
-Single source of truth for Marlow capabilities exposed to Gemini.
+Uses the universal Tool Registry for all LLM-facing tool declarations.
+Single source of truth — no more manual tool list duplication.
 
-/ Schema de tools compartido para Gemini — voz y texto.
+/ Schema de tools compartido — usa el Tool Registry universal.
 """
 
 from __future__ import annotations
@@ -12,38 +12,8 @@ import logging
 
 logger = logging.getLogger("marlow.bridges.tools_schema")
 
-# Tool name aliases — maps Gemini-friendly names to real tool names
-TOOL_ALIASES = {
-    "close_window": "manage_window",
-    "minimize_window": "manage_window",
-    "maximize_window": "manage_window",
-}
-
-
-def resolve_tool_call(name: str, args: dict) -> tuple[str, dict]:
-    """Resolve aliased tool names and transform args.
-
-    Returns (real_tool_name, transformed_args).
-    """
-    if name == "close_window":
-        window_id = args.get("window_id")
-        return "manage_window", {
-            "window_title": str(window_id) if window_id else "",
-            "action": "close",
-        }
-    if name == "minimize_window":
-        window_id = args.get("window_id")
-        return "manage_window", {
-            "window_title": str(window_id) if window_id else "",
-            "action": "minimize",
-        }
-    if name == "maximize_window":
-        window_id = args.get("window_id")
-        return "manage_window", {
-            "window_title": str(window_id) if window_id else "",
-            "action": "maximize",
-        }
-    return name, args
+# Re-export aliases and resolver from the registry
+from marlow.kernel.registry import TOOL_ALIASES, resolve_tool_call  # noqa: F401
 
 
 # ─────────────────────────────────────────────────────────────
@@ -59,8 +29,16 @@ def build_system_prompt(user_name: str = "", language: str = "es") -> str:
         f"Always respond to the user in {language}.\n\n"
         f"You control the desktop through function calls. When the user asks to "
         f"do something (search, open apps, manage windows, etc.), call the tool.\n\n"
+        f"You have access to a comprehensive set of desktop tools including:\n"
+        f"- Window management (open, close, focus, minimize, maximize, list, shadow mode)\n"
+        f"- Input control (click, type, press keys, hotkeys, mouse movement)\n"
+        f"- Screen reading (screenshots, OCR, accessibility tree, UI element inspection)\n"
+        f"- System operations (run commands, clipboard, file operations)\n"
+        f"- Automation (wait for elements, scheduled tasks, workflows)\n\n"
+        f"Use the most appropriate tool for each task. For accessibility tree operations, "
+        f"prefer find_elements and get_ui_tree over OCR when interacting with app content.\n\n"
         f"Guidelines:\n"
-        f"- Be concise: 1—3 sentences max.\n"
+        f"- Be concise: 1-3 sentences max.\n"
         f"- Greetings: respond warmly but briefly.\n"
         f"- If a message combines a greeting with an action, ALWAYS call the tool AND "
         f"respond. Never just promise to do something without executing it.\n"
@@ -72,444 +50,105 @@ def build_system_prompt(user_name: str = "", language: str = "es") -> str:
         f"exceptions, or internal details.\n\n"
         f"MANDATORY shadow workflow for any search or web lookup:\n"
         f"You MUST complete ALL steps before responding to the user.\n"
-        f"Step 1: launch_in_shadow(command='firefox <url>') — save the window_id from the response.\n"
+        f"Step 1: launch_in_shadow(command='firefox <url>') - save the window_id from the response.\n"
         f"Step 2: Wait for page load, then call take_screenshot(window_id=<id>).\n"
         f"Step 3: Call ocr_region(window_id=<id>) to extract the text.\n"
         f"Step 4: Read the OCR result and compose your answer from it.\n"
         f"Step 5: Only call move_to_user if the user explicitly asks to see the window.\n"
-        f"DO NOT respond after step 1 alone. You MUST continue to steps 2—4.\n"
-        f"DO NOT fabricate information — only report what OCR returns.\n"
+        f"DO NOT respond after step 1 alone. You MUST continue to steps 2-4.\n"
+        f"DO NOT fabricate information - only report what OCR returns.\n"
         f"The window_id from launch_in_shadow works directly with take_screenshot "
-        f"and ocr_region — pass it as the window_id parameter.\n\n"
+        f"and ocr_region - pass it as the window_id parameter.\n\n"
         f"For complex tasks (4+ steps, multi-page, document creation), "
         f"call execute_complex_goal instead of handling step by step.\n"
     )
 
 
-
 # ─────────────────────────────────────────────────────────────
-# Tool declarations for Gemini
+# Tool declarations — now from the universal registry
 # ─────────────────────────────────────────────────────────────
 
-def build_tool_declarations():
-    """Build Gemini function declarations for Marlow desktop tools.
+# Categories exposed to Gemini voice/text bridges
+_GEMINI_CATEGORIES = [
+    "input", "windows", "shadow", "accessibility", "screenshot",
+    "ocr", "system", "meta",
+]
 
-    Returns a list of types.Tool for both Gemini Live and Gemini text APIs.
+# Tools excluded from Gemini (too noisy, admin-only, or dangerous)
+_GEMINI_EXCLUDE = [
+    "kill_switch", "start_ui_monitor", "stop_ui_monitor",
+    "run_app_script", "run_diagnostics",
+]
+
+
+def build_tool_declarations(categories=None, exclude=None):
+    """Build Gemini function declarations from the universal Tool Registry.
+
+    Args:
+        categories: List of categories to include. Defaults to _GEMINI_CATEGORIES.
+        exclude: Tool names to exclude. Defaults to _GEMINI_EXCLUDE.
+
+    Returns:
+        list of google.genai.types.Tool wrapping FunctionDeclarations.
     """
     from google.genai import types
+    from marlow.kernel.adapters import to_gemini
 
-    return [
-        types.Tool(function_declarations=[
-            types.FunctionDeclaration(
-                name="launch_in_shadow",
-                description=(
-                    "Launch an application in shadow mode (invisible to user). "
-                    "Use for web searches, opening apps in background. "
-                    "Example: firefox https://google.com/search?q=weather+miami"
+    cats = categories or _GEMINI_CATEGORIES
+    excl = exclude or _GEMINI_EXCLUDE
+
+    declarations = to_gemini(categories=cats, exclude=excl)
+
+    # Also add the close_window alias (Gemini-friendly name)
+    declarations.append(types.FunctionDeclaration(
+        name="close_window",
+        description="Close a window on the desktop.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "window_id": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Window ID to close (get from list_windows)",
                 ),
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "command": types.Schema(
-                            type=types.Type.STRING,
-                            description="Command to launch, e.g. firefox https://google.com/search?q=weather",
-                        ),
-                    },
-                    required=["command"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="move_to_user",
-                description="Move a shadow window to the user visible screen.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "window_id": types.Schema(
-                            type=types.Type.INTEGER,
-                            description="Window ID to promote to visible screen",
-                        ),
-                    },
-                    required=["window_id"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="open_application",
-                description="Open an application on the user desktop.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "app_name": types.Schema(
-                            type=types.Type.STRING,
-                            description="Application name or command: firefox, foot, nautilus, etc.",
-                        ),
-                    },
-                    required=["app_name"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="close_window",
-                description="Close a window on the desktop.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "window_id": types.Schema(
-                            type=types.Type.INTEGER,
-                            description="Window ID to close (get from list_windows)",
-                        ),
-                    },
-                    required=["window_id"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="list_windows",
-                description="List all open windows on the desktop with their IDs, titles, and app names.",
-                parameters=types.Schema(type=types.Type.OBJECT, properties={}),
-            ),
-            types.FunctionDeclaration(
-                name="focus_window",
-                description="Focus/activate a window by its title or part of title.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "window_title": types.Schema(
-                            type=types.Type.STRING,
-                            description="Window title or substring to match",
-                        ),
-                    },
-                    required=["window_title"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="take_screenshot",
-                description="Take a screenshot of a window or the full screen.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "window_title": types.Schema(
-                            type=types.Type.STRING,
-                            description="Window title to capture. Omit for full screen.",
-                        ),
-                        "window_id": types.Schema(
-                            type=types.Type.INTEGER,
-                            description="Window ID for shadow windows (from launch_in_shadow).",
-                        ),
-                    },
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="run_command",
-                description="Run a shell command on the system and return its output.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "command": types.Schema(
-                            type=types.Type.STRING,
-                            description="Shell command to execute",
-                        ),
-                    },
-                    required=["command"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="type_text",
-                description="Type text into the currently focused window using virtual keyboard.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "text": types.Schema(
-                            type=types.Type.STRING,
-                            description="Text to type",
-                        ),
-                    },
-                    required=["text"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="press_key",
-                description="Press a single key (Return, Escape, Tab, BackSpace, etc.).",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "key": types.Schema(
-                            type=types.Type.STRING,
-                            description="Key name: Return, Escape, Tab, BackSpace, Up, Down, Left, Right, etc.",
-                        ),
-                    },
-                    required=["key"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="get_shadow_windows",
-                description=(
-                    "List all windows in shadow (invisible) space with their "
-                    "window_id, title, and app_id."
-                ),
-                parameters=types.Schema(type=types.Type.OBJECT, properties={}),
-            ),
-            types.FunctionDeclaration(
-                name="ocr_region",
-                description=(
-                    "Read text from the screen or a specific window using OCR. "
-                    "Extracts visible text content. Works with shadow windows via window_id."
-                ),
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "window_title": types.Schema(
-                            type=types.Type.STRING,
-                            description="Window title to OCR. Omit for full screen.",
-                        ),
-                        "window_id": types.Schema(
-                            type=types.Type.INTEGER,
-                            description="Window ID for shadow windows (from launch_in_shadow).",
-                        ),
-                    },
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="execute_complex_goal",
-                description=(
-                    "Delegate a complex multi-step task to the advanced AI planner. "
-                    "Use for tasks requiring 4+ steps, multi-page interaction, "
-                    "document creation, or workflows beyond simple open/search/close."
-                ),
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "goal": types.Schema(
-                            type=types.Type.STRING,
-                            description="Full description of the task to accomplish.",
-                        ),
-                    },
-                    required=["goal"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="hotkey",
-                description="Press a keyboard shortcut (e.g. ctrl+c, alt+F4, super+e).",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "keys": types.Schema(
-                            type=types.Type.STRING,
-                            description="Key combination, e.g. ctrl+c, alt+F4, super+e",
-                        ),
-                    },
-                    required=["keys"],
-                ),
-            ),
-        ])
-    ]
+            },
+            required=["window_id"],
+        ),
+    ))
+
+    return [types.Tool(function_declarations=declarations)]
 
 
-def build_anthropic_tools() -> list[dict]:
-    """Build tool declarations in Anthropic format (same tools as Gemini).
+def build_anthropic_tools(categories=None, exclude=None) -> list[dict]:
+    """Build Anthropic tool declarations from the universal Tool Registry.
 
-    Used by Claude Sonnet fallback in daemon_linux.py.
+    Args:
+        categories: List of categories to include. Defaults to _GEMINI_CATEGORIES.
+        exclude: Tool names to exclude. Defaults to _GEMINI_EXCLUDE.
+
+    Returns:
+        List of dicts in Anthropic tool format.
     """
-    return [
-        {
-            "name": "launch_in_shadow",
-            "description": (
-                "Launch an application in shadow mode (invisible to user). "
-                "Use for web searches, opening apps in background. "
-                "Example: firefox https://google.com/search?q=weather+miami"
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Command to launch, e.g. firefox https://google.com/search?q=weather",
-                    },
-                },
-                "required": ["command"],
-            },
-        },
-        {
-            "name": "move_to_user",
-            "description": "Move a shadow window to the user visible screen.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "window_id": {
-                        "type": "integer",
-                        "description": "Window ID to promote to visible screen",
-                    },
-                },
-                "required": ["window_id"],
-            },
-        },
-        {
-            "name": "open_application",
-            "description": "Open an application on the user desktop.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "app_name": {
-                        "type": "string",
-                        "description": "Application name or command: firefox, foot, nautilus, etc.",
-                    },
-                },
-                "required": ["app_name"],
-            },
-        },
-        {
-            "name": "close_window",
-            "description": "Close a window on the desktop.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "window_id": {
-                        "type": "integer",
-                        "description": "Window ID to close (get from list_windows)",
-                    },
-                },
-                "required": ["window_id"],
-            },
-        },
-        {
-            "name": "list_windows",
-            "description": "List all open windows on the desktop with their IDs, titles, and app names.",
-            "input_schema": {
-                "type": "object",
-                "properties": {},
-            },
-        },
-        {
-            "name": "focus_window",
-            "description": "Focus/activate a window by its title or part of title.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "window_title": {
-                        "type": "string",
-                        "description": "Window title or substring to match",
-                    },
-                },
-                "required": ["window_title"],
-            },
-        },
-        {
-            "name": "take_screenshot",
-            "description": "Take a screenshot of a window or the full screen.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "window_title": {
-                        "type": "string",
-                        "description": "Window title to capture. Omit for full screen.",
-                    },
-                    "window_id": {
-                        "type": "integer",
-                        "description": "Window ID for shadow windows (from launch_in_shadow).",
-                    },
+    from marlow.kernel.adapters import to_anthropic
+
+    cats = categories or _GEMINI_CATEGORIES
+    excl = exclude or _GEMINI_EXCLUDE
+
+    tools = to_anthropic(categories=cats, exclude=excl)
+
+    # Add close_window alias
+    tools.append({
+        "name": "close_window",
+        "description": "Close a window on the desktop.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "window_id": {
+                    "type": "integer",
+                    "description": "Window ID to close (get from list_windows)",
                 },
             },
+            "required": ["window_id"],
         },
-        {
-            "name": "run_command",
-            "description": "Run a shell command on the system and return its output.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Shell command to execute",
-                    },
-                },
-                "required": ["command"],
-            },
-        },
-        {
-            "name": "type_text",
-            "description": "Type text into the currently focused window using virtual keyboard.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "Text to type",
-                    },
-                },
-                "required": ["text"],
-            },
-        },
-        {
-            "name": "press_key",
-            "description": "Press a single key (Return, Escape, Tab, BackSpace, etc.).",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "Key name: Return, Escape, Tab, BackSpace, Up, Down, Left, Right, etc.",
-                    },
-                },
-                "required": ["key"],
-            },
-        },
-        {
-            "name": "get_shadow_windows",
-            "description": (
-                "List all windows in shadow (invisible) space with their "
-                "window_id, title, and app_id."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {},
-            },
-        },
-        {
-            "name": "ocr_region",
-            "description": (
-                "Read text from the screen or a specific window using OCR. "
-                "Extracts visible text content. Works with shadow windows via window_id."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "window_title": {
-                        "type": "string",
-                        "description": "Window title to OCR. Omit for full screen.",
-                    },
-                    "window_id": {
-                        "type": "integer",
-                        "description": "Window ID for shadow windows (from launch_in_shadow).",
-                    },
-                },
-            },
-        },
-        {
-            "name": "execute_complex_goal",
-            "description": (
-                "Delegate a complex multi-step task to the advanced AI planner. "
-                "Use for tasks requiring 4+ steps, multi-page interaction, "
-                "document creation, or workflows beyond simple open/search/close."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "goal": {
-                        "type": "string",
-                        "description": "Full description of the task to accomplish.",
-                    },
-                },
-                "required": ["goal"],
-            },
-        },
-        {
-            "name": "hotkey",
-            "description": "Press a keyboard shortcut (e.g. ctrl+c, alt+F4, super+e).",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "keys": {
-                        "type": "string",
-                        "description": "Key combination, e.g. ctrl+c, alt+F4, super+e",
-                    },
-                },
-                "required": ["keys"],
-            },
-        },
-    ]
+    })
+
+    return tools
