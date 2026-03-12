@@ -859,58 +859,11 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     },
 
     # ══════════════════════════════════════════════════════════
-    # CDP — Chrome DevTools Protocol (15 tools)
+    # CDP — Chrome DevTools Protocol (4 tools, Electron/Chromium only)
     # ══════════════════════════════════════════════════════════
 
-    "cdp_discover": {
-        "description": "Scan localhost ports for apps with CDP (Chrome DevTools Protocol) enabled. Finds Electron apps, Chrome with --remote-debugging-port, etc.",
-        "category": "cdp",
-        "params": {
-            "port_start": {
-                "type": "integer",
-                "description": "Start of port range to scan (default: 9222).",
-                "default": 9222,
-            },
-            "port_end": {
-                "type": "integer",
-                "description": "End of port range to scan (default: 9250).",
-                "default": 9250,
-            },
-        },
-    },
-
-    "cdp_connect": {
-        "description": "Connect to a CDP endpoint on a given port. Establishes WebSocket connection to the first debuggable page target.",
-        "category": "cdp",
-        "params": {
-            "port": {
-                "type": "integer",
-                "description": "Port number of the CDP endpoint.",
-            },
-        },
-        "required": ["port"],
-    },
-
-    "cdp_disconnect": {
-        "description": "Disconnect from a CDP endpoint.",
-        "category": "cdp",
-        "params": {
-            "port": {
-                "type": "integer",
-                "description": "Port number to disconnect from.",
-            },
-        },
-        "required": ["port"],
-    },
-
-    "cdp_list_connections": {
-        "description": "List all active CDP connections.",
-        "category": "cdp",
-        "params": {},
-    },
-
     "cdp_send": {
-        "description": "Send a raw CDP command. For advanced use when specific CDP methods are needed beyond the convenience tools.",
+        "description": "Send a raw CDP command to an Electron/Chromium app. Supports any CDP method: Page.navigate, Network.enable, CSS queries, etc. Only works with apps that have remote debugging enabled.",
         "category": "cdp",
         "params": {
             "port": {
@@ -930,65 +883,8 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         "required": ["port", "method"],
     },
 
-    "cdp_click": {
-        "description": "Click at page coordinates via CDP. 100% invisible -- no focus steal, no mouse movement. Coordinates are relative to page viewport.",
-        "category": "cdp",
-        "params": {
-            "port": {
-                "type": "integer",
-                "description": "CDP port.",
-            },
-            "x": {
-                "type": "integer",
-                "description": "X coordinate in page viewport.",
-            },
-            "y": {
-                "type": "integer",
-                "description": "Y coordinate in page viewport.",
-            },
-        },
-        "required": ["port", "x", "y"],
-    },
-
-    "cdp_type_text": {
-        "description": "Type text via CDP. 100% invisible -- no focus steal, no keyboard events. Focus the target input first with cdp_click or cdp_click_selector.",
-        "category": "cdp",
-        "params": {
-            "port": {
-                "type": "integer",
-                "description": "CDP port.",
-            },
-            "text": {
-                "type": "string",
-                "description": "Text to type.",
-            },
-        },
-        "required": ["port", "text"],
-    },
-
-    "cdp_key_combo": {
-        "description": "Press a key combination via CDP (e.g., Ctrl+A, Enter, Escape). 100% invisible.",
-        "category": "cdp",
-        "params": {
-            "port": {
-                "type": "integer",
-                "description": "CDP port.",
-            },
-            "key": {
-                "type": "string",
-                "description": "Key name (e.g., 'a', 'Enter', 'Tab', 'Escape').",
-            },
-            "modifiers": {
-                "type": "array",
-                "description": "Modifier keys: 'ctrl', 'alt', 'shift', 'meta'.",
-                "optional": True,
-            },
-        },
-        "required": ["port", "key"],
-    },
-
     "cdp_screenshot": {
-        "description": "Take screenshot via CDP. Works even if window is behind others or minimized. Returns base64 image.",
+        "description": "Take screenshot of an Electron/Chromium app via CDP. Works even if window is behind others or minimized. Only works with apps that have remote debugging enabled.",
         "category": "cdp",
         "params": {
             "port": {
@@ -1005,7 +901,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     },
 
     "cdp_evaluate": {
-        "description": "Evaluate JavaScript expression in the page context via CDP. Returns the result value and type.",
+        "description": "Evaluate JavaScript in an Electron/Chromium app page context via CDP. Only works with apps that have remote debugging enabled.",
         "category": "cdp",
         "params": {
             "port": {
@@ -1021,7 +917,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     },
 
     "cdp_get_dom": {
-        "description": "Get the DOM tree of the page via CDP. Returns structured node tree with tag names, attributes, and children.",
+        "description": "Get the DOM tree of an Electron/Chromium app page via CDP. Returns structured node tree with tag names, attributes, and children. Only works with apps that have remote debugging enabled.",
         "category": "cdp",
         "params": {
             "port": {
@@ -1035,62 +931,6 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             },
         },
         "required": ["port"],
-    },
-
-    "cdp_click_selector": {
-        "description": "Click an element by CSS selector via CDP. Executes document.querySelector(selector).click() in the page.",
-        "category": "cdp",
-        "params": {
-            "port": {
-                "type": "integer",
-                "description": "CDP port.",
-            },
-            "css_selector": {
-                "type": "string",
-                "description": "CSS selector (e.g., '#submit-btn', '.nav-link').",
-            },
-        },
-        "required": ["port", "css_selector"],
-    },
-
-    "cdp_ensure": {
-        "description": "Ensure CDP is available for an Electron app. Checks existing connections, scans ports, and if needed proposes a restart plan for user confirmation.",
-        "category": "cdp",
-        "params": {
-            "app_name": {
-                "type": "string",
-                "description": "App name (e.g., 'code', 'slack', 'notion', 'chrome').",
-            },
-            "preferred_port": {
-                "type": "integer",
-                "description": "Preferred CDP port. If omitted, uses known defaults.",
-                "optional": True,
-            },
-        },
-        "required": ["app_name"],
-    },
-
-    "cdp_restart_confirmed": {
-        "description": "Execute CDP restart AFTER user confirmation. Closes the app, relaunches with --remote-debugging-port, waits for CDP, and auto-connects.",
-        "category": "cdp",
-        "params": {
-            "app_name": {
-                "type": "string",
-                "description": "App name to restart.",
-            },
-            "port": {
-                "type": "integer",
-                "description": "CDP port to use. If omitted, uses default for app.",
-                "optional": True,
-            },
-        },
-        "required": ["app_name"],
-    },
-
-    "cdp_get_knowledge_base": {
-        "description": "Get the CDP knowledge base: which apps needed restart, what ports worked, and default port assignments for known Electron apps.",
-        "category": "cdp",
-        "params": {},
     },
 
     # ══════════════════════════════════════════════════════════

@@ -62,6 +62,12 @@ When the user asks for information (weather, searches, lookups):
 
 Important: Always respond with information from the actual content you retrieved. Do not fabricate information.
 
+CDP tools (cdp_evaluate, cdp_get_dom, cdp_screenshot, cdp_send):
+These only work with Electron and Chromium-based apps with remote debugging enabled.
+Do not attempt them with Firefox or native GTK/Qt apps.
+Use AT-SPI2 tools (get_ui_tree, find_elements, get_text, do_action) for all apps first.
+Only use CDP tools when you need capabilities AT-SPI2 cannot provide: JavaScript execution, DOM manipulation, or network interception in Electron apps.
+
 For complex tasks (4+ steps, multi-page, document creation), call execute_complex_goal instead of handling step by step.
 """
     if dynamic_context:
@@ -77,6 +83,7 @@ For complex tasks (4+ steps, multi-page, document creation), call execute_comple
 _GEMINI_CATEGORIES = [
     "input", "windows", "shadow", "accessibility", "screenshot",
     "ocr", "system", "meta", "memory", "waits", "visual", "clipboard",
+    "cdp",
 ]
 
 # Tools excluded from Gemini (too noisy, admin-only, or dangerous)

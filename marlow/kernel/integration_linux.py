@@ -1226,7 +1226,7 @@ class AutonomousMarlow:
         "get_ui_events", "get_agent_screen_state", "memory_recall", "memory_list",
         "clipboard_history", "get_suggestions", "workflow_list", "get_error_journal",
         "list_watchers", "get_watch_events", "list_scheduled_tasks", "get_task_history",
-        "cdp_list_connections", "cdp_get_dom", "cdp_get_knowledge_base",
+        "cdp_get_dom",
         "get_voice_hotkey_status", "detect_app_framework", "run_diagnostics",
         "list_ocr_languages",
     })
