@@ -134,16 +134,8 @@ async def _run_gemini_mode(settings):
 
     generate_clips(user_name)
 
-    # Setup wake word (local, for activation only)
+    # Wake word disabled — mic activates ONLY via sidebar button or Super+V
     wake_word = None
-    if settings.voice.wake_word:
-        try:
-            from marlow.platform.linux.wake_word import WakeWordListener
-            wake_word = WakeWordListener()
-            if not wake_word.setup():
-                wake_word = None
-        except ImportError:
-            pass
 
     logger.info(
         "Gemini Live mode: model=%s, wake_word=%s, user=%s, lang=%s",
