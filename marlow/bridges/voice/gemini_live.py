@@ -1,12 +1,12 @@
 """Gemini Live API voice bridge for Marlow OS.
 
-Streams audio bidirectionally via WebSocket to Gemini 2.5 Flash.
+Bidirectional audio streaming via WebSocket to Gemini.
 Gemini handles VAD, speech recognition, conversation, and voice output.
-Marlow handles desktop actions via function calls.
+Tool calls executed via callback to daemon HTTP API.
 
-Architecture:
-    mic -> PipeWire -> Gemini Live WebSocket -> function calls for actions -> speaker
-    Wake word detection stays local (OpenWakeWord).
+Flow:
+    mic → Gemini WebSocket → speaker (audio)
+    Gemini → tool call → execute → result back to Gemini
 
 / Bridge de voz con Gemini Live API — audio bidireccional + function calling.
 """
@@ -17,7 +17,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Optional, Callable, Awaitable
+from typing import Callable
 
 logger = logging.getLogger("marlow.bridges.voice.gemini_live")
 
@@ -27,8 +27,9 @@ SEND_SAMPLE_RATE = 16000    # Gemini expects 16kHz input
 RECEIVE_SAMPLE_RATE = 24000  # Gemini outputs 24kHz
 CHUNK_SIZE = 1024
 
+# Session timeout: close if no response from Gemini for this long
+SESSION_TIMEOUT_S = 30.0
 
-# Tools and system prompt imported from shared schema
 from marlow.bridges.tools_schema import (
     build_tool_declarations,
     build_system_prompt,
@@ -37,16 +38,11 @@ from marlow.bridges.tools_schema import (
 
 
 # ─────────────────────────────────────────────────────────────
-# Gemini Live Voice Bridge
+# Result compaction (prevents WebSocket 1007 errors)
 # ─────────────────────────────────────────────────────────────
 
-
-# Max payload size for Gemini Live WebSocket function responses.
-# Larger results (screenshots, DOM dumps, etc.) crash the connection
-# with error 1007 "invalid frame payload data".
 _LIVE_MAX_RESULT_BYTES = 4096
 
-# Tools whose output is binary/large and should be replaced with a summary
 _BINARY_TOOLS = {"take_screenshot", "get_annotated_screenshot", "visual_diff",
                  "visual_diff_compare", "cdp_screenshot", "cdp_get_dom"}
 
@@ -54,23 +50,17 @@ _BINARY_TOOLS = {"take_screenshot", "get_annotated_screenshot", "visual_diff",
 def _compact_result_for_live(tool_name: str, result: dict) -> dict:
     """Compact a tool result for Gemini Live WebSocket transport.
 
-    Gemini Live has strict WebSocket frame limits. Screenshots (base64 PNG)
-    and other large payloads cause error 1007. This function:
-    1. Replaces binary/large tool results with a short summary
-    2. Truncates any remaining oversized string fields
-    3. Keeps the result under _LIVE_MAX_RESULT_BYTES
+    Keeps results under _LIVE_MAX_RESULT_BYTES to prevent error 1007.
     """
     import json
 
-    # For known binary tools, return a minimal summary
+    # Binary/large tools: return minimal summary
     if tool_name in _BINARY_TOOLS:
         compact = {"success": result.get("success", False)}
-        # Keep useful metadata
         for key in ("window_id", "screenshot_taken", "size_bytes", "note",
                      "error", "differences_found"):
             if key in result:
                 compact[key] = result[key]
-        # Add guidance for the model
         if compact.get("success") and tool_name in ("take_screenshot",
                 "get_annotated_screenshot", "cdp_screenshot"):
             compact["note"] = (
@@ -80,7 +70,7 @@ def _compact_result_for_live(tool_name: str, result: dict) -> dict:
             )
         return compact
 
-    # For all other tools, check total size
+    # Other tools: keep key fields, truncate large strings
     compact = {"success": result.get("success", False)}
     for key in ("error", "pid", "output", "windows", "result", "window_id",
                 "launched", "note", "text", "count", "app_id", "title",
@@ -91,7 +81,6 @@ def _compact_result_for_live(tool_name: str, result: dict) -> dict:
                 val = val[:500] + "..."
             compact[key] = val
 
-    # Compact window lists
     if "windows" in compact and isinstance(compact["windows"], list):
         compact["windows"] = [
             {"id": w.get("id"), "title": (w.get("title") or "")[:80],
@@ -99,7 +88,7 @@ def _compact_result_for_live(tool_name: str, result: dict) -> dict:
             for w in compact["windows"][:20]
         ]
 
-    # Final size check — if still too large, truncate aggressively
+    # Final size check
     try:
         serialized = json.dumps(compact, default=str)
         if len(serialized) > _LIVE_MAX_RESULT_BYTES:
@@ -116,14 +105,16 @@ def _compact_result_for_live(tool_name: str, result: dict) -> dict:
     return compact
 
 
-class GeminiLiveVoiceBridge:
-    """Voice bridge using Gemini Live API for natural streaming conversation.
+# ─────────────────────────────────────────────────────────────
+# Gemini Live Voice Bridge
+# ─────────────────────────────────────────────────────────────
 
-    Handles:
-    - Bidirectional audio streaming (mic <-> Gemini)
-    - Automatic VAD and turn-taking (Gemini-side)
-    - Function calling for desktop actions
-    - Transcript broadcasting to sidebar
+
+class GeminiLiveVoiceBridge:
+    """Bidirectional audio bridge to Gemini Live API.
+
+    Handles mic → Gemini → speaker streaming with echo suppression
+    and function calling for desktop actions.
     """
 
     def __init__(
@@ -133,51 +124,27 @@ class GeminiLiveVoiceBridge:
         voice: str = "",
         user_name: str = "",
         language: str = "es",
-        on_transcript: Optional[Callable[[str, str], Awaitable[None]]] = None,
-        context_builder: Optional[Callable[[], str]] = None,
     ):
-        """
-        Parameters
-        ----------
-        api_key : str
-            Gemini API key.
-        model : str
-            Model ID. Default: gemini-2.5-flash-native-audio-preview.
-        voice : str
-            Voice name (Puck, Kore, Charon, etc.). Empty = default.
-        user_name : str
-            User's name for the system prompt.
-        language : str
-            ISO language code (es, en, pt, etc.).
-        on_transcript : callable
-            async callback(role, text) for transcript updates.
-        context_builder : callable or None
-            A ``() -> str`` that returns dynamic context. Injected before tool calls.
-        """
         self._api_key = api_key
         self._model = model or "gemini-2.5-flash-native-audio-preview-12-2025"
         self._voice = voice
         self._user_name = user_name or "amigo"
         self._language = language
-        self._on_transcript = on_transcript
 
         self._session = None
         self._is_active = False
         self._audio_out_queue: asyncio.Queue = asyncio.Queue()
-        self._is_outputting = False  # True while playing audio (echo suppression)
-        self._output_end_time = 0.0  # timestamp when output stopped + buffer
+        self._is_outputting = False       # Echo suppression flag
+        self._output_end_time = 0.0       # Echo suppression buffer end
         self._stop_audio = threading.Event()
-        self._context_builder = context_builder
-
-    def _build_system_prompt(self) -> str:
-        return build_system_prompt(self._user_name, self._language)
+        self._last_response_time = 0.0    # Session timeout tracker
 
     def _build_config(self) -> dict:
         from google.genai import types
 
-        config: dict = {
+        config = {
             "response_modalities": ["AUDIO"],
-            "system_instruction": self._build_system_prompt(),
+            "system_instruction": build_system_prompt(self._user_name, self._language),
             "tools": build_tool_declarations(),
             "context_window_compression": types.ContextWindowCompressionConfig(
                 sliding_window=types.SlidingWindow(),
@@ -198,22 +165,13 @@ class GeminiLiveVoiceBridge:
     # ── Session lifecycle ──
 
     async def run_session(self, tool_executor: Callable):
-        """Run a complete conversation session.
-
-        Blocks until the session ends (goodbye, timeout, error, or stop()).
-
-        Parameters
-        ----------
-        tool_executor : callable
-            async callable(tool_name: str, args: dict) -> dict
-            Executes Marlow desktop tools and returns result dict.
-        """
+        """Run a complete conversation session. Blocks until session ends."""
         from google import genai
 
         client = genai.Client(api_key=self._api_key)
         config = self._build_config()
 
-        logger.info("Opening Gemini Live session (model=%s)", self._model)
+        logger.info("Session opened (model=%s)", self._model)
 
         async with client.aio.live.connect(
             model=self._model, config=config,
@@ -221,49 +179,32 @@ class GeminiLiveVoiceBridge:
             self._session = session
             self._is_active = True
             self._stop_audio.clear()
+            self._last_response_time = time.monotonic()
 
             try:
-                # Inject dynamic context once at session start
-                if self._context_builder:
-                    try:
-                        ctx = self._context_builder()
-                        if ctx:
-                            from marlow.kernel.adapters import inject_context_gemini_live
-                            turns = inject_context_gemini_live(ctx)
-                            await session.send_client_content(
-                                turns=turns, turn_complete=True,
-                            )
-                            logger.debug("Initial context injected at session start")
-                    except Exception as e:
-                        logger.debug("Initial context injection error: %s", e)
-
                 await self._stream_audio(session, tool_executor)
             except asyncio.CancelledError:
-                logger.info("Gemini session cancelled")
+                logger.info("Session cancelled")
             except Exception as e:
-                logger.error("Gemini session error: %s", e)
+                logger.error("Session error: %s", e)
             finally:
                 self._is_active = False
                 self._stop_audio.set()
-                # Ensure WebSocket is closed (session will exit context manager,
-                # but close explicitly first for immediate cleanup)
                 try:
                     await asyncio.wait_for(session.close(), timeout=3.0)
                 except Exception:
                     pass
                 self._session = None
-                # Drain playback queue
                 while not self._audio_out_queue.empty():
                     self._audio_out_queue.get_nowait()
-                logger.info("Gemini Live session ended")
+                logger.info("Session closed")
 
     async def _stream_audio(self, session, tool_executor: Callable):
-        """Core audio streaming loop — sends mic, receives audio + tool calls."""
+        """Core audio loop: send mic, receive audio + tool calls, play audio."""
         import pyaudio
 
         pya = pyaudio.PyAudio()
 
-        # Open mic input
         mic_info = pya.get_default_input_device_info()
         mic_stream = pya.open(
             format=pyaudio.paInt16,
@@ -274,7 +215,6 @@ class GeminiLiveVoiceBridge:
             frames_per_buffer=CHUNK_SIZE,
         )
 
-        # Open speaker output
         speaker_stream = pya.open(
             format=pyaudio.paInt16,
             channels=CHANNELS,
@@ -291,8 +231,7 @@ class GeminiLiveVoiceBridge:
                     )
                     if data is None:
                         break
-                    # Echo suppression: skip sending while Gemini audio is playing
-                    # (plus 300ms buffer after output stops)
+                    # Echo suppression: skip while Gemini audio is playing
                     if self._is_outputting or time.monotonic() < self._output_end_time:
                         continue
                     await session.send_realtime_input(
@@ -304,40 +243,33 @@ class GeminiLiveVoiceBridge:
                     break
 
         async def receive_responses():
-            """Receive audio + function calls from Gemini.
-
-            Uses anext() with timeout instead of bare async-for so that
-            stop() / session.close() can unblock the iterator promptly.
-            """
+            """Receive audio + function calls from Gemini."""
             while self._is_active:
                 try:
                     turn = session.receive()
                     turn_iter = turn.__aiter__()
-                    turn_has_tool_calls = False
-                    turn_text_parts = []  # Buffer text until we know if turn has tools
                     while self._is_active:
                         try:
                             response = await asyncio.wait_for(
                                 turn_iter.__anext__(), timeout=2.0,
                             )
                         except asyncio.TimeoutError:
-                            # Re-check _is_active on timeout
+                            # Check session timeout
+                            if time.monotonic() - self._last_response_time > SESSION_TIMEOUT_S:
+                                logger.info(
+                                    "Session timeout (%ds no response)",
+                                    int(SESSION_TIMEOUT_S),
+                                )
+                                self._is_active = False
+                                return
                             continue
                         except StopAsyncIteration:
-                            # Turn ended — flush text if conversational (no tool calls)
-                            if turn_text_parts and not turn_has_tool_calls and self._on_transcript:
-                                combined = " ".join(turn_text_parts)
-                                if combined.strip():
-                                    try:
-                                        await self._on_transcript("marlow", combined)
-                                    except Exception:
-                                        pass
-                            turn_has_tool_calls = False
-                            turn_text_parts = []
                             break
 
                         if not self._is_active:
                             break
+
+                        self._last_response_time = time.monotonic()
 
                         # Audio output from model
                         if (
@@ -352,10 +284,6 @@ class GeminiLiveVoiceBridge:
                                     self._audio_out_queue.put_nowait(
                                         part.inline_data.data,
                                     )
-                                # Buffer text for end-of-turn decision
-                                # (don't emit CoT reasoning during tool-call turns)
-                                if part.text:
-                                    turn_text_parts.append(part.text)
 
                         # Interruption — clear playback queue
                         if (
@@ -367,7 +295,6 @@ class GeminiLiveVoiceBridge:
 
                         # Function calls from Gemini
                         if response.tool_call:
-                            turn_has_tool_calls = True
                             await self._handle_tool_calls(
                                 session, response.tool_call, tool_executor,
                             )
@@ -384,7 +311,7 @@ class GeminiLiveVoiceBridge:
                     break
 
         async def play_audio():
-            """Play audio from Gemini through speakers (sets echo suppression flag)."""
+            """Play audio from Gemini through speakers (echo suppression flag)."""
             while self._is_active:
                 try:
                     data = await asyncio.wait_for(
@@ -392,10 +319,9 @@ class GeminiLiveVoiceBridge:
                     )
                     self._is_outputting = True
                     await asyncio.to_thread(speaker_stream.write, data)
-                    # If queue is empty after this chunk, mark output as stopped
                     if self._audio_out_queue.empty():
                         self._is_outputting = False
-                        self._output_end_time = time.monotonic() + 0.3  # 300ms buffer
+                        self._output_end_time = time.monotonic() + 0.3
                 except asyncio.TimeoutError:
                     if self._is_outputting:
                         self._is_outputting = False
@@ -417,21 +343,18 @@ class GeminiLiveVoiceBridge:
             done, pending = await asyncio.wait(
                 tasks, return_when=asyncio.FIRST_COMPLETED,
             )
-            # If receive ended (session closed), stop everything
             self._is_active = False
             self._stop_audio.set()
             for t in pending:
                 t.cancel()
-            # Timeout: don't wait forever for tasks to finish
             try:
                 await asyncio.wait_for(
                     asyncio.gather(*pending, return_exceptions=True),
                     timeout=5.0,
                 )
             except asyncio.TimeoutError:
-                logger.warning("Audio tasks did not finish within 5s, forcing cleanup")
+                logger.warning("Audio tasks did not finish within 5s")
         finally:
-            # Wait for mic reader thread to exit before closing stream
             await asyncio.sleep(0.2)
             try:
                 mic_stream.stop_stream()
@@ -449,7 +372,7 @@ class GeminiLiveVoiceBridge:
                 pass
 
     def _read_mic_safe(self, stream):
-        """Thread-safe mic read -- returns None when stop is signaled."""
+        """Thread-safe mic read — returns None when stop is signaled."""
         if self._stop_audio.is_set():
             return None
         try:
@@ -463,13 +386,11 @@ class GeminiLiveVoiceBridge:
 
         function_responses = []
         for fc in tool_call.function_calls:
-            logger.info("Gemini tool call: %s(%s)", fc.name, fc.args)
+            logger.info("Tool call: %s(%s)", fc.name, fc.args)
 
-            # Resolve aliases (close_window -> manage_window, etc.)
             real_name, real_args = resolve_tool_call(fc.name, fc.args or {})
             try:
                 result = await tool_executor(real_name, real_args)
-                # Compact result for WebSocket transport (prevents 1007 errors)
                 compact = _compact_result_for_live(real_name, result)
                 function_responses.append(
                     types.FunctionResponse(
@@ -479,9 +400,8 @@ class GeminiLiveVoiceBridge:
                     ),
                 )
                 logger.info(
-                    "Tool result: %s -> success=%s (compact %d bytes)",
+                    "Tool result: %s -> success=%s",
                     fc.name, result.get("success", "?"),
-                    len(str(compact)),
                 )
             except Exception as e:
                 logger.error("Tool execution error: %s: %s", fc.name, e)
@@ -503,41 +423,8 @@ class GeminiLiveVoiceBridge:
 
     # ── External control ──
 
-    async def send_text(self, text: str) -> bool:
-        """Send text input to the active session (sidebar integration).
-
-        Returns True if sent successfully.
-        """
-        if not self._session or not self._is_active:
-            return False
-        try:
-            await self._session.send_client_content(
-                turns={"role": "user", "parts": [{"text": text}]},
-                turn_complete=True,
-            )
-            if self._on_transcript:
-                await self._on_transcript("user", text)
-            return True
-        except Exception as e:
-            logger.error("Send text error: %s", e)
-            return False
-
-    async def stop_async(self):
-        """Signal the session to end and close the WebSocket."""
-        self._is_active = False
-        self._stop_audio.set()
-        session = self._session
-        if session:
-            try:
-                await session.close()
-            except Exception:
-                pass
-
     def stop(self):
-        """Signal the session to end (sync wrapper).
-
-        Closes the WebSocket to unblock receive_responses().
-        """
+        """Signal the session to end and close the WebSocket."""
         self._is_active = False
         self._stop_audio.set()
         session = self._session

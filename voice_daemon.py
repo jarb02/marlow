@@ -1,13 +1,16 @@
-"""Marlow Voice Daemon — voice interaction via Bridge architecture.
+"""Marlow Voice Daemon — Gemini Live voice interaction.
 
-Supports two engines:
-- **gemini-live**: Streaming audio via Gemini Live API (default when API key present)
-- **local**: Local pipeline (OpenWakeWord + whisper + Piper TTS)
+Simple flow:
+    Sidebar mic button ON  → opens Gemini Live session
+    Sidebar mic button OFF → closes session
+
+Audio bidirectional: mic → Gemini, Gemini → speaker.
+Tool calls executed via HTTP POST to daemon.
 
 Usage:
     python3 -c "from voice_daemon import main; main()"
 
-/ Daemon de voz Marlow — interaccion por voz via Bridge architecture.
+/ Daemon de voz Marlow — audio bidireccional con Gemini Live.
 """
 
 from __future__ import annotations
@@ -23,46 +26,38 @@ import time
 
 logger = logging.getLogger("marlow.voice_daemon")
 
+STATE_FILE = "/tmp/marlow-voice-state"
+TRIGGER_FILE = "/tmp/marlow-voice-trigger"
 
-def _cleanup_voice_state():
-    """Emergency cleanup -- runs on crash, exit, or signal."""
+
+def _cleanup():
+    """Emergency cleanup on exit or signal."""
     try:
-        _close_persistent_mic()
-    except Exception:
-        pass
-    try:
-        with open("/tmp/marlow-voice-state", "w") as f:
+        with open(STATE_FILE, "w") as f:
             f.write("idle")
     except Exception:
         pass
     try:
-        os.unlink("/tmp/marlow-voice-trigger")
+        os.unlink(TRIGGER_FILE)
     except FileNotFoundError:
         pass
 
 
-atexit.register(_cleanup_voice_state)
-signal.signal(signal.SIGTERM, lambda *_: (_cleanup_voice_state(), sys.exit(0)))
+atexit.register(_cleanup)
+signal.signal(signal.SIGTERM, lambda *_: (_cleanup(), sys.exit(0)))
 
 
-async def _send_goal(text: str, channel: str = "voice") -> dict:
-    """Send goal to daemon via HTTP."""
-    import aiohttp
+def _set_state(state: str):
+    """Write voice state: 'active' or 'idle'."""
     try:
-        async with aiohttp.ClientSession() as session:
-            resp = await session.post(
-                "http://localhost:8420/goal",
-                json={"goal": text, "channel": channel},
-                timeout=aiohttp.ClientTimeout(total=120),
-            )
-            return await resp.json()
-    except Exception as e:
-        logger.error("Goal request failed: %s", e)
-        return {"success": False, "errors": [str(e)]}
+        with open(STATE_FILE, "w") as f:
+            f.write(state)
+    except Exception:
+        pass
 
 
 async def _execute_tool(tool_name: str, args: dict) -> dict:
-    """Execute a single tool via daemon HTTP /tool endpoint."""
+    """Execute a tool via daemon HTTP /tool endpoint."""
     import aiohttp
     try:
         async with aiohttp.ClientSession() as session:
@@ -75,20 +70,6 @@ async def _execute_tool(tool_name: str, args: dict) -> dict:
     except Exception as e:
         logger.error("Tool execution failed (%s): %s", tool_name, e)
         return {"success": False, "error": str(e)}
-
-
-async def _post_transcript(role: str, text: str):
-    """Post a transcript entry to the daemon for sidebar display."""
-    import aiohttp
-    try:
-        async with aiohttp.ClientSession() as session:
-            await session.post(
-                "http://localhost:8420/transcript",
-                json={"role": role, "text": text},
-                timeout=aiohttp.ClientTimeout(total=5),
-            )
-    except Exception:
-        pass  # Non-critical
 
 
 def _get_gemini_api_key(settings) -> str:
@@ -105,26 +86,49 @@ def _get_gemini_api_key(settings) -> str:
 # Gemini Live mode
 # ─────────────────────────────────────────────────────────────
 
-STATE_FILE = "/tmp/marlow-voice-state"
-TEXT_FILE = "/tmp/marlow-voice-text"
+
+async def _wait_for_trigger() -> bool:
+    """Block until sidebar writes 'press' to trigger file.
+
+    Returns True when activation is requested.
+    """
+    while True:
+        try:
+            if os.path.exists(TRIGGER_FILE):
+                with open(TRIGGER_FILE) as f:
+                    state = f.read().strip()
+                if state == "press":
+                    os.unlink(TRIGGER_FILE)
+                    return True
+                elif state == "release":
+                    os.unlink(TRIGGER_FILE)
+        except Exception:
+            pass
+        await asyncio.sleep(0.2)
 
 
-def _set_voice_state(state: str):
-    """Write voice state for other processes (daemon, sidebar)."""
-    try:
-        with open(STATE_FILE, "w") as f:
-            f.write(state)
-    except Exception:
-        pass
+async def _watch_for_stop(bridge) -> None:
+    """Watch for mic-off signal from sidebar."""
+    # Wait for session to become active (set inside run_session)
+    while not bridge.is_active:
+        await asyncio.sleep(0.1)
+    while bridge.is_active:
+        try:
+            if os.path.exists(TRIGGER_FILE):
+                with open(TRIGGER_FILE) as f:
+                    if f.read().strip() == "release":
+                        os.unlink(TRIGGER_FILE)
+                        bridge.stop()
+                        logger.info("Session stopped by user")
+                        return
+        except Exception:
+            pass
+        await asyncio.sleep(0.2)
 
 
 async def _run_gemini_mode(settings):
-    """Run voice daemon in Gemini Live mode.
-
-    Loop: wait for activation -> open Gemini session -> conversation -> repeat.
-    """
+    """Main loop: wait for trigger → open session → repeat."""
     from marlow.bridges.voice.gemini_live import GeminiLiveVoiceBridge
-    from marlow.platform.linux.tts import generate_clips
 
     user_name = settings.user.name or ""
     language = settings.user.language
@@ -132,271 +136,62 @@ async def _run_gemini_mode(settings):
     model = settings.gemini.model
     voice = settings.gemini.voice
 
-    generate_clips(user_name)
-
-    # Wake word disabled — mic activates ONLY via sidebar button or Super+V
-    wake_word = None
-
     logger.info(
-        "Gemini Live mode: model=%s, wake_word=%s, user=%s, lang=%s",
-        model, wake_word.model_name if wake_word else "disabled",
-        user_name, language,
+        "Gemini Live mode ready: model=%s, user=%s, lang=%s",
+        model, user_name, language,
     )
 
-    boot_time = time.monotonic()
-    running = True
-    _set_voice_state("idle")
+    _set_state("idle")
 
-    while running:
-        # Wait for activation (NO local TTS — Gemini will greet naturally)
-        activated = await _wait_for_activation_silent(
-            wake_word, boot_time,
-        )
-        if not activated:
-            continue
+    while True:
+        await _wait_for_trigger()
+        logger.info("Session opening")
 
-        # Signal "activating" so sidebar keeps button active during connect
-        _set_voice_state("activating")
-
-        # Open Gemini session
         bridge = GeminiLiveVoiceBridge(
             api_key=gemini_key,
             model=model,
             voice=voice,
             user_name=user_name,
             language=language,
-            on_transcript=_post_transcript,
         )
 
-        _set_voice_state("gemini-active")
-
-        # Monitor trigger file + text injection file
-        async def _monitor():
-            trigger = "/tmp/marlow-voice-trigger"
-            while bridge.is_active:
-                # Check mic off
-                try:
-                    if os.path.exists(trigger):
-                        with open(trigger) as f:
-                            state = f.read().strip()
-                        if state == "release":
-                            os.unlink(trigger)
-                            bridge.stop()
-                            logger.info("Session stopped by sidebar mic button")
-                            return
-                except Exception:
-                    pass
-
-                # Check text injection from sidebar
-                try:
-                    if os.path.exists(TEXT_FILE):
-                        with open(TEXT_FILE) as f:
-                            text = f.read().strip()
-                        os.unlink(TEXT_FILE)
-                        if text:
-                            logger.info("Text injection: %s", text[:60])
-                            await bridge.send_text(text)
-                except Exception:
-                    pass
-
-                await asyncio.sleep(0.1)
-
-        monitor = asyncio.create_task(_monitor())
+        _set_state("active")
+        watcher = asyncio.create_task(_watch_for_stop(bridge))
 
         try:
             await bridge.run_session(_execute_tool)
         except Exception as e:
-            logger.error("Gemini session error: %s", e)
+            logger.error("Session error: %s", e)
         finally:
-            _set_voice_state("idle")
-            monitor.cancel()
+            _set_state("idle")
+            watcher.cancel()
             try:
-                await monitor
+                await watcher
             except asyncio.CancelledError:
                 pass
-            # Clean up text file
-            try:
-                os.unlink(TEXT_FILE)
-            except FileNotFoundError:
-                pass
 
-        logger.info("Session ended, returning to wake word listening")
-
-
-# ─────────────────────────────────────────────────────────────
-# Persistent mic for wake word detection (avoids ALSA log spam)
-# ─────────────────────────────────────────────────────────────
-
-_persistent_pya = None
-_persistent_mic_stream = None
-
-
-def _get_persistent_mic(frames_per_buffer: int):
-    """Get or create a persistent PyAudio mic stream for wake word detection.
-
-    Returns the stream, or None if mic unavailable.
-    """
-    global _persistent_pya, _persistent_mic_stream
-    if _persistent_mic_stream is not None:
-        return _persistent_mic_stream
-
-    import pyaudio
-    try:
-        _persistent_pya = pyaudio.PyAudio()
-        mic_info = _persistent_pya.get_default_input_device_info()
-        _persistent_mic_stream = _persistent_pya.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=16000,
-            input=True,
-            input_device_index=int(mic_info["index"]),
-            frames_per_buffer=frames_per_buffer,
-        )
-        logger.info("Persistent mic stream opened (device=%s)", mic_info.get("name", "?"))
-        return _persistent_mic_stream
-    except Exception as e:
-        logger.warning("Failed to open persistent mic: %s", e)
-        _close_persistent_mic()
-        return None
-
-
-def _close_persistent_mic():
-    """Close persistent PyAudio mic stream."""
-    global _persistent_pya, _persistent_mic_stream
-    if _persistent_mic_stream:
-        try:
-            _persistent_mic_stream.stop_stream()
-            _persistent_mic_stream.close()
-        except Exception:
-            pass
-        _persistent_mic_stream = None
-    if _persistent_pya:
-        try:
-            _persistent_pya.terminate()
-        except Exception:
-            pass
-        _persistent_pya = None
-
-
-async def _wait_for_activation_silent(wake_word, boot_time) -> bool:
-    """Wait for activation without playing local TTS clips.
-
-    For Gemini mode: Gemini itself will greet the user once the session opens.
-    No local TTS = no voice mismatch.
-
-    Uses persistent PyAudio/mic stream (initialized on first call, closed on
-    activation or shutdown) to avoid ALSA log spam from repeated open/close.
-    """
-    import numpy as np
-
-    trigger = "/tmp/marlow-voice-trigger"
-
-    # Check trigger file first
-    if os.path.exists(trigger):
-        try:
-            with open(trigger) as f:
-                state = f.read().strip()
-            if state == "press":
-                os.unlink(trigger)
-                # Close persistent mic before Gemini session opens its own
-                _close_persistent_mic()
-                return True
-            elif state == "release":
-                os.unlink(trigger)
-        except Exception:
-            pass
-
-    # Grace period (10s after boot)
-    if time.monotonic() - boot_time < 10:
-        await asyncio.sleep(0.1)
-        return False
-
-    # Wake word detection (persistent mic — no ALSA spam)
-    if wake_word and wake_word.available:
-        from marlow.platform.linux.wake_word import WAKEWORD_CHUNK_SAMPLES
-
-        stream = _get_persistent_mic(WAKEWORD_CHUNK_SAMPLES)
-        if stream is None:
-            await asyncio.sleep(0.1)
-            return False
-
-        try:
-            loop = asyncio.get_event_loop()
-            chunk_bytes = await loop.run_in_executor(
-                None, stream.read, WAKEWORD_CHUNK_SAMPLES, False,
-            )
-            chunk = np.frombuffer(chunk_bytes, dtype=np.int16)
-
-            if wake_word.process_chunk(chunk):
-                _close_persistent_mic()
-                return True
-        except Exception:
-            # Mic error — close and retry next iteration
-            _close_persistent_mic()
-    else:
-        # No wake word — poll trigger file only
-        await asyncio.sleep(0.05)
-
-    return False
-
-
-async def _wait_for_activation(wake_word, boot_time, play_clip) -> bool:
-    """Wait for activation WITH local TTS clips (for local mode).
-
-    Uses persistent PyAudio/mic stream to avoid ALSA log spam.
-    """
-    import numpy as np
-
-    trigger = "/tmp/marlow-voice-trigger"
-
-    if os.path.exists(trigger):
-        try:
-            with open(trigger) as f:
-                state = f.read().strip()
-            if state == "press":
-                os.unlink(trigger)
-                _close_persistent_mic()
-                await play_clip("en_que_te_ayudo")
-                return True
-            elif state == "release":
-                os.unlink(trigger)
-        except Exception:
-            pass
-
-    if time.monotonic() - boot_time < 10:
-        await asyncio.sleep(0.1)
-        return False
-
-    if wake_word and wake_word.available:
-        from marlow.platform.linux.wake_word import WAKEWORD_CHUNK_SAMPLES
-
-        stream = _get_persistent_mic(WAKEWORD_CHUNK_SAMPLES)
-        if stream is None:
-            await asyncio.sleep(0.1)
-            return False
-
-        try:
-            loop = asyncio.get_event_loop()
-            chunk_bytes = await loop.run_in_executor(
-                None, stream.read, WAKEWORD_CHUNK_SAMPLES, False,
-            )
-            chunk = np.frombuffer(chunk_bytes, dtype=np.int16)
-
-            if wake_word.process_chunk(chunk):
-                _close_persistent_mic()
-                await play_clip("si")
-                return True
-        except Exception:
-            _close_persistent_mic()
-    else:
-        await asyncio.sleep(0.05)
-
-    return False
+        logger.info("Session closed")
 
 
 # ─────────────────────────────────────────────────────────────
 # Local mode (fallback — existing whisper + Piper pipeline)
 # ─────────────────────────────────────────────────────────────
+
+async def _send_goal(text: str, channel: str = "voice") -> dict:
+    """Send goal to daemon via HTTP."""
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as session:
+            resp = await session.post(
+                "http://localhost:8420/goal",
+                json={"goal": text, "channel": channel},
+                timeout=aiohttp.ClientTimeout(total=120),
+            )
+            return await resp.json()
+    except Exception as e:
+        logger.error("Goal request failed: %s", e)
+        return {"success": False, "errors": [str(e)]}
+
 
 async def _run_local_mode(settings):
     """Run voice daemon in local mode (whisper + Piper)."""
@@ -442,15 +237,13 @@ async def run_voice_daemon():
     engine = settings.voice.engine
     gemini_key = _get_gemini_api_key(settings)
 
-    # Engine selection
     use_gemini = False
     if engine == "gemini-live":
         use_gemini = bool(gemini_key)
         if not gemini_key:
-            logger.warning("gemini-live requested but no API key found, falling back to local")
+            logger.warning("gemini-live requested but no API key, falling back to local")
     elif engine == "auto":
         use_gemini = bool(gemini_key)
-    # engine == "local" -> use_gemini stays False
 
     user_name = settings.user.name or "(not set)"
     mode = "gemini-live" if use_gemini else "local"

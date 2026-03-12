@@ -1,8 +1,8 @@
 """Marlow sidebar — GTK4 + WebKit6 chat window.
 
 Always-visible sidebar on the right side of the screen. Shows chat
-history, text input, mic toggle, and visual state indicator.
-Connects to the daemon via WebSocket for real-time updates.
+history, text input, and mic toggle for Gemini Live voice sessions.
+Connects to the daemon via HTTP for text goals.
 
 Usage:
     python3 ~/marlow/marlow/bridges/sidebar/app.py
@@ -12,21 +12,17 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
 import signal
 import sys
 import threading
-import time
 from pathlib import Path
 
 import gi
 
 # IMPORTANT: Gtk4LayerShell MUST be imported BEFORE Gtk4.
-# It hooks into libwayland during library load; if Gtk loads first,
-# the Wayland connection is already established and layer-shell fails.
 try:
     gi.require_version("Gtk4LayerShell", "1.0")
     from gi.repository import Gtk4LayerShell
@@ -91,15 +87,9 @@ body {
     transition: background 0.3s;
 }
 #status-dot.idle { background: #666; }
-#status-dot.listening { background: #4dabf7; animation: pulse 1.5s infinite; }
 #status-dot.processing { background: #ffc107; }
 #status-dot.responding { background: #51cf66; }
 #status-dot.error { background: #ff6b6b; }
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-}
 
 #header-title {
     font-size: 15px;
@@ -124,7 +114,6 @@ body {
 }
 #mic-btn:hover { background: #3a3a5a; }
 #mic-btn.active { background: #4dabf7; color: white; }
-#mic-btn.activating { background: #4dabf7; color: white; animation: pulse 1s infinite; }
 
 #messages {
     flex: 1;
@@ -275,25 +264,14 @@ function sendMessage() {
     if (!text) return;
     input.value = '';
     addMessage(text, 'user');
-    // Notify Python via title change (simple bridge)
     document.title = 'MSG:' + text;
 }
 
 function toggleMic() {
     const btn = document.getElementById('mic-btn');
-    const isActive = btn.classList.contains('active') || btn.classList.contains('activating');
+    const isActive = btn.classList.contains('active');
+    btn.classList.toggle('active');
     document.title = 'MIC:' + (isActive ? 'off' : 'on');
-    // Optimistic: show activating immediately on click-on, remove on click-off
-    btn.classList.remove('active', 'activating');
-    if (!isActive) btn.classList.add('activating');
-}
-
-function updateMicState(state) {
-    // state: 'active', 'activating', or 'inactive'
-    const btn = document.getElementById('mic-btn');
-    btn.classList.remove('active', 'activating');
-    if (state === 'active') btn.classList.add('active');
-    else if (state === 'activating') btn.classList.add('activating');
 }
 
 addSystemMessage('Marlow listo');
@@ -313,9 +291,7 @@ class MarlowSidebar(Gtk.Application):
         super().__init__(application_id="com.marlow.sidebar")
         self._webview = None
         self._window = None
-        self._daemon_poller = None
         self._last_status = "idle"
-        self._last_transcript_time = 0.0
 
     def do_activate(self):
         # Create window
@@ -334,7 +310,7 @@ class MarlowSidebar(Gtk.Application):
             Gtk4LayerShell.set_exclusive_zone(self._window, SIDEBAR_WIDTH)
             Gtk4LayerShell.set_margin(self._window, Gtk4LayerShell.Edge.TOP, 0)
             Gtk4LayerShell.set_keyboard_mode(self._window, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
-            logger.info("Sidebar using layer-shell (anchored right, %dpx, keyboard=on_demand)", SIDEBAR_WIDTH)
+            logger.info("Sidebar using layer-shell (anchored right, %dpx)", SIDEBAR_WIDTH)
         else:
             logger.warning("gtk4-layer-shell not available, sidebar will be a regular window")
 
@@ -355,9 +331,8 @@ class MarlowSidebar(Gtk.Application):
         self._window.set_child(self._webview)
         self._window.present()
 
-        # Start polling daemon status + voice transcripts
+        # Poll daemon status for the general state indicator
         GLib.timeout_add(2000, self._poll_daemon_status)
-        GLib.timeout_add(1500, self._poll_transcripts)
 
     def _on_title_change(self, webview, pspec):
         """Handle messages from JavaScript via title changes."""
@@ -389,7 +364,6 @@ class MarlowSidebar(Gtk.Application):
         except Exception as e:
             logger.error("Onboarding error: %s", e)
 
-        # When done, switch to normal chat mode
         if event_type == "done":
             self._onboarding_mode = False
             self._webview.load_html(CHAT_HTML, "file:///")
@@ -411,7 +385,6 @@ class MarlowSidebar(Gtk.Application):
                     summary = result.get("result_summary", "")
                     status = result.get("status", "unknown")
 
-                    # Prefer 'response' field (LLM-formatted)
                     response_text = result.get("response", "")
                     if not response_text:
                         if success and summary:
@@ -431,18 +404,13 @@ class MarlowSidebar(Gtk.Application):
                 )
 
         threading.Thread(target=_do, daemon=True).start()
-
-        # Show processing state
         self._run_js("setStatus('processing')")
 
     def _toggle_mic(self, state: str):
-        """Toggle mic via trigger file, with state validation."""
+        """Toggle mic via trigger file — simple on/off."""
         trigger = "/tmp/marlow-voice-trigger"
         try:
             if state == "on":
-                voice_state = self._read_voice_state()
-                if voice_state in ("gemini-active", "activating"):
-                    return  # Already active or connecting
                 with open(trigger, "w") as f:
                     f.write("press")
             else:
@@ -451,21 +419,12 @@ class MarlowSidebar(Gtk.Application):
         except Exception as e:
             logger.warning("Mic toggle failed: %s", e)
 
-    @staticmethod
-    def _read_voice_state() -> str:
-        """Read current voice daemon state from state file."""
-        try:
-            with open("/tmp/marlow-voice-state") as f:
-                return f.read().strip()
-        except FileNotFoundError:
-            return "idle"
-
     def _add_marlow_message(self, text: str):
         """Add a Marlow response message (called from GLib main thread)."""
         safe_text = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
         self._run_js(f"addMessage('{safe_text}', 'marlow')")
         self._run_js("setStatus('idle')")
-        return False  # Don't repeat GLib.idle_add
+        return False
 
     def _poll_daemon_status(self) -> bool:
         """Poll daemon /status every 2s to update state indicator."""
@@ -486,78 +445,10 @@ class MarlowSidebar(Gtk.Application):
                         css_state = state_map.get(state, "idle")
                         GLib.idle_add(self._run_js, f"setStatus('{css_state}')")
             except Exception:
-                pass  # Daemon not running — don't spam errors
-
-        threading.Thread(target=_do, daemon=True).start()
-        self._check_voice_liveness()
-        voice_state = self._read_voice_state()
-        if voice_state == "gemini-active":
-            mic_js_state = "active"
-        elif voice_state == "activating":
-            mic_js_state = "activating"
-        else:
-            mic_js_state = "inactive"
-        self._run_js(f"updateMicState('{mic_js_state}')")
-        return True  # Continue polling
-
-    def _poll_transcripts(self) -> bool:
-        """Poll daemon /transcripts for voice conversation updates."""
-        since = self._last_transcript_time
-
-        def _do():
-            import urllib.request
-            try:
-                url = f"{DAEMON_URL}/transcripts?since={since}"
-                with urllib.request.urlopen(url, timeout=3) as resp:
-                    data = json.loads(resp.read())
-                    transcripts = data.get("transcripts", [])
-                    for t in transcripts:
-                        role = t.get("role", "user")
-                        text = t.get("text", "")
-                        ts = t.get("time", 0)
-                        if ts > self._last_transcript_time:
-                            self._last_transcript_time = ts
-                        if text:
-                            css_role = "marlow" if role == "marlow" else "user"
-                            GLib.idle_add(
-                                self._add_voice_transcript, text, css_role,
-                            )
-            except Exception:
                 pass
 
         threading.Thread(target=_do, daemon=True).start()
         return True  # Continue polling
-
-    def _add_voice_transcript(self, text: str, role: str):
-        """Add a voice transcript message to the chat (via voice channel tag)."""
-        safe = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-        self._run_js(f"addMessage('{safe}', '{role}', 'voice')")
-        return False
-
-    def _check_voice_liveness(self):
-        """Detect dead voice daemon: if state is gemini-active but stale, reset."""
-        state_file = "/tmp/marlow-voice-state"
-        trigger_file = "/tmp/marlow-voice-trigger"
-        try:
-            if not os.path.exists(state_file):
-                return
-            mtime = os.path.getmtime(state_file)
-            with open(state_file) as f:
-                state = f.read().strip()
-            if state in ("gemini-active", "activating") and (time.time() - mtime) > 60:
-                logger.warning("Voice daemon appears dead (stale state), resetting")
-                with open(state_file, "w") as f:
-                    f.write("idle")
-                try:
-                    os.unlink(trigger_file)
-                except FileNotFoundError:
-                    pass
-                GLib.idle_add(
-                    self._run_js,
-                    "document.getElementById('mic-btn').classList.remove('active')",
-                )
-        except Exception:
-            pass
 
     def _run_js(self, js: str):
         """Execute JavaScript in the webview."""
