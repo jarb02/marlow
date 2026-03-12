@@ -38,6 +38,8 @@ TOOL_TRUST_LEVELS: dict[str, int] = {
     "system_info": TRUST_OBSERVE,
     "get_ui_tree": TRUST_OBSERVE,
     "find_elements": TRUST_OBSERVE,
+    "get_element_properties": TRUST_OBSERVE,
+    "get_text": TRUST_OBSERVE,
     "get_shadow_windows": TRUST_OBSERVE,
     "get_voice_hotkey_status": TRUST_OBSERVE,
     "ocr_region": TRUST_OBSERVE,

@@ -223,6 +223,20 @@ class GeminiLiveVoiceBridge:
             self._stop_audio.clear()
 
             try:
+                # Inject dynamic context once at session start
+                if self._context_builder:
+                    try:
+                        ctx = self._context_builder()
+                        if ctx:
+                            from marlow.kernel.adapters import inject_context_gemini_live
+                            turns = inject_context_gemini_live(ctx)
+                            await session.send_client_content(
+                                turns=turns, turn_complete=True,
+                            )
+                            logger.debug("Initial context injected at session start")
+                    except Exception as e:
+                        logger.debug("Initial context injection error: %s", e)
+
                 await self._stream_audio(session, tool_executor)
             except asyncio.CancelledError:
                 logger.info("Gemini session cancelled")
@@ -446,19 +460,6 @@ class GeminiLiveVoiceBridge:
     async def _handle_tool_calls(self, session, tool_call, tool_executor: Callable):
         """Execute function calls and return results to Gemini."""
         from google.genai import types
-
-        # Inject dynamic context before tool execution
-        if self._context_builder:
-            try:
-                ctx = self._context_builder()
-                if ctx:
-                    from marlow.kernel.adapters import inject_context_gemini_live
-                    turns = inject_context_gemini_live(ctx)
-                    await session.send_client_content(
-                        turns=turns, turn_complete=True,
-                    )
-            except Exception as e:
-                logger.debug("Context injection error: %s", e)
 
         function_responses = []
         for fc in tool_call.function_calls:

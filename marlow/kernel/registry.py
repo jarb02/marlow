@@ -319,7 +319,6 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     "get_element_properties": {
         "description": "Get detailed properties for a specific element by tree path. Returns role, name, states, bounds, interfaces, actions, text, value.",
         "category": "accessibility",
-        "kernel_registered": False,
         "params": {
             "path": {
                 "type": "string",
@@ -337,7 +336,6 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     "do_action": {
         "description": "Execute an action on an element via the AT-SPI2 Action interface. Common actions: 'click', 'activate', 'press', 'toggle'.",
         "category": "accessibility",
-        "kernel_registered": False,
         "params": {
             "path": {
                 "type": "string",
@@ -359,7 +357,6 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     "get_text": {
         "description": "Get text content from an element via the AT-SPI2 Text interface.",
         "category": "accessibility",
-        "kernel_registered": False,
         "params": {
             "path": {
                 "type": "string",
