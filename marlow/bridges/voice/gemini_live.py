@@ -154,6 +154,13 @@ class GeminiLiveVoiceBridge:
                 logger.error("Gemini session error: %s", e)
             finally:
                 self._is_active = False
+                self._stop_audio.set()
+                # Ensure WebSocket is closed (session will exit context manager,
+                # but close explicitly first for immediate cleanup)
+                try:
+                    await asyncio.wait_for(session.close(), timeout=3.0)
+                except Exception:
+                    pass
                 self._session = None
                 # Drain playback queue
                 while not self._audio_out_queue.empty():
@@ -207,11 +214,26 @@ class GeminiLiveVoiceBridge:
                     break
 
         async def receive_responses():
-            """Receive audio + function calls from Gemini."""
+            """Receive audio + function calls from Gemini.
+
+            Uses anext() with timeout instead of bare async-for so that
+            stop() / session.close() can unblock the iterator promptly.
+            """
             while self._is_active:
                 try:
                     turn = session.receive()
-                    async for response in turn:
+                    turn_iter = turn.__aiter__()
+                    while self._is_active:
+                        try:
+                            response = await asyncio.wait_for(
+                                turn_iter.__anext__(), timeout=2.0,
+                            )
+                        except asyncio.TimeoutError:
+                            # Re-check _is_active on timeout
+                            continue
+                        except StopAsyncIteration:
+                            break
+
                         if not self._is_active:
                             break
 
@@ -301,7 +323,14 @@ class GeminiLiveVoiceBridge:
             self._stop_audio.set()
             for t in pending:
                 t.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+            # Timeout: don't wait forever for tasks to finish
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*pending, return_exceptions=True),
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Audio tasks did not finish within 5s, forcing cleanup")
         finally:
             # Wait for mic reader thread to exit before closing stream
             await asyncio.sleep(0.2)
@@ -404,10 +433,41 @@ class GeminiLiveVoiceBridge:
             logger.error("Send text error: %s", e)
             return False
 
-    def stop(self):
-        """Signal the session to end."""
+    async def stop_async(self):
+        """Signal the session to end and close the WebSocket."""
         self._is_active = False
         self._stop_audio.set()
+        session = self._session
+        if session:
+            try:
+                await session.close()
+            except Exception:
+                pass
+
+    def stop(self):
+        """Signal the session to end (sync wrapper).
+
+        Closes the WebSocket to unblock receive_responses().
+        """
+        self._is_active = False
+        self._stop_audio.set()
+        session = self._session
+        if session:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self._close_session(session))
+                else:
+                    loop.run_until_complete(self._close_session(session))
+            except Exception:
+                pass
+
+    async def _close_session(self, session):
+        """Close session with timeout."""
+        try:
+            await asyncio.wait_for(session.close(), timeout=3.0)
+        except Exception:
+            pass
 
     @property
     def is_active(self) -> bool:

@@ -27,6 +27,10 @@ logger = logging.getLogger("marlow.voice_daemon")
 def _cleanup_voice_state():
     """Emergency cleanup -- runs on crash, exit, or signal."""
     try:
+        _close_persistent_mic()
+    except Exception:
+        pass
+    try:
         with open("/tmp/marlow-voice-state", "w") as f:
             f.write("idle")
     except Exception:
@@ -159,6 +163,9 @@ async def _run_gemini_mode(settings):
         if not activated:
             continue
 
+        # Signal "activating" so sidebar keeps button active during connect
+        _set_voice_state("activating")
+
         # Open Gemini session
         bridge = GeminiLiveVoiceBridge(
             api_key=gemini_key,
@@ -224,11 +231,69 @@ async def _run_gemini_mode(settings):
         logger.info("Session ended, returning to wake word listening")
 
 
+# ─────────────────────────────────────────────────────────────
+# Persistent mic for wake word detection (avoids ALSA log spam)
+# ─────────────────────────────────────────────────────────────
+
+_persistent_pya = None
+_persistent_mic_stream = None
+
+
+def _get_persistent_mic(frames_per_buffer: int):
+    """Get or create a persistent PyAudio mic stream for wake word detection.
+
+    Returns the stream, or None if mic unavailable.
+    """
+    global _persistent_pya, _persistent_mic_stream
+    if _persistent_mic_stream is not None:
+        return _persistent_mic_stream
+
+    import pyaudio
+    try:
+        _persistent_pya = pyaudio.PyAudio()
+        mic_info = _persistent_pya.get_default_input_device_info()
+        _persistent_mic_stream = _persistent_pya.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=16000,
+            input=True,
+            input_device_index=int(mic_info["index"]),
+            frames_per_buffer=frames_per_buffer,
+        )
+        logger.info("Persistent mic stream opened (device=%s)", mic_info.get("name", "?"))
+        return _persistent_mic_stream
+    except Exception as e:
+        logger.warning("Failed to open persistent mic: %s", e)
+        _close_persistent_mic()
+        return None
+
+
+def _close_persistent_mic():
+    """Close persistent PyAudio mic stream."""
+    global _persistent_pya, _persistent_mic_stream
+    if _persistent_mic_stream:
+        try:
+            _persistent_mic_stream.stop_stream()
+            _persistent_mic_stream.close()
+        except Exception:
+            pass
+        _persistent_mic_stream = None
+    if _persistent_pya:
+        try:
+            _persistent_pya.terminate()
+        except Exception:
+            pass
+        _persistent_pya = None
+
+
 async def _wait_for_activation_silent(wake_word, boot_time) -> bool:
     """Wait for activation without playing local TTS clips.
 
     For Gemini mode: Gemini itself will greet the user once the session opens.
     No local TTS = no voice mismatch.
+
+    Uses persistent PyAudio/mic stream (initialized on first call, closed on
+    activation or shutdown) to avoid ALSA log spam from repeated open/close.
     """
     import numpy as np
 
@@ -241,7 +306,8 @@ async def _wait_for_activation_silent(wake_word, boot_time) -> bool:
                 state = f.read().strip()
             if state == "press":
                 os.unlink(trigger)
-                # No play_clip here — Gemini will speak first
+                # Close persistent mic before Gemini session opens its own
+                _close_persistent_mic()
                 return True
             elif state == "release":
                 os.unlink(trigger)
@@ -253,23 +319,16 @@ async def _wait_for_activation_silent(wake_word, boot_time) -> bool:
         await asyncio.sleep(0.1)
         return False
 
-    # Wake word detection
+    # Wake word detection (persistent mic — no ALSA spam)
     if wake_word and wake_word.available:
-        import pyaudio
         from marlow.platform.linux.wake_word import WAKEWORD_CHUNK_SAMPLES
 
-        pya = pyaudio.PyAudio()
-        try:
-            mic_info = pya.get_default_input_device_info()
-            stream = pya.open(
-                format=pyaudio.paInt16,
-                channels=1,
-                rate=16000,
-                input=True,
-                input_device_index=int(mic_info["index"]),
-                frames_per_buffer=WAKEWORD_CHUNK_SAMPLES,
-            )
+        stream = _get_persistent_mic(WAKEWORD_CHUNK_SAMPLES)
+        if stream is None:
+            await asyncio.sleep(0.1)
+            return False
 
+        try:
             loop = asyncio.get_event_loop()
             chunk_bytes = await loop.run_in_executor(
                 None, stream.read, WAKEWORD_CHUNK_SAMPLES, False,
@@ -277,21 +336,11 @@ async def _wait_for_activation_silent(wake_word, boot_time) -> bool:
             chunk = np.frombuffer(chunk_bytes, dtype=np.int16)
 
             if wake_word.process_chunk(chunk):
-                stream.stop_stream()
-                stream.close()
-                pya.terminate()
-                # No play_clip here — Gemini will greet
+                _close_persistent_mic()
                 return True
-
-            stream.stop_stream()
-            stream.close()
         except Exception:
-            pass
-        finally:
-            try:
-                pya.terminate()
-            except Exception:
-                pass
+            # Mic error — close and retry next iteration
+            _close_persistent_mic()
     else:
         # No wake word — poll trigger file only
         await asyncio.sleep(0.05)
@@ -300,7 +349,10 @@ async def _wait_for_activation_silent(wake_word, boot_time) -> bool:
 
 
 async def _wait_for_activation(wake_word, boot_time, play_clip) -> bool:
-    """Wait for activation WITH local TTS clips (for local mode)."""
+    """Wait for activation WITH local TTS clips (for local mode).
+
+    Uses persistent PyAudio/mic stream to avoid ALSA log spam.
+    """
     import numpy as np
 
     trigger = "/tmp/marlow-voice-trigger"
@@ -311,6 +363,7 @@ async def _wait_for_activation(wake_word, boot_time, play_clip) -> bool:
                 state = f.read().strip()
             if state == "press":
                 os.unlink(trigger)
+                _close_persistent_mic()
                 await play_clip("en_que_te_ayudo")
                 return True
             elif state == "release":
@@ -323,21 +376,14 @@ async def _wait_for_activation(wake_word, boot_time, play_clip) -> bool:
         return False
 
     if wake_word and wake_word.available:
-        import pyaudio
         from marlow.platform.linux.wake_word import WAKEWORD_CHUNK_SAMPLES
 
-        pya = pyaudio.PyAudio()
-        try:
-            mic_info = pya.get_default_input_device_info()
-            stream = pya.open(
-                format=pyaudio.paInt16,
-                channels=1,
-                rate=16000,
-                input=True,
-                input_device_index=int(mic_info["index"]),
-                frames_per_buffer=WAKEWORD_CHUNK_SAMPLES,
-            )
+        stream = _get_persistent_mic(WAKEWORD_CHUNK_SAMPLES)
+        if stream is None:
+            await asyncio.sleep(0.1)
+            return False
 
+        try:
             loop = asyncio.get_event_loop()
             chunk_bytes = await loop.run_in_executor(
                 None, stream.read, WAKEWORD_CHUNK_SAMPLES, False,
@@ -345,21 +391,11 @@ async def _wait_for_activation(wake_word, boot_time, play_clip) -> bool:
             chunk = np.frombuffer(chunk_bytes, dtype=np.int16)
 
             if wake_word.process_chunk(chunk):
-                stream.stop_stream()
-                stream.close()
-                pya.terminate()
+                _close_persistent_mic()
                 await play_clip("si")
                 return True
-
-            stream.stop_stream()
-            stream.close()
         except Exception:
-            pass
-        finally:
-            try:
-                pya.terminate()
-            except Exception:
-                pass
+            _close_persistent_mic()
     else:
         await asyncio.sleep(0.05)
 

@@ -124,6 +124,7 @@ body {
 }
 #mic-btn:hover { background: #3a3a5a; }
 #mic-btn.active { background: #4dabf7; color: white; }
+#mic-btn.activating { background: #4dabf7; color: white; animation: pulse 1s infinite; }
 
 #messages {
     flex: 1;
@@ -280,15 +281,19 @@ function sendMessage() {
 
 function toggleMic() {
     const btn = document.getElementById('mic-btn');
-    const isActive = btn.classList.contains('active');
+    const isActive = btn.classList.contains('active') || btn.classList.contains('activating');
     document.title = 'MIC:' + (isActive ? 'off' : 'on');
-    btn.classList.toggle('active');
+    // Optimistic: show activating immediately on click-on, remove on click-off
+    btn.classList.remove('active', 'activating');
+    if (!isActive) btn.classList.add('activating');
 }
 
-function updateMicState(isActive) {
+function updateMicState(state) {
+    // state: 'active', 'activating', or 'inactive'
     const btn = document.getElementById('mic-btn');
-    if (isActive) btn.classList.add('active');
-    else btn.classList.remove('active');
+    btn.classList.remove('active', 'activating');
+    if (state === 'active') btn.classList.add('active');
+    else if (state === 'activating') btn.classList.add('activating');
 }
 
 addSystemMessage('Marlow listo');
@@ -436,8 +441,8 @@ class MarlowSidebar(Gtk.Application):
         try:
             if state == "on":
                 voice_state = self._read_voice_state()
-                if voice_state == "gemini-active":
-                    return  # Already active
+                if voice_state in ("gemini-active", "activating"):
+                    return  # Already active or connecting
                 with open(trigger, "w") as f:
                     f.write("press")
             else:
@@ -485,8 +490,14 @@ class MarlowSidebar(Gtk.Application):
 
         threading.Thread(target=_do, daemon=True).start()
         self._check_voice_liveness()
-        voice_active = self._read_voice_state() == "gemini-active"
-        self._run_js(f"updateMicState({str(voice_active).lower()})")
+        voice_state = self._read_voice_state()
+        if voice_state == "gemini-active":
+            mic_js_state = "active"
+        elif voice_state == "activating":
+            mic_js_state = "activating"
+        else:
+            mic_js_state = "inactive"
+        self._run_js(f"updateMicState('{mic_js_state}')")
         return True  # Continue polling
 
     def _poll_transcripts(self) -> bool:
@@ -533,7 +544,7 @@ class MarlowSidebar(Gtk.Application):
             mtime = os.path.getmtime(state_file)
             with open(state_file) as f:
                 state = f.read().strip()
-            if state == "gemini-active" and (time.time() - mtime) > 60:
+            if state in ("gemini-active", "activating") and (time.time() - mtime) > 60:
                 logger.warning("Voice daemon appears dead (stale state), resetting")
                 with open(state_file, "w") as f:
                     f.write("idle")
