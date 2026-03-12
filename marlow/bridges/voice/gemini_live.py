@@ -40,6 +40,82 @@ from marlow.bridges.tools_schema import (
 # Gemini Live Voice Bridge
 # ─────────────────────────────────────────────────────────────
 
+
+# Max payload size for Gemini Live WebSocket function responses.
+# Larger results (screenshots, DOM dumps, etc.) crash the connection
+# with error 1007 "invalid frame payload data".
+_LIVE_MAX_RESULT_BYTES = 4096
+
+# Tools whose output is binary/large and should be replaced with a summary
+_BINARY_TOOLS = {"take_screenshot", "get_annotated_screenshot", "visual_diff",
+                 "visual_diff_compare", "cdp_screenshot", "cdp_get_dom"}
+
+
+def _compact_result_for_live(tool_name: str, result: dict) -> dict:
+    """Compact a tool result for Gemini Live WebSocket transport.
+
+    Gemini Live has strict WebSocket frame limits. Screenshots (base64 PNG)
+    and other large payloads cause error 1007. This function:
+    1. Replaces binary/large tool results with a short summary
+    2. Truncates any remaining oversized string fields
+    3. Keeps the result under _LIVE_MAX_RESULT_BYTES
+    """
+    import json
+
+    # For known binary tools, return a minimal summary
+    if tool_name in _BINARY_TOOLS:
+        compact = {"success": result.get("success", False)}
+        # Keep useful metadata
+        for key in ("window_id", "screenshot_taken", "size_bytes", "note",
+                     "error", "differences_found"):
+            if key in result:
+                compact[key] = result[key]
+        # Add guidance for the model
+        if compact.get("success") and tool_name in ("take_screenshot",
+                "get_annotated_screenshot", "cdp_screenshot"):
+            compact["note"] = (
+                "Screenshot captured successfully. "
+                "Use ocr_region to read its text content, "
+                "or describe what you found based on context."
+            )
+        return compact
+
+    # For all other tools, check total size
+    compact = {"success": result.get("success", False)}
+    for key in ("error", "pid", "output", "windows", "result", "window_id",
+                "launched", "note", "text", "count", "app_id", "title",
+                "screenshot_path", "status"):
+        if key in result:
+            val = result[key]
+            if isinstance(val, str) and len(val) > 500:
+                val = val[:500] + "..."
+            compact[key] = val
+
+    # Compact window lists
+    if "windows" in compact and isinstance(compact["windows"], list):
+        compact["windows"] = [
+            {"id": w.get("id"), "title": (w.get("title") or "")[:80],
+             "app": w.get("app_id", "")}
+            for w in compact["windows"][:20]
+        ]
+
+    # Final size check — if still too large, truncate aggressively
+    try:
+        serialized = json.dumps(compact, default=str)
+        if len(serialized) > _LIVE_MAX_RESULT_BYTES:
+            compact = {
+                "success": result.get("success", False),
+                "note": "Result too large for voice. Ask user to check screen.",
+            }
+            if result.get("error"):
+                compact["error"] = str(result["error"])[:200]
+    except Exception:
+        compact = {"success": result.get("success", False),
+                   "note": "Result could not be serialized for voice channel."}
+
+    return compact
+
+
 class GeminiLiveVoiceBridge:
     """Voice bridge using Gemini Live API for natural streaming conversation.
 
@@ -223,6 +299,8 @@ class GeminiLiveVoiceBridge:
                 try:
                     turn = session.receive()
                     turn_iter = turn.__aiter__()
+                    turn_has_tool_calls = False
+                    turn_text_parts = []  # Buffer text until we know if turn has tools
                     while self._is_active:
                         try:
                             response = await asyncio.wait_for(
@@ -232,6 +310,16 @@ class GeminiLiveVoiceBridge:
                             # Re-check _is_active on timeout
                             continue
                         except StopAsyncIteration:
+                            # Turn ended — flush text if conversational (no tool calls)
+                            if turn_text_parts and not turn_has_tool_calls and self._on_transcript:
+                                combined = " ".join(turn_text_parts)
+                                if combined.strip():
+                                    try:
+                                        await self._on_transcript("marlow", combined)
+                                    except Exception:
+                                        pass
+                            turn_has_tool_calls = False
+                            turn_text_parts = []
                             break
 
                         if not self._is_active:
@@ -250,14 +338,10 @@ class GeminiLiveVoiceBridge:
                                     self._audio_out_queue.put_nowait(
                                         part.inline_data.data,
                                     )
-                                # Text transcript from model
-                                if part.text and self._on_transcript:
-                                    try:
-                                        await self._on_transcript(
-                                            "marlow", part.text,
-                                        )
-                                    except Exception:
-                                        pass
+                                # Buffer text for end-of-turn decision
+                                # (don't emit CoT reasoning during tool-call turns)
+                                if part.text:
+                                    turn_text_parts.append(part.text)
 
                         # Interruption — clear playback queue
                         if (
@@ -269,6 +353,7 @@ class GeminiLiveVoiceBridge:
 
                         # Function calls from Gemini
                         if response.tool_call:
+                            turn_has_tool_calls = True
                             await self._handle_tool_calls(
                                 session, response.tool_call, tool_executor,
                             )
@@ -383,16 +468,19 @@ class GeminiLiveVoiceBridge:
             real_name, real_args = resolve_tool_call(fc.name, fc.args or {})
             try:
                 result = await tool_executor(real_name, real_args)
+                # Compact result for WebSocket transport (prevents 1007 errors)
+                compact = _compact_result_for_live(real_name, result)
                 function_responses.append(
                     types.FunctionResponse(
                         id=fc.id,
                         name=fc.name,
-                        response={"result": result},
+                        response={"result": compact},
                     ),
                 )
                 logger.info(
-                    "Tool result: %s -> success=%s",
+                    "Tool result: %s -> success=%s (compact %d bytes)",
                     fc.name, result.get("success", "?"),
+                    len(str(compact)),
                 )
             except Exception as e:
                 logger.error("Tool execution error: %s: %s", fc.name, e)
