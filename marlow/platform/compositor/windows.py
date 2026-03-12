@@ -119,11 +119,39 @@ class CompositorWindowManager(WindowManager):
             return None
 
     def manage_window(self, identifier: str, action: str, **kwargs) -> bool:
-        logger.warning(
-            "manage_window(%s, %s) not yet supported by Marlow Compositor IPC",
-            identifier, action,
-        )
-        return False
+        action_lower = action.lower()
+        try:
+            wid = int(identifier)
+        except ValueError:
+            # Fuzzy match by title/app_id
+            windows = self.list_windows()
+            id_lower = identifier.lower()
+            wid = None
+            for w in windows:
+                if id_lower in w.title.lower() or id_lower in w.app_name.lower():
+                    wid = int(w.identifier)
+                    break
+            if wid is None:
+                logger.warning("manage_window: window not found: %s", identifier)
+                return False
+
+        if action_lower == "close":
+            return _run_async(self._with_client(
+                lambda c, _wid=wid: c.close_window(_wid)
+            ))
+        elif action_lower == "minimize":
+            return _run_async(self._with_client(
+                lambda c, _wid=wid: c.minimize_window(_wid)
+            ))
+        elif action_lower == "maximize":
+            return _run_async(self._with_client(
+                lambda c, _wid=wid: c.maximize_window(_wid)
+            ))
+        else:
+            logger.warning(
+                "manage_window(%s, %s) unsupported action", identifier, action,
+            )
+            return False
 
     # ── Shadow Mode operations ──
 

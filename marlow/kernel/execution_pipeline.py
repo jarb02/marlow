@@ -20,6 +20,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from dataclasses import dataclass, field
@@ -248,9 +249,9 @@ class ExecutionPipeline:
                 report = self._weather.get_report()
                 if report.should_pause:
                     logger.warning(
-                        "Desktop in TORMENTA — pausing before %s", tool_name,
+                        "Desktop in TORMENTA — pausing 2s before %s", tool_name,
                     )
-                    await asyncio.sleep(min(report.recommended_delay, 10.0))
+                    await asyncio.sleep(2.0)
             except Exception as e:
                 logger.debug("DesktopWeather error: %s", e)
 
@@ -356,8 +357,11 @@ class ExecutionPipeline:
         exec_start = time.time()
         try:
             func = self._tool_map[tool_name]
-            loop = asyncio.get_event_loop()
-            raw_result = await loop.run_in_executor(None, lambda: func(**params))
+            if inspect.iscoroutinefunction(func):
+                raw_result = await func(**params)
+            else:
+                loop = asyncio.get_event_loop()
+                raw_result = await loop.run_in_executor(None, lambda: func(**params))
         except Exception as e:
             duration_ms = (time.time() - start) * 1000
             logger.error("Tool execution error (%s): %s", tool_name, e)

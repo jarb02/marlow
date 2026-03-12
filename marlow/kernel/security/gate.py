@@ -261,9 +261,18 @@ class SecurityGate:
                         sanitized_params=sanitized,
                     )
                 if decision.needs_confirmation:
-                    logger.info(
-                        "Security: %s needs confirmation (%s)",
-                        tool_name, decision.reasons,
+                    if origin == "proactive":
+                        reason = "; ".join(decision.reasons) if decision.reasons else "Requires confirmation"
+                        return SecurityResult(
+                            allowed=False,
+                            reason=f"Blocked for proactive: {tool_name} needs confirmation ({reason})",
+                            trust_level=trust,
+                            sanitized_params=sanitized,
+                            needs_confirmation=True,
+                        )
+                    logger.warning(
+                        "Security: %s needs confirmation, proceeding (origin=%s): %s",
+                        tool_name, origin, decision.reasons,
                     )
             except Exception as e:
                 logger.warning("SecurityManager error (non-blocking): %s", e)
