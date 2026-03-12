@@ -20,7 +20,6 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 import time
 from dataclasses import dataclass, field
@@ -357,11 +356,11 @@ class ExecutionPipeline:
         exec_start = time.time()
         try:
             func = self._tool_map[tool_name]
-            if inspect.iscoroutinefunction(func):
-                raw_result = await func(**params)
-            else:
-                loop = asyncio.get_event_loop()
-                raw_result = await loop.run_in_executor(None, lambda: func(**params))
+            loop = asyncio.get_event_loop()
+            raw_result = await loop.run_in_executor(None, lambda: func(**params))
+            # Lambda-wrapped async tools return a coroutine -- await it
+            if asyncio.iscoroutine(raw_result):
+                raw_result = await raw_result
         except Exception as e:
             duration_ms = (time.time() - start) * 1000
             logger.error("Tool execution error (%s): %s", tool_name, e)

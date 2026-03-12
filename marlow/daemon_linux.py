@@ -644,6 +644,9 @@ class MarlowDaemon:
             func = self._marlow._tool_map[tool_name]
             loop = asyncio.get_event_loop()
             raw = await loop.run_in_executor(None, lambda: func(**args))
+            # Lambda-wrapped async tools return a coroutine -- await it
+            if asyncio.iscoroutine(raw):
+                raw = await raw
             if isinstance(raw, dict):
                 return raw
             return {"success": True, "result": str(raw)}

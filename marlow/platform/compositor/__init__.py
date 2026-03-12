@@ -70,7 +70,11 @@ def get_platform(socket_path: str = None) -> Platform:
 
     try:
         from marlow.platform.linux.som import LinuxSoMProvider
-        som = LinuxSoMProvider()
+        _som_screen = screen_cap if "screen_cap" in dir() else CompositorScreenCapture(socket_path=socket_path)
+        som = LinuxSoMProvider(
+            ui_tree=AtSpiUITreeProvider(),
+            screen=_som_screen,
+        )
     except Exception as e:
         logger.debug("SoM provider not available: %s", e)
 

@@ -107,7 +107,10 @@ def get_platform() -> Platform:
 
     try:
         from .som import LinuxSoMProvider
-        som = LinuxSoMProvider()
+        som = LinuxSoMProvider(
+            ui_tree=AtSpiUITreeProvider(),
+            screen=screen_provider,
+        )
     except Exception as e:
         logger.debug("SoM provider not available: %s", e)
 

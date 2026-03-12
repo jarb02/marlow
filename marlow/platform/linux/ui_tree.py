@@ -251,25 +251,73 @@ def _count_nodes(tree: dict) -> int:
     return count
 
 
+
+# AT-SPI2 role aliases -- maps common names to actual AT-SPI2 role names
+_ROLE_ALIASES: dict[str, list[str]] = {
+    "text": ["entry", "text", "password text", "editable text", "paragraph"],
+    "textbox": ["entry", "text", "editable text"],
+    "input": ["entry", "text", "password text", "spin button"],
+    "button": ["push button", "toggle button", "button"],
+    "checkbox": ["check box"],
+    "dropdown": ["combo box"],
+    "menu": ["menu", "menu item", "check menu item", "radio menu item"],
+    "tab": ["page tab"],
+    "list": ["list", "list item"],
+    "image": ["image", "icon"],
+    "link": ["link"],
+}
+
+
+# Common app name aliases for AT-SPI2 matching
+_APP_ALIASES: dict[str, list[str]] = {
+    "firefox": ["firefox", "mozilla firefox"],
+    "chrome": ["chrome", "google chrome", "google-chrome", "chromium"],
+    "foot": ["foot"],
+    "nautilus": ["nautilus", "files"],
+    "code": ["code", "visual studio code", "code-oss"],
+    "terminal": ["foot", "gnome-terminal", "konsole", "alacritty", "kitty"],
+    "telegram": ["telegram", "telegram desktop"],
+    "vlc": ["vlc", "vlc media player"],
+}
+
+
 def _find_app_node(Atspi, window_title: str):
-    """Find an application node on the AT-SPI2 desktop by window title."""
+    """Find an application node on the AT-SPI2 desktop by window title.
+
+    Search order: app name match, reverse match, alias mapping, window title.
+    """
     desktop = Atspi.get_desktop(0)
     title_lower = window_title.lower()
 
-    # First pass: check app names
+    # Collect all apps once
+    apps = []
     for i in range(desktop.get_child_count()):
         app = desktop.get_child_at_index(i)
-        if app is None:
-            continue
+        if app is not None:
+            apps.append(app)
+
+    # Pass 1: search term in app name (e.g., "Firefox" matches "Firefox")
+    for app in apps:
         app_name = (app.get_name() or "").lower()
         if title_lower in app_name:
             return app
 
-    # Second pass: check window/frame children of each app
-    for i in range(desktop.get_child_count()):
-        app = desktop.get_child_at_index(i)
-        if app is None:
-            continue
+    # Pass 2: app name in search term (e.g., "firefox" in "mozilla firefox")
+    for app in apps:
+        app_name = (app.get_name() or "").lower()
+        if app_name and app_name in title_lower:
+            return app
+
+    # Pass 3: alias mapping (e.g., "chrome" matches "Chromium")
+    for alias_key, alias_values in _APP_ALIASES.items():
+        if title_lower == alias_key or title_lower in alias_values:
+            for app in apps:
+                app_name = (app.get_name() or "").lower()
+                if any(v in app_name or app_name in v for v in alias_values):
+                    return app
+
+    # Pass 4: check window/frame children of each app
+    for app in apps:
         try:
             for j in range(app.get_child_count()):
                 win = app.get_child_at_index(j)
@@ -451,10 +499,16 @@ class AtSpiUITreeProvider(UITreeProvider):
                     matched = False
 
         if role_lower and matched:
-            if role_lower not in node_role:
-                matched = False
-            else:
+            # Check direct substring match first
+            if role_lower in node_role:
                 score = max(score, 0.5)
+            else:
+                # Check role aliases (e.g., "text" -> "entry")
+                aliases = _ROLE_ALIASES.get(role_lower)
+                if aliases and node_role in aliases:
+                    score = max(score, 0.5)
+                else:
+                    matched = False
 
         if states_set and matched:
             node_states = set(s.lower() for s in _get_states(node, Atspi))
