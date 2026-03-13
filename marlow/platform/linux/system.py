@@ -53,6 +53,8 @@ class LinuxSystemProvider(SystemProvider):
 
     def open_application(self, name_or_path: str) -> dict:
         """Launch an application by name, path, or command with arguments."""
+        if not name_or_path or not name_or_path.strip():
+            return {"success": False, "error": "No app name provided"}
         try:
             parts = name_or_path.split()
 

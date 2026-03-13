@@ -104,6 +104,8 @@ class LLMPlanner:
             )
         else:
             additional = f"User home directory: {os.path.expanduser('~')}\n"
+            if context.get("installed_apps"):
+                additional += f"{context['installed_apps']}\n"
             if context.get("app_framework"):
                 additional += f"App framework: {context['app_framework']}\n"
             if context.get("previous_goals"):

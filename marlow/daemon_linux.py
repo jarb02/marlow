@@ -663,7 +663,17 @@ class MarlowDaemon:
 
         logger.info("Delegating to GoalEngine: %s", goal_text[:80])
         try:
-            result = await self._marlow.execute(goal_text)
+            # Build context with installed apps so the planner knows
+            # which commands are available (e.g. foot, not gnome-terminal)
+            context = {}
+            if self._context_builder:
+                try:
+                    apps_ctx = self._context_builder._installed_apps_context()
+                    if apps_ctx:
+                        context["installed_apps"] = apps_ctx
+                except Exception:
+                    pass
+            result = await self._marlow.execute(goal_text, context=context)
             return {
                 "success": result.success,
                 "steps_completed": result.steps_completed,

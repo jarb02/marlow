@@ -103,6 +103,7 @@ _GEMINI_CATEGORIES = [
 _GEMINI_EXCLUDE = [
     "kill_switch", "start_ui_monitor", "stop_ui_monitor",
     "run_app_script", "run_diagnostics",
+    "move_mouse",  # not yet implemented in Marlow Compositor IPC
 ]
 
 

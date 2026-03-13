@@ -584,12 +584,8 @@ class AutonomousMarlow:
         tools["get_shadow_windows"] = (
             lambda **kw: _wrap_shadow_windows(p)
         )
-        tools["move_to_user"] = lambda **kw: p.windows.move_to_user(
-            window_id=int(kw.get("window_id", 0)),
-        )
-        tools["move_to_shadow"] = lambda **kw: p.windows.move_to_shadow(
-            window_id=int(kw.get("window_id", 0)),
-        )
+        tools["move_to_user"] = lambda **kw: _move_to_user_resolved(p, kw)
+        tools["move_to_shadow"] = lambda **kw: _move_to_shadow_resolved(p, kw)
 
         # -- Visual Diff --
         if p.visual_diff:
@@ -1322,6 +1318,71 @@ def _wrap_list_windows(p, include_minimized: bool) -> dict:
 
 
 
+def _resolve_window_id_by_title(p, title: str, space: str = "all") -> int:
+    """Resolve a window_title to a window_id by searching open windows.
+
+    Args:
+        p: Platform providers.
+        title: Window title to search for (substring match, case-insensitive).
+        space: "user", "shadow", or "all".
+
+    Returns:
+        The integer window_id, or 0 if not found.
+    """
+    title_lower = title.lower()
+
+    # Search shadow windows
+    if space in ("shadow", "all"):
+        try:
+            shadow = p.windows.get_shadow_windows()
+            for w in shadow:
+                wt = (w.title or w.app_name or "").lower()
+                wid = w.extra.get("window_id", w.identifier)
+                if title_lower in wt or wt in title_lower:
+                    return int(wid) if wid else 0
+        except Exception:
+            pass
+
+    # Search user windows
+    if space in ("user", "all"):
+        try:
+            windows = p.windows.list_windows()
+            for w in windows:
+                wt = (w.title or w.app_name or "").lower()
+                if title_lower in wt or wt in title_lower:
+                    return int(w.identifier) if w.identifier else 0
+        except Exception:
+            pass
+
+    return 0
+
+
+def _move_to_user_resolved(p, kw: dict) -> dict:
+    """Resolve window_title to window_id, then call move_to_user."""
+    wid = kw.get("window_id")
+    if not wid:
+        title = kw.get("window_title", "")
+        if not title:
+            return {"success": False, "error": "No window_title or window_id provided"}
+        wid = _resolve_window_id_by_title(p, title, space="shadow")
+        if not wid:
+            return {"success": False, "error": "Window not found in shadow: %s" % title}
+    return p.windows.move_to_user(window_id=int(wid))
+
+
+def _move_to_shadow_resolved(p, kw: dict) -> dict:
+    """Resolve window_title to window_id, then call move_to_shadow."""
+    wid = kw.get("window_id")
+    if not wid:
+        title = kw.get("window_title", "")
+        if not title:
+            return {"success": False, "error": "No window_title or window_id provided"}
+        wid = _resolve_window_id_by_title(p, title, space="user")
+        if not wid:
+            return {"success": False, "error": "Window not found: %s" % title}
+    return p.windows.move_to_shadow(window_id=int(wid))
+
+
 def _wrap_shadow_windows(p) -> dict:
     """Wrap shadow windows list into tool result format."""
     try:
@@ -1347,13 +1408,13 @@ def _wrap_shadow_windows(p) -> dict:
 def _wrap_clipboard(p, kw: dict) -> dict:
     """Wrap clipboard operations."""
     action = kw.get("action", "read")
-    if action == "read":
+    if action in ("read", "get"):
         text = p.clipboard.get_clipboard()
         return {"success": True, "text": text}
-    elif action == "write":
+    elif action in ("write", "set"):
         ok = p.clipboard.set_clipboard(kw.get("text", ""))
         return {"success": ok}
     elif action == "history":
         history = p.clipboard.get_clipboard_history()
         return {"success": True, "history": history}
-    return {"success": False, "error": f"Unknown action: {action}"}
+    return {"success": False, "error": "Unknown action: %s. Use get, set, or history." % action}
