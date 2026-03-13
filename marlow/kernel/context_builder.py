@@ -56,6 +56,8 @@ class ContextBuilder:
         # Async knowledge cache (updated periodically or on focus change)
         self._app_knowledge_cache: dict = {}
         self._knowledge_cache_app: str = ""  # which app the cache is for
+        # Installed apps cache (scanned once from .desktop files)
+        self._installed_apps: Optional[str] = None
 
     def build(self) -> str:
         """Build the dynamic context string. Safe to call every request."""
@@ -86,6 +88,10 @@ class ContextBuilder:
             sections.append(ctx)
 
         ctx = self._app_knowledge_context()
+        if ctx:
+            sections.append(ctx)
+
+        ctx = self._installed_apps_context()
         if ctx:
             sections.append(ctx)
 
@@ -331,6 +337,108 @@ class ContextBuilder:
             self._knowledge_cache_app = app_name
         except Exception as e:
             logger.debug("update_app_knowledge_cache error: %s", e)
+
+    # ── Installed apps ──
+
+    def _installed_apps_context(self) -> Optional[str]:
+        """Scan .desktop files to tell the LLM which apps are installed."""
+        if self._installed_apps is not None:
+            return self._installed_apps if self._installed_apps else None
+
+        try:
+            self._installed_apps = self._scan_desktop_files()
+            return self._installed_apps if self._installed_apps else None
+        except Exception as e:
+            logger.debug("installed_apps_context error: %s", e)
+            self._installed_apps = ""
+            return None
+
+    @staticmethod
+    def _scan_desktop_files() -> str:
+        """Parse .desktop files to build an installed apps summary.
+
+        Extracts Name, Exec, GenericName, and Categories from each .desktop
+        file. Groups by category (terminal, browser, editor, files, etc.)
+        so the LLM knows what command to run for each app type.
+        """
+        import glob
+        import configparser
+
+        apps: list[dict] = []
+
+        for desktop_file in glob.glob("/usr/share/applications/*.desktop"):
+            try:
+                cp = configparser.ConfigParser(interpolation=None)
+                cp.read(desktop_file, encoding="utf-8")
+                if not cp.has_section("Desktop Entry"):
+                    continue
+                entry = cp["Desktop Entry"]
+                if entry.get("Type") != "Application":
+                    continue
+                # Skip entries hidden or without Exec
+                if entry.get("NoDisplay", "").lower() == "true":
+                    continue
+                exec_cmd = entry.get("Exec", "")
+                if not exec_cmd:
+                    continue
+                name = entry.get("Name", "")
+                generic = entry.get("GenericName", "")
+                categories = entry.get("Categories", "")
+                if not name:
+                    continue
+                # Extract base command (strip %u, %f, etc.)
+                cmd = exec_cmd.split()[0].rsplit("/", 1)[-1]
+                apps.append({
+                    "name": name,
+                    "cmd": cmd,
+                    "generic": generic,
+                    "categories": categories.lower(),
+                })
+            except Exception:
+                continue
+
+        if not apps:
+            return ""
+
+        # Group into user-relevant categories
+        groups: dict[str, list[str]] = {
+            "Terminal": [],
+            "Browser": [],
+            "Files": [],
+            "Editor": [],
+            "Media": [],
+            "Office": [],
+            "Other": [],
+        }
+
+        for app in apps:
+            cats = app["categories"]
+            generic = app["generic"].lower()
+            entry_str = "%s (command: %s)" % (app["name"], app["cmd"])
+
+            if "terminalemulator" in cats or "terminal" in generic:
+                groups["Terminal"].append(entry_str)
+            elif "webbrowser" in cats or "browser" in generic:
+                groups["Browser"].append(entry_str)
+            elif "filemanager" in cats or "file manager" in generic:
+                groups["Files"].append(entry_str)
+            elif "texteditor" in cats or "editor" in generic:
+                groups["Editor"].append(entry_str)
+            elif any(k in cats for k in ("audio", "video", "player")):
+                groups["Media"].append(entry_str)
+            elif "office" in cats:
+                groups["Office"].append(entry_str)
+            # Skip "Other" to keep context short
+
+        lines = []
+        for category, entries in groups.items():
+            if entries:
+                lines.append("  %s: %s" % (category, ", ".join(entries[:3])))
+
+        if not lines:
+            return ""
+
+        return "Installed apps:\n%s" % "\n".join(lines)
 
     # ── EventBus integration ──
 

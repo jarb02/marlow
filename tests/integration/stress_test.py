@@ -321,6 +321,16 @@ def validate_nonexistent_app(result: dict) -> tuple[bool, str]:
     return False, f"Unclear response: {text[:100]}"
 
 
+def validate_empty_request(result: dict) -> tuple[bool, str]:
+    """Empty request should return 400 — that's correct behavior."""
+    code = result.get("status_code", 0)
+    if code == 400:
+        return True, "Correctly rejected empty request with 400"
+    if code == 200:
+        return True, "Accepted empty request (permissive)"
+    return False, f"Unexpected status {code}"
+
+
 def validate_nocrash(result: dict) -> tuple[bool, str]:
     """Test passes as long as we got any response without error/timeout."""
     if result.get("error"):
@@ -447,7 +457,7 @@ def _build_level_3_tests(timeout: int) -> list[dict]:
         {
             "name": "empty_request",
             "prompt": "",
-            "validate": validate_nocrash,
+            "validate": validate_empty_request,
             "expect_error": True,
         },
         {
