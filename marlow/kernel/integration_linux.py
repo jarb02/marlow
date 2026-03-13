@@ -1303,14 +1303,17 @@ def _wrap_list_windows(p, include_minimized: bool) -> dict:
     if isinstance(result, list):
         windows = []
         for w in result:
-            _log.info("  window: title=%r app=%r id=%s focused=%s", w.title, w.app_name, w.identifier, w.is_focused)
-            windows.append({
+            space = w.extra.get("space", "user") if hasattr(w, "extra") and w.extra else "user"
+            _log.info("  window: title=%r app=%r id=%s focused=%s space=%s", w.title, w.app_name, w.identifier, w.is_focused, space)
+            entry = {
                 "title": w.title,
                 "app_name": w.app_name,
                 "pid": w.pid,
                 "is_focused": w.is_focused,
                 "identifier": w.identifier,
-            })
+                "space": space,
+            }
+            windows.append(entry)
         return {"success": True, "windows": windows, "count": len(windows)}
     if isinstance(result, dict):
         return result

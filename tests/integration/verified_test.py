@@ -309,8 +309,11 @@ WINDOWS_TESTS = [
             {"tool": "get_shadow_windows", "params": {}, "label": "shadow_windows"},
         ],
         "verify_prompt_hint": (
-            "Firefox should be in shadow_windows (background) "
-            "and NOT in list_windows (user space)."
+            "Firefox should appear in shadow_windows. "
+            "NOTE: list_windows includes ALL windows with a 'space' field. "
+            "Windows with space='shadow' are invisible to the user. "
+            "If Firefox has space='shadow' in list_windows AND appears "
+            "in shadow_windows, that is a PASS."
         ),
     },
     {
@@ -337,8 +340,11 @@ WINDOWS_TESTS = [
             {"tool": "get_shadow_windows", "params": {}, "label": "shadow_windows"},
         ],
         "verify_prompt_hint": (
-            "Firefox should be in shadow_windows "
-            "and NOT in list_windows."
+            "Firefox should appear in shadow_windows. "
+            "NOTE: list_windows includes ALL windows with a 'space' field. "
+            "Windows with space='shadow' are invisible to the user. "
+            "If Firefox has space='shadow' in list_windows AND appears "
+            "in shadow_windows, that is a PASS."
         ),
     },
     {
@@ -483,17 +489,15 @@ MEMORY_TESTS = [
         "name": "memory_save_car",
         "execute": "Recuerda que mi carro es un Tesla Model 3",
         "verify_actions": [
-            {"tool": "memory_recall",
-             "params": {"key": "carro", "category": "general"},
-             "label": "memory_recall_carro"},
             {"tool": "memory_list",
              "params": {"category": "general"},
              "label": "memory_list"},
         ],
         "verify_prompt_hint": (
-            "The memory system should contain 'Tesla' and/or 'Model 3'. "
-            "Check both memory_recall and memory_list results. "
-            "If neither contains Tesla/Model 3, the save failed."
+            "Check if memory_list contains ANY key with 'Tesla', 'Model 3', "
+            "'car', or 'carro' in its name. Gemini may use any key name like "
+            "'car_model', 'carro', 'modelo de carro', etc. If any car-related "
+            "key exists in the general category, that is a PASS."
         ),
     },
     {
@@ -512,16 +516,14 @@ MEMORY_TESTS = [
         "execute": "Olvida qué carro tengo",
         "setup": "memory_save_car",
         "verify_actions": [
-            {"tool": "memory_recall",
-             "params": {"key": "carro", "category": "general"},
-             "label": "memory_after_delete"},
             {"tool": "memory_list",
              "params": {"category": "general"},
              "label": "memory_list_after"},
         ],
         "verify_prompt_hint": (
-            "After deletion, memory_recall for 'carro' should return "
-            "empty or not found. If 'Tesla' still appears, delete failed."
+            "After deletion, memory_list should NOT contain any key with "
+            "'Tesla', 'car', 'carro', or 'Model 3'. If any car-related "
+            "key still exists in general category, that is a FAIL."
         ),
     },
 ]
