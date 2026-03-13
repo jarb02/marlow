@@ -16,7 +16,9 @@ Options:
     --verbose           Show full responses and evidence
     --cleanup           Close windows and delete test data
     --timeout N         Timeout per test in seconds (default: 120)
-    --delay N           Seconds between tests (default: 3)
+    --wait-on-429       Wait and retry on Gemini rate limits (default: on)
+    --no-wait-on-429    Skip waiting, mark rate-limited tests as INCONCLUSIVE
+    --delay N           Seconds between tests (default: 8)
 """
 
 from __future__ import annotations
@@ -74,6 +76,21 @@ def health_check() -> bool:
         return r.json().get("status") == "ok"
     except Exception:
         return False
+
+
+def reset_chat() -> bool:
+    """Reset Gemini chat session to clear accumulated context."""
+    try:
+        r = requests.post(f"{DAEMON_URL}/reset-chat", timeout=5)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def is_rate_limited(result: dict) -> bool:
+    """Check if a daemon response indicates Gemini rate limiting."""
+    text = get_response_text(result) if isinstance(result, dict) else str(result)
+    return "saturado" in text.lower() or "rate limit" in text.lower()
 
 
 def send_goal(text: str, channel: str = "console", timeout: int = 120) -> dict:
@@ -717,6 +734,7 @@ class VerifiedTestRunner:
         self.cleanup = args.cleanup
         self.delay = args.delay
         self.timeout = args.timeout
+        self.wait_on_429 = args.wait_on_429
         self.results: list[dict] = []
         self.run_start = ts_local()
         self.run_start_utc = datetime.now(timezone.utc).isoformat()
@@ -735,6 +753,9 @@ class VerifiedTestRunner:
             run_setup(setup, self.timeout)
             print("done")
 
+        # ── Reset chat to avoid token buildup ──
+        reset_chat()
+
         # ── Phase 1: Execute ──
         log_start = ts_local()
         time.sleep(0.1)
@@ -748,6 +769,16 @@ class VerifiedTestRunner:
             exec_result = send_goal(test["execute"], timeout=self.timeout)
 
         gemini_response = get_response_text(exec_result)
+
+        # Auto-retry on 429 rate limiting
+        if is_rate_limited(exec_result) and self.wait_on_429 and test_type not in ("concurrent", "rapid"):
+            retry_delay = 65  # Google quota resets per minute
+            print(f"429 — waiting {retry_delay}s for quota reset...", end=" ", flush=True)
+            time.sleep(retry_delay)
+            reset_chat()
+            exec_result = send_goal(test["execute"], timeout=self.timeout)
+            gemini_response = get_response_text(exec_result)
+
         elapsed_str = f"{exec_result['elapsed_ms']:.0f}ms"
 
         if exec_result.get("error"):
@@ -788,6 +819,10 @@ class VerifiedTestRunner:
             evidence["gemini_response_text"] = gemini_response
 
         # ── Phase 2b: LLM Validation ──
+        # Reset chat before validation to get a clean session
+        reset_chat()
+        time.sleep(2)
+
         print(f"    Phase 2 (Validate): ", end="", flush=True)
 
         # Build validation context
@@ -802,6 +837,18 @@ class VerifiedTestRunner:
             evidence=full_evidence,
             timeout=self.timeout,
         )
+
+        # Retry validation if rate-limited
+        if is_rate_limited(validation.get("raw_result", {})) and self.wait_on_429:
+            print("429 — waiting 65s...", end=" ", flush=True)
+            time.sleep(65)
+            reset_chat()
+            validation = validate_with_llm(
+                task=test.get("execute") or str(test.get("prompts", "")),
+                gemini_response=gemini_response,
+                evidence=full_evidence,
+                timeout=self.timeout,
+            )
 
         status = validation["status"]
         verdict = validation["verdict"]
@@ -1194,12 +1241,20 @@ def main():
         help="Close windows and delete test data after",
     )
     parser.add_argument(
-        "--delay", type=float, default=3.0,
-        help="Seconds between tests (default: 3)",
+        "--delay", type=float, default=8.0,
+        help="Seconds between tests (default: 8)",
     )
     parser.add_argument(
         "--timeout", type=int, default=120,
         help="Timeout per test in seconds (default: 120)",
+    )
+    parser.add_argument(
+        "--wait-on-429", action="store_true", default=True,
+        help="Wait and retry when Gemini rate-limited (default: True)",
+    )
+    parser.add_argument(
+        "--no-wait-on-429", dest="wait_on_429", action="store_false",
+        help="Don't wait on rate limits, mark as INCONCLUSIVE immediately",
     )
     args = parser.parse_args()
 

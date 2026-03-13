@@ -1096,6 +1096,13 @@ class MarlowDaemon:
             "gemini": self._gemini_text is not None,
         })
 
+    async def handle_reset_chat(self, request: web.Request) -> web.Response:
+        """POST /reset-chat — Reset Gemini chat session (clears conversation history)."""
+        if self._gemini_text:
+            self._gemini_text.reset_chat()
+            return web.json_response({"status": "ok", "message": "Chat session reset"})
+        return web.json_response({"status": "ok", "message": "No Gemini bridge active"})
+
     async def handle_tool(self, request: web.Request) -> web.Response:
         """POST /tool — Execute a single tool directly (for Gemini function calls)."""
         try:
@@ -1238,6 +1245,7 @@ class MarlowDaemon:
         app.router.add_get("/status", self.handle_status)
         app.router.add_post("/stop", self.handle_stop)
         app.router.add_get("/health", self.handle_health)
+        app.router.add_post("/reset-chat", self.handle_reset_chat)
         app.router.add_get("/history", self.handle_history)
         app.router.add_post("/tool", self.handle_tool)
         app.router.add_post("/transcript", self.handle_transcript)
