@@ -259,25 +259,43 @@ class GeminiTextBridge:
                 return ""
 
     def _compact_result(self, result: dict) -> dict:
-        """Compact a tool result to avoid huge payloads to Gemini."""
-        compact = {"success": result.get("success", False)}
+        """Compact a tool result to avoid huge payloads to Gemini.
 
-        # Include key fields
-        for key in ("error", "pid", "output", "windows", "result", "window_id", "launched", "note",
-                     "screenshot_path", "text"):
-            if key in result:
-                val = result[key]
-                # Truncate long strings
-                if isinstance(val, str) and len(val) > 500:
-                    val = val[:500] + "..."
-                compact[key] = val
+        Includes all keys by default, excludes only binary/internal fields.
+        Truncates long strings to keep payloads manageable.
+        """
+        # Keys to skip (binary data, internal metadata)
+        _SKIP_KEYS = {
+            "screenshot_path", "duration_ms", "origin",
+            "tool_name", "trust_level",
+        }
+        _MAX_STR = 1500  # enough for weather/scrape results
+
+        compact = {}
+        for key, val in result.items():
+            if key in _SKIP_KEYS:
+                continue
+            if isinstance(val, str) and len(val) > _MAX_STR:
+                val = val[:_MAX_STR] + "..."
+            compact[key] = val
 
         # For list_windows, keep window list compact
         if "windows" in compact and isinstance(compact["windows"], list):
             compact["windows"] = [
-                {"id": w.get("id"), "title": w.get("title", "")[:80],
-                 "app": w.get("app_id", "")}
+                {"id": w.get("id") or w.get("identifier"),
+                 "title": w.get("title", "")[:80],
+                 "app": w.get("app_id") or w.get("app_name", ""),
+                 "space": w.get("space", "")}
                 for w in compact["windows"][:20]
+            ]
+
+        # Same for shadow_windows
+        if "shadow_windows" in compact and isinstance(compact["shadow_windows"], list):
+            compact["shadow_windows"] = [
+                {"id": w.get("window_id"),
+                 "title": w.get("title", "")[:80],
+                 "app": w.get("app_name", "")}
+                for w in compact["shadow_windows"][:20]
             ]
 
         return compact

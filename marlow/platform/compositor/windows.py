@@ -54,7 +54,19 @@ class CompositorWindowManager(WindowManager):
                 return await client.list_windows()
 
             windows = _run_async(self._with_client(_list))
-            logger.info("IPC list_windows returned %d windows: %s", len(windows), windows)
+
+            # Also fetch shadow windows so tools can find them
+            try:
+                shadow = _run_async(self._with_client(
+                    lambda c: c.get_shadow_windows()
+                ))
+            except Exception:
+                shadow = []
+
+            logger.info(
+                "IPC list_windows returned %d user + %d shadow windows",
+                len(windows), len(shadow),
+            )
             result: list[WindowInfo] = []
 
             for w in windows:
@@ -73,9 +85,30 @@ class CompositorWindowManager(WindowManager):
                     extra={
                         "app_id": w.get("app_id", ""),
                         "compositor": "marlow",
-                        "space": w.get("space", "user"),
+                        "space": "user",
                     },
                 ))
+
+            for w in shadow:
+                wid = w.get("window_id", 0)
+                result.append(WindowInfo(
+                    identifier=str(wid),
+                    title=w.get("title", "(unnamed)"),
+                    app_name=w.get("app_id", f"window_{wid}"),
+                    pid=w.get("pid", 0),
+                    is_focused=False,
+                    is_visible=False,
+                    x=w.get("x", 0),
+                    y=w.get("y", 0),
+                    width=w.get("width", 0),
+                    height=w.get("height", 0),
+                    extra={
+                        "app_id": w.get("app_id", ""),
+                        "compositor": "marlow",
+                        "space": "shadow",
+                    },
+                ))
+
             return result
         except Exception as e:
             logger.error("list_windows failed: %s", e)

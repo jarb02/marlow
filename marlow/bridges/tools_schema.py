@@ -65,11 +65,13 @@ Voice session behavior:
 
 Information retrieval strategy:
 When the user asks for information (weather, searches, lookups):
-1. First try using get_ui_tree and get_text on relevant open windows.
-2. If no relevant window is open, use launch_in_shadow to open a browser.
-3. After launching in shadow, use get_ui_tree and get_text to read the content (preferred).
-4. Only use take_screenshot + ocr_region as last resort if get_text doesn't return useful content.
-5. If the user asks to see a window, use move_to_user.
+1. For simple public data (weather, exchange rates, quick facts): use run_command with curl (e.g. curl wttr.in/City, curl api.exchangerate-api.com/...) or scrape_url. These are instant and don't require a browser.
+2. If a relevant window is already open, use get_ui_tree and get_text to read its content.
+3. Only use launch_in_shadow for tasks that truly need a browser: complex searches, multi-page navigation, form filling, or pages that block simple HTTP requests.
+4. After launching in shadow, use get_ui_tree and get_text to read the content (preferred).
+5. Only use take_screenshot + ocr_region as last resort if get_text doesn't return useful content.
+6. If the user asks to see a window, use move_to_user.
+Do NOT open a browser for simple data that can be fetched with a single HTTP request.
 
 Important: Always respond with information from the actual content you retrieved. Do not fabricate information.
 
