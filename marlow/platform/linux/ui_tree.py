@@ -257,6 +257,12 @@ _ROLE_ALIASES: dict[str, list[str]] = {
     "text": ["entry", "text", "password text", "editable text", "paragraph"],
     "textbox": ["entry", "text", "editable text"],
     "input": ["entry", "text", "password text", "spin button"],
+    "text input": ["entry", "text", "password text", "editable text"],
+    "text field": ["entry", "text", "password text", "editable text"],
+    "search box": ["entry", "text", "password text", "editable text"],
+    "search field": ["entry", "text", "password text", "editable text"],
+    "text entry": ["entry", "text", "password text", "editable text"],
+    "input field": ["entry", "text", "password text", "editable text"],
     "button": ["push button", "toggle button", "button"],
     "checkbox": ["check box"],
     "dropdown": ["combo box"],
@@ -508,7 +514,25 @@ class AtSpiUITreeProvider(UITreeProvider):
                 if aliases and node_role in aliases:
                     score = max(score, 0.5)
                 else:
-                    matched = False
+                    # Word-level matching: split query into words, check each
+                    # Covers Gemini variations like "text input", "search box"
+                    words = role_lower.split()
+                    word_matched = False
+                    if len(words) > 1:
+                        for word in words:
+                            word_aliases = _ROLE_ALIASES.get(word)
+                            if word_aliases and node_role in word_aliases:
+                                score = max(score, 0.5)
+                                word_matched = True
+                                break
+                    if not word_matched:
+                        # Substring fallback: role query as part of node role
+                        if node_role in role_lower or any(
+                            w in node_role for w in words
+                        ):
+                            score = max(score, 0.3)
+                        else:
+                            matched = False
 
         if states_set and matched:
             node_states = set(s.lower() for s in _get_states(node, Atspi))

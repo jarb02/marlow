@@ -27,6 +27,13 @@ def build_system_prompt(user_name: str = "", language: str = "es", dynamic_conte
     prompt = f"""You are Marlow, a desktop AI assistant for Marlow OS (Linux).
 The user's name is {name}. Always respond to the user in {language}.
 
+CRITICAL: When the user asks you to do something, ALWAYS call the appropriate tool immediately.
+Never just say you will do something — DO it by calling tools.
+Bad: "I'll search for the weather now" (no tool call)
+Good: [call launch_in_shadow or scrape_url] then respond with the result.
+If you cannot determine which tool to use, ask the user for clarification.
+But NEVER promise action without executing it.
+
 You control the desktop through function calls. When the user asks to do something (search, open apps, manage windows, etc.), call the appropriate tool.
 
 You have access to a comprehensive set of desktop tools including:

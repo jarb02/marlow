@@ -262,7 +262,14 @@ class DesktopObserver:
         try:
             resp = await self._send_request({"type": "ListWindows"})
             if resp.get("status") == "ok":
-                windows_data = resp.get("data", {}).get("windows", [])
+                data = resp.get("data", {})
+                # Handle both formats: {"windows": [...]} and [...]
+                if isinstance(data, list):
+                    windows_data = data
+                elif isinstance(data, dict):
+                    windows_data = data.get("windows", [])
+                else:
+                    windows_data = []
                 self._windows.clear()
                 for w in windows_data:
                     wid = w.get("window_id", 0)
