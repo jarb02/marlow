@@ -67,7 +67,7 @@ class DesktopWeather:
     DIALOG_RATE_INESTABLE = 2.0    # 2+ dialogs/min = inestable
     DIALOG_RATE_TORMENTA = 4.0     # 4+ dialogs/min = tormenta
     ERROR_RATE_INESTABLE = 2.0     # 2+ errors/min = inestable
-    ERROR_RATE_TORMENTA = 5.0      # 5+ errors/min = tormenta
+    ERROR_RATE_TORMENTA = 3.0      # 3+ errors/min = tormenta
     WINDOW_CHANGE_OCUPADO = 6.0    # 6+ changes/min = ocupado
     WINDOW_CHANGE_INESTABLE = 15.0 # 15+ changes/min = inestable
     ACTIVE_WINDOWS_OCUPADO = 5     # 5+ windows = ocupado

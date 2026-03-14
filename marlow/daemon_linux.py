@@ -1397,6 +1397,16 @@ class MarlowDaemon:
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 
+        # Stop Telegram bridge
+        if self._telegram:
+            try:
+                await asyncio.wait_for(self._telegram.stop(), timeout=5.0)
+                logger.info("Telegram bridge stopped")
+            except asyncio.TimeoutError:
+                logger.warning("Telegram bridge stop timed out")
+            except Exception as e:
+                logger.warning("Telegram bridge stop error: %s", e)
+
         await runner.cleanup()
 
         # Close database connections

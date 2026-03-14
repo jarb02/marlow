@@ -126,6 +126,8 @@ async def memory_save(
     if not key or not key.strip():
         return {"error": "Key cannot be empty"}
 
+    key = key.strip().lower().replace("  ", " ")
+
     now = datetime.now().isoformat()
 
     conn = _get_conn()
@@ -211,6 +213,9 @@ async def memory_recall(
 
     / Recupera memorias almacenadas.
     """
+    if key:
+        key = key.strip().lower().replace("  ", " ")
+
     conn = _get_conn()
 
     if key and category:
@@ -350,6 +355,9 @@ async def memory_delete(
     """
     if category not in VALID_CATEGORIES:
         return {"error": f"Invalid category '{category}'. Valid: {VALID_CATEGORIES}"}
+
+    if key:
+        key = key.strip().lower().replace("  ", " ")
 
     conn = _get_conn()
     if conn:
