@@ -1,0 +1,251 @@
+{
+  "phase1": [
+    {
+      "name": "test_tool_list_home",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "entries=27 dir=True file=True keys=True",
+      "group": "list"
+    },
+    {
+      "name": "test_tool_list_hidden",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "hidden=40 visible=27",
+      "group": "list"
+    },
+    {
+      "name": "test_tool_list_max_results",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "entries=3 truncated=True",
+      "group": "list"
+    },
+    {
+      "name": "test_tool_list_nonexistent",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "Path not found: ~/nonexistent_dir_xyz_12345",
+      "group": "list"
+    },
+    {
+      "name": "test_tool_search_simple",
+      "status": "PASS",
+      "elapsed": 0.02,
+      "detail": "found=5 method=find",
+      "group": "search"
+    },
+    {
+      "name": "test_tool_search_extension",
+      "status": "PASS",
+      "elapsed": 0.04,
+      "detail": "found=1 all_py=True",
+      "group": "search"
+    },
+    {
+      "name": "test_tool_search_max_results",
+      "status": "PASS",
+      "elapsed": 0.1,
+      "detail": "results=3",
+      "group": "search"
+    },
+    {
+      "name": "test_tool_search_multiple_words",
+      "status": "PASS",
+      "elapsed": 0.03,
+      "detail": "found=9",
+      "group": "search"
+    },
+    {
+      "name": "test_tool_search_no_results",
+      "status": "PASS",
+      "elapsed": 0.11,
+      "detail": "results=0 total=0",
+      "group": "search"
+    },
+    {
+      "name": "test_tool_search_empty_query",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "Query cannot be empty",
+      "group": "search"
+    },
+    {
+      "name": "test_tool_write_and_read_basic",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "content_match=True lines=1",
+      "group": "write"
+    },
+    {
+      "name": "test_tool_write_and_read_unicode",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "lines=3",
+      "group": "write"
+    },
+    {
+      "name": "test_tool_write_special_filename",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "content=spaces work",
+      "group": "write"
+    },
+    {
+      "name": "test_tool_write_refuses_overwrite",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "File already exists: ~/marlow_test_nooverwrite.txt. Use overwrite=True to replace or append=True to add to end.",
+      "group": "write"
+    },
+    {
+      "name": "test_tool_write_append",
+      "status": "PASS",
+      "elapsed": 0.02,
+      "detail": "has_line1=True has_line2=True",
+      "group": "write"
+    },
+    {
+      "name": "test_tool_write_create_dirs",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "content=deep",
+      "group": "write"
+    },
+    {
+      "name": "test_tool_read_line_range",
+      "status": "PASS",
+      "elapsed": 0.05,
+      "detail": "has_5=True has_10=True range=[5, 10]",
+      "group": "read"
+    },
+    {
+      "name": "test_tool_edit_replace",
+      "status": "PASS",
+      "elapsed": 0.02,
+      "detail": "has_9090=True no_8080=True",
+      "group": "edit"
+    },
+    {
+      "name": "test_tool_edit_insert_after",
+      "status": "FAIL",
+      "elapsed": 0.01,
+      "detail": "lines=['']",
+      "group": "edit"
+    },
+    {
+      "name": "test_tool_edit_delete",
+      "status": "FAIL",
+      "elapsed": 0.01,
+      "detail": "lines_after=None",
+      "group": "edit"
+    },
+    {
+      "name": "test_tool_edit_multiple_ops",
+      "status": "FAIL",
+      "elapsed": 0.01,
+      "detail": "applied=None content=",
+      "group": "edit"
+    },
+    {
+      "name": "test_tool_edit_backup",
+      "status": "FAIL",
+      "elapsed": 0.01,
+      "detail": "current=False backup=False",
+      "group": "edit"
+    },
+    {
+      "name": "test_tool_edit_no_match",
+      "status": "FAIL",
+      "elapsed": 0.01,
+      "detail": "failed=None warnings=None",
+      "group": "edit"
+    },
+    {
+      "name": "test_tool_git_status_marlow",
+      "status": "FAIL",
+      "elapsed": 0.01,
+      "detail": "branch=None commit=?",
+      "group": "git"
+    },
+    {
+      "name": "test_tool_git_status_compositor",
+      "status": "PASS",
+      "elapsed": 0.06,
+      "detail": "branch=main commit=e51b759c",
+      "group": "git"
+    },
+    {
+      "name": "test_tool_git_not_a_repo",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "Not a git repository: /home/josemarlow",
+      "group": "git"
+    },
+    {
+      "name": "test_security_read_etc_shadow",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "Access denied: /etc/shadow is outside allowed directories",
+      "group": "read"
+    },
+    {
+      "name": "test_security_read_ssh_key",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "Access denied: ~/.ssh/id_rsa contains sensitive data",
+      "group": "read"
+    },
+    {
+      "name": "test_security_read_secrets",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "Access denied: ~/.config/marlow/secrets.toml contains sensitive data",
+      "group": "read"
+    },
+    {
+      "name": "test_security_read_marlow_db",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "Access denied: ~/.marlow/db/state.db contains sensitive data",
+      "group": "read"
+    },
+    {
+      "name": "test_security_write_outside_home",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "Access denied: can only write within home directory",
+      "group": "write"
+    },
+    {
+      "name": "test_security_write_marlow_config",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "Access denied: ~/.config/marlow/config.toml is a protected path",
+      "group": "write"
+    },
+    {
+      "name": "test_security_edit_etc_hosts",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "Access denied: /etc/hosts is outside allowed directories",
+      "group": "edit"
+    },
+    {
+      "name": "test_security_send_secrets_telegram",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "Access denied: ~/.config/marlow/secrets.toml contains sensitive data",
+      "group": "send"
+    },
+    {
+      "name": "test_security_send_ssh_telegram",
+      "status": "PASS",
+      "elapsed": 0.01,
+      "detail": "Access denied: ~/.ssh/id_rsa contains sensitive data",
+      "group": "send"
+    }
+  ],
+  "phase2": [],
+  "timestamp": "2026-03-14 08:48:28"
+}
