@@ -163,6 +163,7 @@ class MarlowDaemon:
         self._pattern_detector = None  # PatternDetector (behavioral analysis)
         self._proactive_engine = None  # ProactiveEngine (autonomous actions)
         self._pattern_task = None      # asyncio.Task for pattern_detector.run()
+        self._reactive_loop = None     # ReactiveGoalLoop (ReAct execution)
         self._proactive_task = None    # asyncio.Task for proactive_engine.run()
         self._approval_queue = None    # ApprovalQueue
         self._rollback = None          # RollbackExecutor
@@ -654,12 +655,49 @@ class MarlowDaemon:
             logger.error("Tool execution error (%s): %s", tool_name, e)
             return {"success": False, "error": str(e)}
 
+
+    async def _llm_generate_oneshot(self, prompt: str) -> str:
+        """One-shot LLM generation for ReactiveGoalLoop (no chat history, no tools)."""
+        if not self._gemini_text:
+            return ""
+        try:
+            from google.genai import types
+            client = self._gemini_text._client
+            model = self._gemini_text._model
+            response = await client.aio.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=2000,
+                ),
+            )
+            return response.text or ""
+        except Exception as e:
+            logger.error("One-shot LLM generation failed: %s", e)
+            return ""
+
     async def _execute_complex_goal(self, goal_text: str) -> dict:
-        """Delegate a complex goal to GoalEngine (Claude planner)."""
-        if not self._marlow:
-            return {"success": False, "error": "Agent not initialized"}
+        """Delegate a complex goal to ReactiveGoalLoop or GoalEngine."""
         if not goal_text:
             return {"success": False, "error": "No goal provided"}
+
+        # Route to ReactiveGoalLoop if available
+        if self._reactive_loop:
+            try:
+                logger.info("ReactiveGoalLoop: %s", goal_text[:80])
+                result = await self._reactive_loop.execute(goal_text, channel="console")
+                return {
+                    "success": result.get("status") == "completed",
+                    "summary": result.get("response", ""),
+                    "engine": "reactive_loop",
+                }
+            except Exception as e:
+                logger.warning("ReactiveGoalLoop failed, falling back to GoalEngine: %s", e)
+
+        # Fallback: GoalEngine
+        if not self._marlow:
+            return {"success": False, "error": "Agent not initialized"}
 
         logger.info("Delegating to GoalEngine: %s", goal_text[:80])
         try:
@@ -1292,6 +1330,25 @@ class MarlowDaemon:
 
         # Initialize Claude Sonnet fallback
         self._init_claude_fallback()
+
+        # Initialize ReactiveGoalLoop
+        try:
+            from marlow.kernel.db.react_repo import ReactSessionRepo
+            from marlow.kernel.reactive_loop import ReactiveGoalLoop
+
+            react_repo = ReactSessionRepo(
+                os.path.expanduser("~/.marlow/db/state.db"),
+            )
+            self._reactive_loop = ReactiveGoalLoop(
+                execution_pipeline=self._pipeline,
+                context_builder=self._context_builder,
+                react_repo=react_repo,
+                llm_generate=self._llm_generate_oneshot,
+            )
+            logger.info("ReactiveGoalLoop initialized")
+        except Exception as e:
+            logger.warning("ReactiveGoalLoop init failed: %s", e)
+            self._reactive_loop = None
 
         # Start database maintenance background task
         await self._start_maintenance()
