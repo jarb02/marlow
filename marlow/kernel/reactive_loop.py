@@ -256,10 +256,11 @@ class ReactiveGoalLoop:
             "You are Marlow, an AI desktop assistant. Generate a step-by-step plan.\n\n"
             f"Task: {goal_text}\n\n"
             f"Current state:\n{ctx}\n\n"
-            "Available tool categories: filesystem (search_files, list_directory, "
-            "read_file, write_file, edit_file, git_status, send_file_telegram), "
-            "window management, screenshots, accessibility, clipboard, OCR, "
-            "system commands, memory.\n\n"
+            "Available tools (use EXACT names):\n"
+            "- search_files, list_directory, read_file, write_file, edit_file, git_status, send_file_telegram\n"
+            "- run_command, open_application, system_info, clipboard\n"
+            "- memory_save, memory_recall, memory_list\n"
+            "- list_windows, focus_window, take_screenshot, ocr_region, get_ui_tree\n\n"
             "Respond ONLY with a JSON array of step descriptions. "
             "Be specific about which tools to use. Keep it to 2-8 steps.\n"
             'Example: ["Search for the file using search_files", '
@@ -332,13 +333,23 @@ class ReactiveGoalLoop:
         except Exception:
             pass
 
+        # Available tools reference
+        sections.append(
+            "[Available Tools]\n"
+            "Filesystem: search_files, list_directory, read_file, write_file, edit_file, git_status, send_file_telegram\n"
+            "System: run_command, open_application, system_info, clipboard\n"
+            "Memory: memory_save, memory_recall, memory_list, memory_delete\n"
+            "Desktop: list_windows, focus_window, manage_window, get_ui_tree, take_screenshot, ocr_region\n"
+            "IMPORTANT: Use EXACT tool names above. Do NOT prefix with category (e.g. use 'search_files' not 'filesystem.search_files')."
+        )
+
         # Instruction
         sections.append(
             "[Instruction]\n"
             "Execute the CURRENT step of the plan. Respond in JSON:\n"
             "{\n"
             '  "thought": "optional reasoning",\n'
-            '  "tool": "tool_name",\n'
+            '  "tool": "exact_tool_name_from_list_above",\n'
             '  "parameters": {...},\n'
             '  "expected_outcome": "what you expect",\n'
             '  "key_fact": "optional data to remember"\n'
