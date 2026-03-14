@@ -18,6 +18,8 @@ import time
 from datetime import datetime
 from typing import Optional
 
+from marlow.kernel.observation_router import ObservationRouter, Observation
+
 logger = logging.getLogger("marlow.kernel.reactive_loop")
 
 
@@ -47,6 +49,13 @@ class ReactiveGoalLoop:
         self.context = context_builder
         self.repo = react_repo
         self._llm_generate = llm_generate
+        self.observation_router = ObservationRouter(
+            execution_pipeline=execution_pipeline,
+        )
+
+    def set_desktop_observer(self, observer):
+        """Inject desktop observer for UI action verification."""
+        self.observation_router.observer = observer
 
     async def execute(self, goal_text: str, channel: str = "console") -> dict:
         """Execute a multi-step goal. Returns dict with response and status."""
@@ -113,8 +122,19 @@ class ReactiveGoalLoop:
                 except Exception as e:
                     result = {"error": str(e)}
 
-                # 3d. Check result
-                success = self._check_success(action, result)
+                # 3d. Observe result via ObservationRouter
+                obs_result = result if isinstance(result, dict) else {"result": str(result)}
+                observation = await self.observation_router.observe(
+                    tool_name=action.get("tool", ""),
+                    action_params=action.get("parameters", {}),
+                    result=obs_result,
+                )
+                success = observation.success
+                logger.info(
+                    "  Observation: %s | success=%s | confidence=%.1f | %s",
+                    observation.type, observation.success,
+                    observation.confidence, observation.summary[:80],
+                )
 
                 # 3e. Update session
                 if success:
@@ -129,14 +149,14 @@ class ReactiveGoalLoop:
                     session["completed_steps"].append({
                         "step": session["current_step"],
                         "description": step_desc,
-                        "result_summary": self._summarize_step(action, result),
+                        "result_summary": observation.summary or self._summarize_step(action, result),
                         "timestamp": datetime.now().isoformat(),
                     })
                     session["current_step"] += 1
 
                     # Keep last 3 observations
-                    obs = self._format_observation(result)
-                    session["observations"].append(obs)
+                    obs_text = observation.summary + "\n" + self._format_observation(observation.content)
+                    session["observations"].append(obs_text)
                     if len(session["observations"]) > 3:
                         session["observations"] = session["observations"][-3:]
 
@@ -144,7 +164,8 @@ class ReactiveGoalLoop:
                     error_info = {
                         "step": session["current_step"],
                         "tool": tool_name,
-                        "error": str(result.get("error", "unknown"))[:200],
+                        "error": observation.summary[:200],
+                        "confidence": observation.confidence,
                         "iteration": session["iteration_count"],
                         "timestamp": datetime.now().isoformat(),
                     }

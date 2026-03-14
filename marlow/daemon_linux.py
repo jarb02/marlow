@@ -1346,6 +1346,9 @@ class MarlowDaemon:
                 llm_generate=self._llm_generate_oneshot,
             )
             logger.info("ReactiveGoalLoop initialized")
+            # Connect desktop observer for UI verification
+            if self._observer:
+                self._reactive_loop.set_desktop_observer(self._observer)
         except Exception as e:
             logger.warning("ReactiveGoalLoop init failed: %s", e)
             self._reactive_loop = None
