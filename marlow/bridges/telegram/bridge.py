@@ -52,13 +52,20 @@ class TelegramBridge(BridgeBase):
 
     async def send_file(self, file_path: str, caption: str = "", **kwargs):
         chat_id = kwargs.get("chat_id", self._active_chat_id)
-        if not chat_id or not self._bot:
-            return
+        if not chat_id:
+            logger.warning("send_file: no active chat_id, cannot send %s", file_path)
+            return False
+        if not self._bot:
+            logger.warning("send_file: bot not initialized")
+            return False
         try:
             with open(file_path, "rb") as f:
                 await self._bot.send_document(chat_id, f, caption=caption)
+            logger.info("send_file: sent %s to chat %d", file_path, chat_id)
+            return True
         except Exception as e:
-            logger.error("Failed to send file: %s", e)
+            logger.error("send_file failed for %s: %s", file_path, e)
+            return False
 
     async def send_photo(self, image_bytes: bytes, caption: str = "", **kwargs):
         chat_id = kwargs.get("chat_id", self._active_chat_id)

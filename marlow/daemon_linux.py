@@ -1292,12 +1292,18 @@ class MarlowDaemon:
             )
 
         try:
-            await self._telegram.send_file(resolved, caption=caption)
-            return web.json_response({
-                "success": True,
-                "path": resolved,
-                "size_kb": size_kb,
-            })
+            sent = await self._telegram.send_file(resolved, caption=caption)
+            if sent:
+                return web.json_response({
+                    "success": True,
+                    "path": resolved,
+                    "size_kb": size_kb,
+                })
+            else:
+                return web.json_response({
+                    "success": False,
+                    "error": "Telegram delivery failed — no active chat or send error",
+                })
         except Exception as e:
             logger.error("send-file endpoint error: %s", e)
             return web.json_response(
