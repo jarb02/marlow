@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Optional
 
 from marlow.kernel.observation_router import ObservationRouter, Observation
+from marlow.kernel.error_recovery import ErrorRecoveryPolicy, RecoveryLevel
 
 logger = logging.getLogger("marlow.kernel.reactive_loop")
 
@@ -52,6 +53,7 @@ class ReactiveGoalLoop:
         self.observation_router = ObservationRouter(
             execution_pipeline=execution_pipeline,
         )
+        self.error_recovery = ErrorRecoveryPolicy(llm_generate=llm_generate)
 
     def set_desktop_observer(self, observer):
         """Inject desktop observer for UI action verification."""
@@ -61,6 +63,9 @@ class ReactiveGoalLoop:
         """Execute a multi-step goal. Returns dict with response and status."""
         session = None
         try:
+            # Reset error recovery counters
+            self.error_recovery.reset()
+
             # 1. Create session
             session = self.repo.create_session(goal_text, channel)
             logger.info(
@@ -161,28 +166,31 @@ class ReactiveGoalLoop:
                         session["observations"] = session["observations"][-3:]
 
                 else:
+                    # Error recovery via policy
                     error_info = {
                         "step": session["current_step"],
-                        "tool": tool_name,
+                        "tool": action.get("tool"),
                         "error": observation.summary[:200],
                         "confidence": observation.confidence,
                         "iteration": session["iteration_count"],
                         "timestamp": datetime.now().isoformat(),
                     }
                     session["errors"].append(error_info)
-                    logger.warning("  Step failed: %s", error_info["error"])
 
-                    # Simple retry: skip after 2 failures on same step
-                    step_errors = [
-                        e for e in session["errors"]
-                        if e["step"] == session["current_step"]
-                    ]
-                    if len(step_errors) >= 2:
-                        logger.warning(
-                            "  Too many retries on step %d, skipping",
-                            session["current_step"],
-                        )
-                        session["current_step"] += 1
+                    # Classify and handle error
+                    decision = self.error_recovery.classify(
+                        observation.content if hasattr(observation, "content") else result,
+                        session,
+                        observation,
+                    )
+                    recovered = await self.error_recovery.execute_recovery(
+                        decision, session, action, observation,
+                    )
+                    error_info["recovery"] = decision.level.value
+
+                    if not recovered:
+                        session["status"] = "failed"
+                        break
 
                 # 3f. Persist state
                 self.repo.update_session(
