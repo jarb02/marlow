@@ -115,6 +115,14 @@ class ReactiveGoalLoop:
 
                 # LLM says done (or retry also failed)
                 if action is None:
+                    # Validate: did we actually complete all plan steps?
+                    if session["current_step"] < len(session["plan"]):
+                        remaining = len(session["plan"]) - session["current_step"]
+                        logger.warning(
+                            "  LLM declared done but %d steps remain — forcing continuation",
+                            remaining,
+                        )
+                        continue  # Loop will re-prompt with uncompleted steps
                     session["status"] = "completed"
                     break
 
@@ -343,18 +351,25 @@ class ReactiveGoalLoop:
             "IMPORTANT: Use EXACT tool names above. Do NOT prefix with category (e.g. use 'search_files' not 'filesystem.search_files')."
         )
 
-        # Instruction
+        # Instruction with strict rules
         sections.append(
             "[Instruction]\n"
-            "Execute the CURRENT step of the plan. Respond in JSON:\n"
+            "Execute ONLY the CURRENT step marked with CURRENT in the plan above.\n\n"
+            "STRICT RULES:\n"
+            "- You MUST execute the CURRENT step. Do NOT skip it.\n"
+            "- You MUST use a tool call. Do NOT respond with text only.\n"
+            "- Do NOT jump ahead to later steps.\n"
+            "- Do NOT declare done unless ALL steps in the plan are marked DONE.\n"
+            "- If a step requires reading a file, you MUST call read_file. Do NOT invent or guess file contents.\n"
+            "- If the plan includes sending via Telegram, you MUST call send_file_telegram before declaring done.\n\n"
+            "Respond in JSON:\n"
             "{\n"
-            '  "thought": "optional reasoning",\n'
-            '  "tool": "exact_tool_name_from_list_above",\n'
+            '  "thought": "brief reasoning",\n'
+            '  "tool": "exact_tool_name",\n'
             '  "parameters": {...},\n'
-            '  "expected_outcome": "what you expect",\n'
             '  "key_fact": "optional data to remember"\n'
-            "}\n"
-            'If ALL steps are complete, respond: {"done": true, "summary": "brief result"}'
+            "}\n\n"
+            'ONLY if ALL steps are DONE, respond: {"done": true, "summary": "brief result"}'
         )
 
         return "\n\n".join(sections)
