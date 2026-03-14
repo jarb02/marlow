@@ -45,11 +45,13 @@ class ReactiveGoalLoop:
         context_builder,
         react_repo,
         llm_generate,
+        llm_plan=None,
     ):
         self.pipeline = execution_pipeline
         self.context = context_builder
         self.repo = react_repo
         self._llm_generate = llm_generate
+        self._llm_plan_fn = llm_plan or llm_generate
         self.observation_router = ObservationRouter(
             execution_pipeline=execution_pipeline,
         )
@@ -58,6 +60,14 @@ class ReactiveGoalLoop:
     def set_desktop_observer(self, observer):
         """Inject desktop observer for UI action verification."""
         self.observation_router.observer = observer
+
+    async def _llm_plan(self, prompt: str) -> str:
+        """Use planning LLM (Sonnet) for plan generation and summaries."""
+        try:
+            return await self._llm_plan_fn(prompt)
+        except Exception as e:
+            logger.warning("Planning LLM failed: %s, falling back to step LLM", e)
+            return await self._llm_generate(prompt)
 
     async def execute(self, goal_text: str, channel: str = "console") -> dict:
         """Execute a multi-step goal. Returns dict with response and status."""
@@ -281,7 +291,7 @@ class ReactiveGoalLoop:
             '"Use write_file to create a summary file", "Use send_file_telegram to send the file to the user"]'
         )
 
-        response = await self._llm_generate(prompt)
+        response = await self._llm_plan(prompt)
         return self._parse_json_array(response)
 
     # ── Step prompt builder ──
@@ -507,7 +517,7 @@ class ReactiveGoalLoop:
                 "Write a brief, friendly summary in Spanish. 2-3 sentences max."
             )
             try:
-                return await self._llm_generate(prompt)
+                return await self._llm_plan(prompt)
             except Exception:
                 return "Tarea completada."
 

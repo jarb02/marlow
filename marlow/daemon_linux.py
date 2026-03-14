@@ -656,6 +656,27 @@ class MarlowDaemon:
             return {"success": False, "error": str(e)}
 
 
+
+    async def _llm_generate_sonnet(self, prompt: str) -> str:
+        """One-shot Claude Sonnet for planning (better reasoning than Flash)."""
+        if not self._claude_client:
+            return await self._llm_generate_oneshot(prompt)
+        try:
+            response = await asyncio.to_thread(
+                self._claude_client.messages.create,
+                model="claude-sonnet-4-20250514",
+                max_tokens=2048,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = ""
+            for block in response.content:
+                if hasattr(block, "text"):
+                    text += block.text
+            return text or ""
+        except Exception as e:
+            logger.warning("Sonnet planning failed: %s, falling back to Gemini", e)
+            return await self._llm_generate_oneshot(prompt)
+
     async def _llm_generate_oneshot(self, prompt: str) -> str:
         """One-shot LLM generation for ReactiveGoalLoop (no chat history, no tools)."""
         if not self._gemini_text:
@@ -1415,6 +1436,7 @@ class MarlowDaemon:
                 context_builder=self._context_builder,
                 react_repo=react_repo,
                 llm_generate=self._llm_generate_oneshot,
+                llm_plan=self._llm_generate_sonnet,
             )
             logger.info("ReactiveGoalLoop initialized")
             # Connect desktop observer for UI verification
