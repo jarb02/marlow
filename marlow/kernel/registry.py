@@ -1476,6 +1476,70 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             },
         },
     },
+
+    "read_file": {
+        "description": "Read the contents of a text file. Supports partial reading by line range. Blocks binary files and sensitive paths (SSH keys, secrets). Max default size 1MB.",
+        "category": "filesystem",
+        "params": {
+            "path": {
+                "type": "string",
+                "description": "Path to the file to read. Supports ~ for home directory.",
+            },
+            "max_size_kb": {
+                "type": "integer",
+                "description": "Maximum file size in KB to read (default 1024 = 1MB).",
+                "default": 1024,
+            },
+            "encoding": {
+                "type": "string",
+                "description": "File encoding (default 'utf-8'). Try 'latin-1' if utf-8 fails.",
+                "default": "utf-8",
+            },
+            "line_start": {
+                "type": "integer",
+                "description": "First line to read (1-indexed). Omit to read from beginning.",
+                "optional": True,
+            },
+            "line_end": {
+                "type": "integer",
+                "description": "Last line to read (1-indexed). Omit to read to end.",
+                "optional": True,
+            },
+        },
+        "required": ["path"],
+    },
+
+    "write_file": {
+        "description": "Create a new text file or append to an existing one. By default refuses to overwrite existing files. Only writes within home directory. Use for notes, scripts, configs, or any text content.",
+        "category": "filesystem",
+        "params": {
+            "path": {
+                "type": "string",
+                "description": "Path for the file. Supports ~ for home directory.",
+            },
+            "content": {
+                "type": "string",
+                "description": "Text content to write to the file.",
+            },
+            "overwrite": {
+                "type": "boolean",
+                "description": "Allow overwriting existing files (default false).",
+                "default": False,
+            },
+            "create_dirs": {
+                "type": "boolean",
+                "description": "Create parent directories if they don't exist (default false).",
+                "default": False,
+            },
+            "append": {
+                "type": "boolean",
+                "description": "Append to end of file instead of replacing (default false).",
+                "default": False,
+            },
+        },
+        "required": ["path", "content"],
+    },
+
 }
 
 

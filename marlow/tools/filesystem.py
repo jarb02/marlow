@@ -316,3 +316,269 @@ def list_directory(
         "total_entries": total_entries,
         "truncated": truncated,
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# Allowed read paths outside HOME
+# ─────────────────────────────────────────────────────────────
+
+_READ_ALLOWED_OUTSIDE_HOME = ("/tmp", "/var/log")
+
+# Blocked path fragments for read and write
+_BLOCKED_READ_PATTERNS = (
+    "/.ssh/", "/.gnupg/", "/.marlow/db/",
+    "/secrets.toml", "/secret.toml",
+)
+_BLOCKED_WRITE_PATTERNS = (
+    "/.ssh/", "/.gnupg/", "/.marlow/db/",
+    "/.config/marlow/", "/secrets.toml", "/secret.toml",
+)
+
+_MAX_WRITE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+def _resolve_and_validate_read(path: str) -> tuple[str, dict | None]:
+    """Resolve path, validate for read access. Returns (resolved, error_or_None)."""
+    expanded = os.path.expanduser(path)
+    resolved = os.path.realpath(expanded)  # resolve symlinks
+    home = os.path.expanduser("~")
+
+    # Must be inside HOME or allowed dirs
+    inside_home = resolved.startswith(home + "/") or resolved == home
+    inside_allowed = any(
+        resolved.startswith(d + "/") or resolved == d
+        for d in _READ_ALLOWED_OUTSIDE_HOME
+    )
+    if not inside_home and not inside_allowed:
+        return resolved, {"error": f"Access denied: {path} is outside allowed directories"}
+
+    # Blocked patterns
+    for pattern in _BLOCKED_READ_PATTERNS:
+        if pattern in resolved:
+            return resolved, {"error": f"Access denied: {path} contains sensitive data"}
+
+    # Block files with "secret" in basename
+    basename = os.path.basename(resolved).lower()
+    if "secret" in basename and basename != "secrets":
+        return resolved, {"error": f"Access denied: {path} appears to contain secrets"}
+
+    return resolved, None
+
+
+def _resolve_and_validate_write(path: str) -> tuple[str, dict | None]:
+    """Resolve path, validate for write access. Returns (resolved, error_or_None)."""
+    expanded = os.path.expanduser(path)
+    # For write, resolve the parent (file may not exist yet)
+    parent = os.path.dirname(expanded) or "."
+    resolved_parent = os.path.realpath(parent)
+    resolved = os.path.join(resolved_parent, os.path.basename(expanded))
+    home = os.path.expanduser("~")
+
+    # Must be inside HOME
+    if not (resolved.startswith(home + "/") or resolved == home):
+        return resolved, {"error": f"Access denied: can only write within home directory"}
+
+    # Blocked patterns
+    for pattern in _BLOCKED_WRITE_PATTERNS:
+        if pattern in resolved:
+            return resolved, {"error": f"Access denied: {path} is a protected path"}
+
+    # If target is a symlink, resolve and recheck
+    if os.path.islink(expanded):
+        link_target = os.path.realpath(expanded)
+        if not link_target.startswith(home + "/"):
+            return resolved, {"error": f"Access denied: symlink points outside home directory"}
+
+    return resolved, None
+
+
+def read_file(
+    path: str,
+    max_size_kb: int = 1024,
+    encoding: str = "utf-8",
+    line_start: int | None = None,
+    line_end: int | None = None,
+) -> dict:
+    """Read the contents of a text file.
+
+    Supports partial reading by line range, encoding selection, and
+    binary file detection. Blocks sensitive paths.
+
+    Args:
+        path: Path to read. Supports ~ for home.
+        max_size_kb: Max file size in KB (default 1024 = 1MB).
+        encoding: Text encoding (default utf-8).
+        line_start: First line to read (1-indexed, inclusive).
+        line_end: Last line to read (1-indexed, inclusive).
+
+    Returns:
+        Dict with content, line count, size, or error.
+
+    / Lee el contenido de un archivo de texto.
+    """
+    if not path or not path.strip():
+        return {"error": "Path cannot be empty"}
+
+    resolved, err = _resolve_and_validate_read(path)
+    if err:
+        return err
+
+    # Check exists and is file
+    if not os.path.exists(resolved):
+        return {"error": f"File not found: {path}"}
+    if os.path.isdir(resolved):
+        return {"error": f"Path is a directory, not a file: {path}"}
+
+    # Check size
+    try:
+        size_bytes = os.path.getsize(resolved)
+    except OSError as e:
+        return {"error": f"Cannot access file: {e}"}
+
+    size_kb = round(size_bytes / 1024, 1)
+    if size_bytes > max_size_kb * 1024:
+        return {
+            "error": f"File is {size_kb}KB, exceeds limit of {max_size_kb}KB. "
+                     f"Use max_size_kb parameter to increase.",
+        }
+
+    # Binary detection
+    try:
+        with open(resolved, "rb") as f:
+            chunk = f.read(8192)
+            if b"\x00" in chunk:
+                return {"error": "File appears to be binary. read_file only supports text files."}
+    except PermissionError:
+        return {"error": f"Permission denied: {path}"}
+    except OSError as e:
+        return {"error": f"Cannot read file: {e}"}
+
+    # Read text
+    try:
+        with open(resolved, "r", encoding=encoding) as f:
+            content = f.read()
+    except UnicodeDecodeError:
+        return {"error": f"Cannot decode file with {encoding}. Try encoding='latin-1'."}
+    except PermissionError:
+        return {"error": f"Permission denied: {path}"}
+    except OSError as e:
+        return {"error": f"Cannot read file: {e}"}
+
+    lines = content.splitlines(keepends=True)
+    total_lines = len(lines)
+
+    # Line range slicing (1-indexed)
+    line_range = None
+    if line_start is not None or line_end is not None:
+        start = max(1, line_start or 1) - 1  # convert to 0-indexed
+        end = min(total_lines, line_end or total_lines)
+        content = "".join(lines[start:end])
+        line_range = [start + 1, end]
+
+    return {
+        "path": resolved,
+        "content": content,
+        "lines": total_lines,
+        "size_kb": size_kb,
+        "encoding": encoding,
+        **({"line_range": line_range} if line_range else {}),
+    }
+
+
+def write_file(
+    path: str,
+    content: str,
+    overwrite: bool = False,
+    create_dirs: bool = False,
+    append: bool = False,
+) -> dict:
+    """Create a new text file or append/overwrite an existing one.
+
+    By default refuses to overwrite existing files. Only writes
+    within the home directory. Blocks sensitive paths.
+
+    Args:
+        path: Destination path. Supports ~ for home.
+        content: Text content to write.
+        overwrite: Allow replacing existing files (default False).
+        create_dirs: Create parent dirs if needed (default False).
+        append: Append to end of file instead of replacing (default False).
+
+    Returns:
+        Dict with path, size, line count, and action taken, or error.
+
+    / Crea o escribe un archivo de texto.
+    """
+    if not path or not path.strip():
+        return {"error": "Path cannot be empty"}
+    if content is None:
+        return {"error": "Content cannot be None"}
+
+    resolved, err = _resolve_and_validate_write(path)
+    if err:
+        return err
+
+    # Content size limit
+    content_bytes = len(content.encode("utf-8"))
+    if content_bytes > _MAX_WRITE_BYTES:
+        return {
+            "error": f"Content is {round(content_bytes / 1024 / 1024, 1)}MB, "
+                     f"exceeds limit of 5MB.",
+        }
+
+    parent = os.path.dirname(resolved)
+    dirs_created = False
+
+    # Parent directory check
+    if not os.path.isdir(parent):
+        if not create_dirs:
+            return {
+                "error": f"Directory does not exist: {os.path.dirname(path)}. "
+                         f"Use create_dirs=True to create it.",
+            }
+        try:
+            os.makedirs(parent, exist_ok=True)
+            dirs_created = True
+        except PermissionError:
+            return {"error": f"Permission denied creating directories: {parent}"}
+        except OSError as e:
+            return {"error": f"Cannot create directories: {e}"}
+
+    # Existing file handling
+    file_exists = os.path.exists(resolved)
+    if file_exists and not overwrite and not append:
+        return {
+            "error": f"File already exists: {path}. "
+                     f"Use overwrite=True to replace or append=True to add to end.",
+        }
+
+    # Determine action and write mode
+    if append and file_exists:
+        action = "appended"
+        mode = "a"
+    elif file_exists:
+        action = "overwritten"
+        mode = "w"
+    else:
+        action = "created"
+        mode = "w"
+
+    try:
+        with open(resolved, mode, encoding="utf-8") as f:
+            f.write(content)
+    except PermissionError:
+        return {"error": f"Permission denied: {path}"}
+    except OSError as e:
+        return {"error": f"Cannot write file: {e}"}
+
+    # Get final size
+    final_size = os.path.getsize(resolved)
+    written_lines = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+
+    return {
+        "path": resolved,
+        "size_kb": round(final_size / 1024, 1),
+        "lines": written_lines,
+        "action": action,
+        "dirs_created": dirs_created,
+    }

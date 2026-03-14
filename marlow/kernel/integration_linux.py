@@ -790,7 +790,7 @@ class AutonomousMarlow:
 
         # -- Filesystem --
         try:
-            from marlow.tools.filesystem import search_files, list_directory
+            from marlow.tools.filesystem import search_files, list_directory, read_file, write_file
             tools["search_files"] = lambda **kw: search_files(
                 query=kw.get("query", ""),
                 path=kw.get("path"),
@@ -803,6 +803,20 @@ class AutonomousMarlow:
                 path=kw.get("path", "~"),
                 max_results=kw.get("max_results", 50),
                 show_hidden=kw.get("show_hidden", False),
+            )
+            tools["read_file"] = lambda **kw: read_file(
+                path=kw.get("path", ""),
+                max_size_kb=kw.get("max_size_kb", 1024),
+                encoding=kw.get("encoding", "utf-8"),
+                line_start=kw.get("line_start"),
+                line_end=kw.get("line_end"),
+            )
+            tools["write_file"] = lambda **kw: write_file(
+                path=kw.get("path", ""),
+                content=kw.get("content", ""),
+                overwrite=kw.get("overwrite", False),
+                create_dirs=kw.get("create_dirs", False),
+                append=kw.get("append", False),
             )
         except ImportError:
             logger.warning("filesystem module not available")
