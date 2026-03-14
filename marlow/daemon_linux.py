@@ -1125,6 +1125,82 @@ class MarlowDaemon:
             return web.json_response(result)
         return web.json_response({"success": True, "result": str(result)})
 
+
+    async def handle_send_file(self, request: web.Request) -> web.Response:
+        """POST /send-file — Send a file to the active Telegram chat."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        file_path = body.get("path", "")
+        caption = body.get("caption", "")
+
+        if not file_path:
+            return web.json_response(
+                {"success": False, "error": "Missing 'path' field"}, status=400,
+            )
+
+        # Expand and validate path
+        expanded = os.path.expanduser(file_path)
+        resolved = os.path.realpath(expanded)
+        home = os.path.expanduser("~")
+
+        # Security: must be inside HOME or /tmp
+        inside_home = resolved.startswith(home + "/") or resolved == home
+        inside_tmp = resolved.startswith("/tmp/") or resolved == "/tmp"
+        if not inside_home and not inside_tmp:
+            return web.json_response(
+                {"success": False, "error": "Access denied: path is outside allowed directories"},
+            )
+
+        # Block sensitive paths
+        for pattern in ("/.ssh/", "/.gnupg/", "/.marlow/db/", "/secrets.toml", "/secret.toml"):
+            if pattern in resolved:
+                return web.json_response(
+                    {"success": False, "error": "Access denied: sensitive file"},
+                )
+
+        if not os.path.exists(resolved):
+            return web.json_response(
+                {"success": False, "error": f"File not found: {file_path}"},
+            )
+        if not os.path.isfile(resolved):
+            return web.json_response(
+                {"success": False, "error": f"Not a file: {file_path}"},
+            )
+
+        # Size check: 50MB Telegram limit
+        size_bytes = os.path.getsize(resolved)
+        size_kb = round(size_bytes / 1024, 1)
+        if size_bytes > 50 * 1024 * 1024:
+            return web.json_response(
+                {"success": False, "error": f"File too large ({size_kb}KB). Telegram limit is 50MB."},
+            )
+
+        # Check Telegram bridge
+        if not self._telegram:
+            return web.json_response(
+                {"success": False, "error": "Telegram bridge not active"},
+            )
+        if not self._telegram._active_chat_id:
+            return web.json_response(
+                {"success": False, "error": "No active Telegram chat. Send a message to the bot first."},
+            )
+
+        try:
+            await self._telegram.send_file(resolved, caption=caption)
+            return web.json_response({
+                "success": True,
+                "path": resolved,
+                "size_kb": size_kb,
+            })
+        except Exception as e:
+            logger.error("send-file endpoint error: %s", e)
+            return web.json_response(
+                {"success": False, "error": f"Failed to send file: {e}"},
+            )
+
     async def handle_transcript(self, request: web.Request) -> web.Response:
         """POST /transcript — Add a voice conversation transcript entry."""
         try:
@@ -1248,6 +1324,7 @@ class MarlowDaemon:
         app.router.add_post("/reset-chat", self.handle_reset_chat)
         app.router.add_get("/history", self.handle_history)
         app.router.add_post("/tool", self.handle_tool)
+        app.router.add_post("/send-file", self.handle_send_file)
         app.router.add_post("/transcript", self.handle_transcript)
         app.router.add_get("/transcripts", self.handle_get_transcripts)
         app.router.add_get("/ws", self.handle_ws)

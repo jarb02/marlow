@@ -790,7 +790,7 @@ class AutonomousMarlow:
 
         # -- Filesystem --
         try:
-            from marlow.tools.filesystem import search_files, list_directory, read_file, write_file, edit_file, git_status
+            from marlow.tools.filesystem import search_files, list_directory, read_file, write_file, edit_file, git_status, send_file_telegram
             tools["search_files"] = lambda **kw: search_files(
                 query=kw.get("query", ""),
                 path=kw.get("path"),
@@ -825,6 +825,10 @@ class AutonomousMarlow:
             )
             tools["git_status"] = lambda **kw: git_status(
                 path=kw.get("path"),
+            )
+            tools["send_file_telegram"] = lambda **kw: send_file_telegram(
+                path=kw.get("path", ""),
+                caption=kw.get("caption"),
             )
         except ImportError:
             logger.warning("filesystem module not available")

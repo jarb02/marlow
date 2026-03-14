@@ -1573,6 +1573,24 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
 
+    "send_file_telegram": {
+        "description": "Send a file to the user via Telegram bot. The file is sent as a document attachment to the active Telegram chat. Max file size 50MB. Only files within home directory allowed.",
+        "category": "filesystem",
+        "params": {
+            "path": {
+                "type": "string",
+                "description": "Path to the file to send. Supports ~ for home directory.",
+            },
+            "caption": {
+                "type": "string",
+                "description": "Optional caption/message to include with the file.",
+                "optional": True,
+            },
+        },
+        "required": ["path"],
+    },
+
+
 
 }
 

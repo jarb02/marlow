@@ -939,3 +939,80 @@ def git_status(path: str | None = None) -> dict:
         result["warnings"] = warnings
 
     return result
+
+
+
+_DAEMON_URL = "http://localhost:8420"
+_SEND_FILE_MAX_BYTES = 50 * 1024 * 1024  # 50 MB (Telegram limit)
+
+
+def send_file_telegram(
+    path: str,
+    caption: str | None = None,
+) -> dict:
+    """Send a file to the user via the Telegram bot.
+
+    The file is sent as a document attachment to the active Telegram chat.
+    Requires the Marlow daemon to be running and Telegram bridge active.
+
+    Args:
+        path: Path to the file to send. Supports ~.
+        caption: Optional caption/message to include with the file.
+
+    Returns:
+        Dict with success status, path, and size.
+
+    / Envia un archivo al usuario via el bot de Telegram.
+    """
+    import json
+    import urllib.request
+    import urllib.error
+
+    if not path or not path.strip():
+        return {"error": "Path cannot be empty"}
+
+    # Validate path using existing security helper
+    resolved, err = _resolve_and_validate_read(path)
+    if err:
+        return err
+
+    if not os.path.exists(resolved):
+        return {"error": f"File not found: {path}"}
+    if not os.path.isfile(resolved):
+        return {"error": f"Not a file: {path}"}
+
+    # Size check
+    size_bytes = os.path.getsize(resolved)
+    if size_bytes > _SEND_FILE_MAX_BYTES:
+        size_mb = round(size_bytes / 1024 / 1024, 1)
+        return {"error": f"File too large ({size_mb}MB). Telegram limit is 50MB."}
+
+    # POST to daemon endpoint
+    payload = {"path": resolved}
+    if caption:
+        payload["caption"] = caption
+
+    try:
+        req = urllib.request.Request(
+            f"{_DAEMON_URL}/send-file",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+
+        if result.get("success"):
+            result["message"] = "File sent via Telegram"
+        return result
+
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode("utf-8"))
+            return {"error": body.get("error", f"HTTP {e.code}")}
+        except Exception:
+            return {"error": f"Daemon returned HTTP {e.code}"}
+    except urllib.error.URLError:
+        return {"error": "Could not connect to Marlow daemon (is it running?)"}
+    except Exception as e:
+        return {"error": f"Failed to send file: {e}"}
