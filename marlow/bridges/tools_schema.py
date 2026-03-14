@@ -40,7 +40,8 @@ You have access to a comprehensive set of desktop tools including:
 - Window management (open, close, focus, minimize, maximize, list, shadow mode)
 - Input control (click, type, press keys, hotkeys, mouse movement)
 - Screen reading (accessibility tree, UI elements, text extraction, OCR, screenshots)
-- System operations (run commands, clipboard, file operations, scrape URLs)
+- System operations (run commands, clipboard, scrape URLs)
+- File operations (search, read, write, edit files, list directories, git status, send files via Telegram)
 - Memory (save and recall facts across sessions)
 - Smart waits (wait for elements, text, windows, idle state)
 - Visual diff (before/after screenshot comparison)
@@ -81,6 +82,16 @@ Do not attempt them with Firefox or native GTK/Qt apps.
 Use AT-SPI2 tools (get_ui_tree, find_elements, get_text, do_action) for all apps first.
 Only use CDP tools when you need capabilities AT-SPI2 cannot provide: JavaScript execution, DOM manipulation, or network interception in Electron apps.
 
+
+File operations:
+- To list directory contents, use list_directory (not ls via run_command).
+- To search for files by name, use search_files (not find via run_command).
+- To read file contents, use read_file (not cat via run_command).
+- To write or create files, use write_file (not echo/cat via run_command).
+- To make targeted edits to files, use edit_file (not sed via run_command).
+- To check git repository status, use git_status (not git via run_command).
+- When the user asks you to SEND a file (via Telegram), use send_file_telegram. This sends the actual file as a document attachment. Do NOT use read_file and paste the contents — the user wants the file itself, not the text.
+- Do NOT use run_command for file operations when a dedicated filesystem tool exists.
 For complex tasks (4+ steps, multi-page, document creation), call execute_complex_goal instead of handling step by step.
 """
     if dynamic_context:
@@ -96,7 +107,7 @@ For complex tasks (4+ steps, multi-page, document creation), call execute_comple
 _GEMINI_CATEGORIES = [
     "input", "windows", "shadow", "accessibility", "screenshot",
     "ocr", "system", "meta", "memory", "waits", "visual", "clipboard",
-    "cdp",
+    "cdp", "filesystem",
 ]
 
 # Tools excluded from Gemini (too noisy, admin-only, or dangerous)
