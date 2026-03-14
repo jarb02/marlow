@@ -668,7 +668,7 @@ class MarlowDaemon:
                 model=model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    temperature=0.3,
+                    temperature=0.7,
                     max_output_tokens=4096,
                 ),
             )
@@ -896,6 +896,45 @@ class MarlowDaemon:
                 if ws in self._ws_clients:
                     self._ws_clients.remove(ws)
 
+
+    def _is_complex_goal(self, text: str) -> bool:
+        """Heuristic: detect if a goal needs ReactiveGoalLoop (bilingual ES/EN)."""
+        text_lower = text.lower()
+
+        # Pattern 1: Explicit step-by-step language (2+ phrases)
+        step_phrases = [
+            "paso por paso", "paso a paso", "primero", "luego",
+            "despues", "finalmente", "a continuacion",
+            "step by step", "first", "then", "after that",
+            "finally", "next", "afterwards",
+        ]
+        step_count = sum(1 for p in step_phrases if p in text_lower)
+        if step_count >= 2:
+            return True
+
+        # Pattern 2: Multiple action verbs (3+)
+        action_verbs = [
+            "busca", "encuentra", "lee", "leer", "crea", "crear",
+            "escribe", "escribir", "edita", "editar", "envia",
+            "enviar", "manda", "mandar", "abre", "abrir",
+            "revisa", "revisar", "lista", "listar", "mandame",
+            "buscame", "leeme", "muestra", "guarda", "guardar",
+            "elimina", "borra", "copia", "mueve",
+            "search", "find", "read", "write", "create", "send",
+            "edit", "open", "check", "list", "show", "save",
+            "delete", "remove", "copy", "move", "fetch",
+            "download", "upload", "forward",
+        ]
+        verb_count = sum(1 for v in action_verbs if v in text_lower)
+        if verb_count >= 3:
+            return True
+
+        # Pattern 3: Explicit delegation request
+        if "execute_complex_goal" in text_lower:
+            return True
+
+        return False
+
     async def _process_text(self, goal_text: str, channel: str) -> dict:
         """Process text: Gemini (3 retries) -> Claude Sonnet -> clean error.
 
@@ -903,6 +942,32 @@ class MarlowDaemon:
         Never returns raw JSON or GoalEngine output to the user.
         """
         logger.info("Processing text: '%s' (channel=%s)", goal_text[:60], channel)
+
+        # ── Pre-classify: route complex goals to ReactiveGoalLoop ──
+        if self._reactive_loop and self._is_complex_goal(goal_text):
+            try:
+                logger.info("Pre-classified as complex goal, routing to ReactiveGoalLoop")
+                result = await self._reactive_loop.execute(goal_text, channel)
+                response_text = result.get("response", "")
+                if result.get("status") in ("completed", "failed", "aborted") and response_text:
+                    self._history.append(GoalRecord(
+                        goal=goal_text, channel=channel,
+                        status=result["status"],
+                        success=result["status"] == "completed",
+                        result_summary=response_text,
+                        started_at=time.time(), finished_at=time.time(),
+                    ))
+                    return {
+                        "success": result["status"] == "completed",
+                        "status": result["status"],
+                        "goal": goal_text,
+                        "response": response_text,
+                        "result_summary": response_text,
+                        "engine": "reactive_loop",
+                    }
+                logger.warning("ReactiveGoalLoop returned empty, falling through to Gemini")
+            except Exception as e:
+                logger.warning("ReactiveGoalLoop pre-classification failed: %s, falling through", e)
 
         # ── Primary: Gemini with tools (3 attempts with backoff) ──
         if self._gemini_text:

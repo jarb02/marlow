@@ -84,8 +84,8 @@ class GeminiTextBridge:
                 self._user_name, self._language,
             ),
             tools=build_tool_declarations(),
-            temperature=0.7,
-            max_output_tokens=500,
+            temperature=1.0,
+            max_output_tokens=2048,
         )
 
         self._chat = self._client.aio.chats.create(
