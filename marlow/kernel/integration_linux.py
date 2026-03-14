@@ -788,6 +788,25 @@ class AutonomousMarlow:
         except ImportError:
             logger.warning("error_journal module not available")
 
+        # -- Filesystem --
+        try:
+            from marlow.tools.filesystem import search_files, list_directory
+            tools["search_files"] = lambda **kw: search_files(
+                query=kw.get("query", ""),
+                path=kw.get("path"),
+                scope=kw.get("scope", "home"),
+                extension=kw.get("extension"),
+                modified_after=kw.get("modified_after"),
+                max_results=kw.get("max_results", 20),
+            )
+            tools["list_directory"] = lambda **kw: list_directory(
+                path=kw.get("path", "~"),
+                max_results=kw.get("max_results", 50),
+                show_hidden=kw.get("show_hidden", False),
+            )
+        except ImportError:
+            logger.warning("filesystem module not available")
+
         # -- CDP (Chrome DevTools Protocol) --
         try:
             from marlow.core import cdp_manager

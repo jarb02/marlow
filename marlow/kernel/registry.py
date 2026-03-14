@@ -1414,6 +1414,68 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
         "required": ["url"],
     },
+    # ══════════════════════════════════════════════════════════
+    # FILESYSTEM (2 tools)
+    # ══════════════════════════════════════════════════════════
+
+    "search_files": {
+        "description": "Search for files by name with fuzzy matching. Supports partial names, multiple keywords, extension filtering, and date filtering. Use scope='system' to search entire computer, default is home directory only.",
+        "category": "filesystem",
+        "params": {
+            "query": {
+                "type": "string",
+                "description": "Search terms - partial filename, keywords, or pattern. Multiple words match files containing ALL words in any order.",
+            },
+            "path": {
+                "type": "string",
+                "description": "Specific directory to search in. Overrides scope if provided.",
+                "optional": True,
+            },
+            "scope": {
+                "type": "string",
+                "description": "Search scope: 'home' (default, ~/), or 'system' (entire computer, excludes system dirs).",
+                "default": "home",
+            },
+            "extension": {
+                "type": "string",
+                "description": "Filter by file extension, e.g. '.pdf', '.txt'.",
+                "optional": True,
+            },
+            "modified_after": {
+                "type": "string",
+                "description": "Only files modified after this date (ISO format: '2026-03-13').",
+                "optional": True,
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "Maximum results to return (default 20, max 100).",
+                "default": 20,
+            },
+        },
+        "required": ["query"],
+    },
+
+    "list_directory": {
+        "description": "List contents of a directory (files and subdirectories). Shows name, type, size, and modification date. Non-recursive (one level only).",
+        "category": "filesystem",
+        "params": {
+            "path": {
+                "type": "string",
+                "description": "Directory to list (default: home directory ~).",
+                "default": "~",
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "Maximum entries to return (default 50, max 200).",
+                "default": 50,
+            },
+            "show_hidden": {
+                "type": "boolean",
+                "description": "Include hidden files/dirs starting with '.' (default false).",
+                "default": False,
+            },
+        },
+    },
 }
 
 
