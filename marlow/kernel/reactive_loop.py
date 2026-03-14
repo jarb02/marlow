@@ -269,11 +269,16 @@ class ReactiveGoalLoop:
             "- run_command, open_application, system_info, clipboard\n"
             "- memory_save, memory_recall, memory_list\n"
             "- list_windows, focus_window, take_screenshot, ocr_region, get_ui_tree\n\n"
-            "Respond ONLY with a JSON array of step descriptions. "
-            "Be specific about which tools to use. Keep it to 2-8 steps.\n"
-            'Example: ["Search for the file using search_files", '
-            '"Read the file using read_file", '
-            '"Send it via send_file_telegram"]'
+            "RULES FOR PLAN GENERATION:\n"
+            "- Include a step for EVERY action the user requested. Do not omit any.\n"
+            "- If the user asks to send/manda/envia something via Telegram, MUST include send_file_telegram as the LAST step.\n"
+            "- If the user asks to read/lee a file, MUST include read_file BEFORE any summarization or writing.\n"
+            "- If the user asks to create/crea a file or summary, MUST include write_file.\n"
+            "- Use exact tool names from the list above.\n"
+            "- Plan should be in execution order (each step may depend on previous).\n\n"
+            "Respond ONLY with a JSON array of step descriptions. 2-8 steps.\n"
+            'Example: ["Use search_files to find filesystem.py", "Use read_file to read the file content", '
+            '"Use write_file to create a summary file", "Use send_file_telegram to send the file to the user"]'
         )
 
         response = await self._llm_generate(prompt)
