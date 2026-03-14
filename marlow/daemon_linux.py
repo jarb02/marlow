@@ -669,7 +669,7 @@ class MarlowDaemon:
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.3,
-                    max_output_tokens=2000,
+                    max_output_tokens=4096,
                 ),
             )
             return response.text or ""

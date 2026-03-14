@@ -105,7 +105,15 @@ class ReactiveGoalLoop:
                 llm_response = await self._llm_generate(prompt)
                 action = self._parse_action(llm_response)
 
-                # LLM says done
+                # If parse failed (not intentional "done"), retry once
+                if action is None and llm_response:
+                    lower = llm_response.lower()
+                    is_done = any(w in lower for w in ('"done"', "'done'", "complete", "finished"))
+                    if not is_done:
+                        logger.warning("  Parse failed, retrying with short prompt...")
+                        action = await self._retry_parse(prompt)
+
+                # LLM says done (or retry also failed)
                 if action is None:
                     session["status"] = "completed"
                     break
@@ -297,11 +305,12 @@ class ReactiveGoalLoop:
             )
             sections.append(f"[Completed]\n{summaries}")
 
-        # Last observation (full)
+        # Last observation (truncated for prompt size)
         if session.get("observations"):
-            sections.append(
-                f"[Last Observation]\n{session['observations'][-1]}"
-            )
+            last_obs = session["observations"][-1]
+            if len(last_obs) > 600:
+                last_obs = last_obs[:600] + "\n... (observation truncated)"
+            sections.append(f"[Last Observation]\n{last_obs}")
 
         # Errors on current step
         step_errors = [
@@ -341,8 +350,8 @@ class ReactiveGoalLoop:
 
     # ── LLM response parsing ──
 
-    def _parse_action(self, llm_response: str) -> Optional[dict]:
-        """Parse LLM response into action dict or None if done."""
+    def _parse_action_inner(self, llm_response: str) -> Optional[dict]:
+        """Parse LLM response into action dict or None if done. No logging."""
         try:
             text = llm_response.strip()
 
@@ -358,16 +367,39 @@ class ReactiveGoalLoop:
                 return None
 
             if "tool" not in data:
-                logger.warning("LLM response missing 'tool': %s", text[:100])
                 return None
 
             return data
 
-        except (json.JSONDecodeError, IndexError, KeyError) as e:
+        except (json.JSONDecodeError, IndexError, KeyError):
+            return None
+
+    def _parse_action(self, llm_response: str) -> Optional[dict]:
+        """Parse LLM response with logging."""
+        result = self._parse_action_inner(llm_response)
+        if result is None and llm_response:
+            # Check if it was intentional "done" vs parse failure
+            lower = llm_response.lower()
+            if any(w in lower for w in ('"done"', "'done'", "complete", "finished")):
+                return None  # Intentional done
             logger.warning(
-                "Failed to parse LLM action: %s — response: %s",
-                e, llm_response[:200],
+                "Failed to parse LLM action — response: %s",
+                llm_response[:200],
             )
+        return result
+
+    async def _retry_parse(self, original_prompt: str) -> Optional[dict]:
+        """Retry when LLM response was truncated/malformed."""
+        retry_prompt = (
+            "Your previous response was truncated or malformed JSON. "
+            "Respond with ONLY a short JSON object, no explanation, no markdown:\n"
+            '{"tool": "tool_name", "parameters": {...}}\n'
+            'Or if done: {"done": true, "summary": "brief result"}'
+        )
+        try:
+            response = await self._llm_generate(retry_prompt)
+            return self._parse_action_inner(response)
+        except Exception:
             return None
 
     def _parse_json_array(self, text: str) -> list:
@@ -416,13 +448,13 @@ class ReactiveGoalLoop:
         return f"{tool}: done"
 
     def _format_observation(self, result) -> str:
-        """Format a tool result as an observation string."""
+        """Format a tool result as an observation string (max 500 chars)."""
         if isinstance(result, dict):
             text = json.dumps(result, ensure_ascii=False, default=str)
-            if len(text) > 2000:
-                text = text[:2000] + "... (truncated)"
+            if len(text) > 500:
+                text = text[:500] + "... (truncated)"
             return text
-        return str(result)[:2000]
+        return str(result)[:500]
 
     # ── Summary generation ──
 
