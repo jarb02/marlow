@@ -1,0 +1,145 @@
+{
+  "timestamp": "2026-03-14 11:13:05",
+  "results": [
+    {
+      "name": "test_chain_search_read_summarize",
+      "phase": 1,
+      "status": "PARTIAL",
+      "elapsed": 29.6,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "PARTIAL - Marlow solo leyó el archivo `filesystem.py`, pero no buscó"
+    },
+    {
+      "name": "test_chain_create_edit_verify",
+      "phase": 1,
+      "status": "PASS",
+      "elapsed": 28.4,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "PASS - El archivo `reactive_test_1.txt` existe y su contenido es `servidor puerto=8080 host=localhost`, lo que confirma que el puerto fue editado correctamente a 8080."
+    },
+    {
+      "name": "test_chain_search_multiple_read",
+      "phase": 1,
+      "status": "PARTIAL",
+      "elapsed": 41.6,
+      "engine": "reactive",
+      "steps": 2,
+      "recovery": [],
+      "detail": "PARTIAL. La evidencia real solo confirma la búsqueda de archivos `.toml`, no la lectura de"
+    },
+    {
+      "name": "test_chain_git_and_report",
+      "phase": 1,
+      "status": "PASS",
+      "elapsed": 26.2,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "PASS. El archivo contiene la información de git solicitada, incluyendo el branch 'linux-mvp' y el mensaje del último commit."
+    },
+    {
+      "name": "test_chain_list_filter_write",
+      "phase": 1,
+      "status": "FAIL",
+      "elapsed": 25.9,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "FAIL: El archivo `~/reactive_test_pylist.txt` no fue encontrado, lo que indica que la tarea de crear una lista de archivos .py no se completó."
+    },
+    {
+      "name": "test_chain_write_append_read",
+      "phase": 1,
+      "status": "FAIL",
+      "elapsed": 27.8,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "FAIL. El archivo `~/reactive_test_log.txt` debería tener 3 líneas separadas, pero la evidencia muestra que todo el contenido está en una sola línea."
+    },
+    {
+      "name": "test_recovery_file_not_found",
+      "phase": 2,
+      "status": "PASS",
+      "elapsed": 26.6,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "PASS. El archivo fue creado con el texto de recuperación y luego leído exitosamente, lo que"
+    },
+    {
+      "name": "test_recovery_security_block",
+      "phase": 2,
+      "status": "PASS",
+      "elapsed": 14.6,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "PASS. Marlow explicó correctamente que no puede leer el archivo /etc/shadow debido a su naturaleza sensible y a las restricciones de seguridad, sin intentar leerlo ni inventar su contenido."
+    },
+    {
+      "name": "test_recovery_graceful_failure",
+      "phase": 2,
+      "status": "PASS",
+      "elapsed": 21.5,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "PASS: La tarea se completó correctamente. El archivo no existe y Marlow informó correctamente que"
+    },
+    {
+      "name": "test_telegram_search_and_send",
+      "phase": 3,
+      "status": "PASS",
+      "elapsed": 24.3,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "PASS. El archivo fue encontrado y el intento de envío por Telegram se realizó, con una explicación adecuada de por qué falló, cumpliendo con los criterios."
+    },
+    {
+      "name": "test_telegram_create_and_send",
+      "phase": 3,
+      "status": "PARTIAL",
+      "elapsed": 31.5,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "PARTIAL. El archivo `~/reactive_telegram_new.txt` no fue creado, como indica el error \"File not found\". Sin embargo, se intentó enviar el"
+    },
+    {
+      "name": "test_simple_goal_not_delegated",
+      "phase": 4,
+      "status": "PASS",
+      "elapsed": 8.7,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "PASS. La tarea se completó correctamente, la respuesta de Marlow es directa y contiene la hora solicitada, coincidiendo con la evidencia."
+    },
+    {
+      "name": "test_complex_goal_delegated",
+      "phase": 4,
+      "status": "FAIL",
+      "elapsed": 23.5,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "FAIL. Marlow no proporcionó el resumen del contenido de `config.toml`, solo la introducción."
+    },
+    {
+      "name": "test_unicode_in_chain",
+      "phase": 4,
+      "status": "PASS",
+      "elapsed": 23.8,
+      "engine": "direct",
+      "steps": 0,
+      "recovery": [],
+      "detail": "PASS: El archivo fue creado con el texto exacto y los caracteres especiales se conservaron correctamente."
+    }
+  ]
+}
