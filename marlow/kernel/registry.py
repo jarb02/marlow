@@ -1540,6 +1540,40 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         "required": ["path", "content"],
     },
 
+    "edit_file": {
+        "description": "Edit a text file surgically: replace text, insert/delete lines by content match or line number. Creates backup by default. For small precise changes without rewriting the whole file.",
+        "category": "filesystem",
+        "params": {
+            "path": {
+                "type": "string",
+                "description": "Path to file to edit. Supports ~ for home directory.",
+            },
+            "edits": {
+                "type": "array",
+                "description": "List of edit operations. Each is an object with 'action' (replace/insert_after/insert_before/delete/replace_line/insert_at/delete_line), 'find' (text to match), 'replace'/'content' (new text), or 'line' (line number, 1-indexed).",
+            },
+            "create_backup": {
+                "type": "boolean",
+                "description": "Create a .bak backup before editing (default true).",
+                "default": True,
+            },
+        },
+        "required": ["path", "edits"],
+    },
+
+    "git_status": {
+        "description": "Get git repository status: current branch, staged/modified/untracked files, recent commits, and remote info. Read-only, does not modify the repo.",
+        "category": "filesystem",
+        "params": {
+            "path": {
+                "type": "string",
+                "description": "Path to git repository (default: current directory).",
+                "optional": True,
+            },
+        },
+    },
+
+
 }
 
 

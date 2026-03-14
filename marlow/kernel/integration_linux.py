@@ -790,7 +790,7 @@ class AutonomousMarlow:
 
         # -- Filesystem --
         try:
-            from marlow.tools.filesystem import search_files, list_directory, read_file, write_file
+            from marlow.tools.filesystem import search_files, list_directory, read_file, write_file, edit_file, git_status
             tools["search_files"] = lambda **kw: search_files(
                 query=kw.get("query", ""),
                 path=kw.get("path"),
@@ -817,6 +817,14 @@ class AutonomousMarlow:
                 overwrite=kw.get("overwrite", False),
                 create_dirs=kw.get("create_dirs", False),
                 append=kw.get("append", False),
+            )
+            tools["edit_file"] = lambda **kw: edit_file(
+                path=kw.get("path", ""),
+                edits=kw.get("edits", []),
+                create_backup=kw.get("create_backup", True),
+            )
+            tools["git_status"] = lambda **kw: git_status(
+                path=kw.get("path"),
             )
         except ImportError:
             logger.warning("filesystem module not available")

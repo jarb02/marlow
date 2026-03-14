@@ -582,3 +582,360 @@ def write_file(
         "action": action,
         "dirs_created": dirs_created,
     }
+
+
+
+def edit_file(
+    path: str,
+    edits: list,
+    create_backup: bool = True,
+) -> dict:
+    """Edit a text file surgically: replace, insert, or delete lines.
+
+    Each edit in the list is a dict with an 'action' key:
+      replace       - find text, replace with new text
+      insert_after  - insert content after the line containing find
+      insert_before - insert content before the line containing find
+      delete        - delete the line containing find
+      replace_line  - replace line N (1-indexed)
+      insert_at     - insert content at line N (1-indexed)
+      delete_line   - delete line N (1-indexed)
+
+    Args:
+        path: Path to file to edit. Supports ~.
+        edits: List of edit operation dicts.
+        create_backup: Create a .bak before editing (default True).
+
+    Returns:
+        Dict with edit results, warnings, and backup info.
+
+    / Edicion quirurgica de archivos de texto.
+    """
+    if not path or not path.strip():
+        return {"error": "Path cannot be empty"}
+    if not edits or not isinstance(edits, list):
+        return {"error": "edits must be a non-empty list"}
+
+    resolved, err = _resolve_and_validate_read(path)
+    if err:
+        return err
+
+    # Also validate write access (same path)
+    _, werr = _resolve_and_validate_write(path)
+    if werr:
+        return werr
+
+    if not os.path.exists(resolved):
+        return {"error": f"File not found: {path}"}
+    if os.path.isdir(resolved):
+        return {"error": f"Path is a directory: {path}"}
+
+    # Read current content
+    try:
+        with open(resolved, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except PermissionError:
+        return {"error": f"Permission denied: {path}"}
+    except UnicodeDecodeError:
+        return {"error": f"Cannot decode file as UTF-8"}
+    except OSError as e:
+        return {"error": f"Cannot read file: {e}"}
+
+    lines_before = len(lines)
+
+    # Create backup
+    backup_path = None
+    if create_backup:
+        backup_path = resolved + ".bak"
+        try:
+            with open(backup_path, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+        except OSError as e:
+            logger.warning("Could not create backup: %s", e)
+            backup_path = None
+
+    applied = 0
+    failed = 0
+    warnings = []
+
+    for i, edit in enumerate(edits):
+        if not isinstance(edit, dict):
+            warnings.append(f"Edit {i+1}: not a dict, skipped")
+            failed += 1
+            continue
+
+        action = edit.get("action", "")
+
+        if action == "replace":
+            find = edit.get("find", "")
+            replace = edit.get("replace", "")
+            if not find:
+                warnings.append(f"Edit {i+1}: replace requires 'find'")
+                failed += 1
+                continue
+            matched = False
+            match_count = 0
+            for j, line in enumerate(lines):
+                if find in line:
+                    match_count += 1
+                    if not matched:
+                        lines[j] = line.replace(find, replace, 1)
+                        matched = True
+            if not matched:
+                warnings.append(f"Edit {i+1}: '{find}' not found")
+                failed += 1
+            else:
+                applied += 1
+                if match_count > 1:
+                    warnings.append(f"Edit {i+1}: '{find}' found {match_count} times, applied to first only")
+
+        elif action == "insert_after":
+            find = edit.get("find", "")
+            content = edit.get("content", "")
+            if not find:
+                warnings.append(f"Edit {i+1}: insert_after requires 'find'")
+                failed += 1
+                continue
+            matched = False
+            for j, line in enumerate(lines):
+                if find in line:
+                    new_line = content if content.endswith("\n") else content + "\n"
+                    lines.insert(j + 1, new_line)
+                    matched = True
+                    break
+            if not matched:
+                warnings.append(f"Edit {i+1}: '{find}' not found for insert_after")
+                failed += 1
+            else:
+                applied += 1
+
+        elif action == "insert_before":
+            find = edit.get("find", "")
+            content = edit.get("content", "")
+            if not find:
+                warnings.append(f"Edit {i+1}: insert_before requires 'find'")
+                failed += 1
+                continue
+            matched = False
+            for j, line in enumerate(lines):
+                if find in line:
+                    new_line = content if content.endswith("\n") else content + "\n"
+                    lines.insert(j, new_line)
+                    matched = True
+                    break
+            if not matched:
+                warnings.append(f"Edit {i+1}: '{find}' not found for insert_before")
+                failed += 1
+            else:
+                applied += 1
+
+        elif action == "delete":
+            find = edit.get("find", "")
+            if not find:
+                warnings.append(f"Edit {i+1}: delete requires 'find'")
+                failed += 1
+                continue
+            matched = False
+            for j, line in enumerate(lines):
+                if find in line:
+                    lines.pop(j)
+                    matched = True
+                    break
+            if not matched:
+                warnings.append(f"Edit {i+1}: '{find}' not found for delete")
+                failed += 1
+            else:
+                applied += 1
+
+        elif action == "replace_line":
+            line_num = edit.get("line")
+            content = edit.get("content", "")
+            if line_num is None or not isinstance(line_num, int):
+                warnings.append(f"Edit {i+1}: replace_line requires integer 'line'")
+                failed += 1
+                continue
+            idx = line_num - 1
+            if idx < 0 or idx >= len(lines):
+                warnings.append(f"Edit {i+1}: line {line_num} out of range (1-{len(lines)})")
+                failed += 1
+                continue
+            new_line = content if content.endswith("\n") else content + "\n"
+            lines[idx] = new_line
+            applied += 1
+
+        elif action == "insert_at":
+            line_num = edit.get("line")
+            content = edit.get("content", "")
+            if line_num is None or not isinstance(line_num, int):
+                warnings.append(f"Edit {i+1}: insert_at requires integer 'line'")
+                failed += 1
+                continue
+            idx = max(0, min(line_num - 1, len(lines)))
+            new_line = content if content.endswith("\n") else content + "\n"
+            lines.insert(idx, new_line)
+            applied += 1
+
+        elif action == "delete_line":
+            line_num = edit.get("line")
+            if line_num is None or not isinstance(line_num, int):
+                warnings.append(f"Edit {i+1}: delete_line requires integer 'line'")
+                failed += 1
+                continue
+            idx = line_num - 1
+            if idx < 0 or idx >= len(lines):
+                warnings.append(f"Edit {i+1}: line {line_num} out of range (1-{len(lines)})")
+                failed += 1
+                continue
+            lines.pop(idx)
+            applied += 1
+
+        else:
+            warnings.append(f"Edit {i+1}: unknown action '{action}'")
+            failed += 1
+
+    # Write edited file
+    try:
+        with open(resolved, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+    except PermissionError:
+        return {"error": f"Permission denied writing: {path}"}
+    except OSError as e:
+        return {"error": f"Cannot write file: {e}"}
+
+    result = {
+        "path": resolved,
+        "edits_applied": applied,
+        "edits_failed": failed,
+        "lines_before": lines_before,
+        "lines_after": len(lines),
+    }
+    if warnings:
+        result["warnings"] = warnings
+    if backup_path:
+        result["backup"] = backup_path
+
+    return result
+
+
+def git_status(path: str | None = None) -> dict:
+    """Get git repository status: branch, changes, commits, remotes.
+
+    Read-only — does not modify the repository.
+
+    Args:
+        path: Path to git repo (default: current directory).
+
+    Returns:
+        Dict with branch, status, commits, remotes, ahead/behind.
+
+    / Estado del repositorio git: branch, cambios, commits, remotes.
+    """
+    if path:
+        repo_dir = os.path.expanduser(path)
+        if not os.path.isdir(repo_dir):
+            return {"error": f"Directory not found: {path}"}
+    else:
+        repo_dir = os.getcwd()
+
+    def _run(cmd: list[str]) -> tuple[str, bool]:
+        """Run a git command, return (stdout, success)."""
+        try:
+            r = subprocess.run(
+                cmd, cwd=repo_dir, capture_output=True, text=True, timeout=10,
+            )
+            return r.stdout.strip(), r.returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            return "", False
+
+    # Verify it's a git repo
+    _, is_git = _run(["git", "rev-parse", "--git-dir"])
+    if not is_git:
+        return {"error": f"Not a git repository: {repo_dir}"}
+
+    warnings = []
+
+    # Branch
+    branch_out, ok = _run(["git", "branch", "--show-current"])
+    branch = branch_out if ok else "unknown"
+
+    # Status --porcelain
+    status_out, ok = _run(["git", "status", "--porcelain"])
+    staged = []
+    modified = []
+    untracked = []
+    if ok and status_out:
+        for line in status_out.splitlines():
+            if len(line) < 3:
+                continue
+            x, y = line[0], line[1]
+            fname = line[3:]
+            if x == "?":
+                untracked.append(fname)
+            elif x in "MADRC":
+                staged.append(fname)
+            if y in "MD":
+                modified.append(fname)
+
+    clean = not staged and not modified and not untracked
+
+    # Last commit
+    last_commit_out, ok = _run(["git", "log", "-1", "--format=%H|%s|%ar"])
+    last_commit = {}
+    if ok and last_commit_out:
+        parts = last_commit_out.split("|", 2)
+        if len(parts) == 3:
+            last_commit = {"hash": parts[0][:12], "message": parts[1], "when": parts[2]}
+
+    # Recent commits
+    recent_out, ok = _run(["git", "log", "-5", "--format=%h|%s|%ar"])
+    recent_commits = []
+    if ok and recent_out:
+        for line in recent_out.splitlines():
+            parts = line.split("|", 2)
+            if len(parts) == 3:
+                recent_commits.append({"hash": parts[0], "message": parts[1], "when": parts[2]})
+
+    # Remotes
+    remote_out, ok = _run(["git", "remote", "-v"])
+    remotes = []
+    seen_remotes = set()
+    if ok and remote_out:
+        for line in remote_out.splitlines():
+            if "(fetch)" in line:
+                parts = line.split()
+                if len(parts) >= 2 and parts[0] not in seen_remotes:
+                    remotes.append({"name": parts[0], "url": parts[1]})
+                    seen_remotes.add(parts[0])
+
+    # Ahead/behind
+    ahead = 0
+    behind = 0
+    ab_out, ok = _run(["git", "rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
+    if ok and ab_out:
+        parts = ab_out.split()
+        if len(parts) == 2:
+            try:
+                ahead = int(parts[0])
+                behind = int(parts[1])
+            except ValueError:
+                pass
+
+    result = {
+        "path": repo_dir,
+        "branch": branch,
+        "status": {
+            "staged": staged,
+            "modified": modified,
+            "untracked": untracked,
+        },
+        "clean": clean,
+        "last_commit": last_commit,
+        "recent_commits": recent_commits,
+        "remotes": remotes,
+        "ahead": ahead,
+        "behind": behind,
+    }
+    if warnings:
+        result["warnings"] = warnings
+
+    return result
